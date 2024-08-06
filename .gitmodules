@@ -1,0 +1,4 @@
+[submodule "sPOD"]
+	path = sPOD
+	url = https://github.com/MOR-transport/sPOD.git
+	branch = ProxBranch
