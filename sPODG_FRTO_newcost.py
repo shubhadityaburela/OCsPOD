@@ -20,9 +20,9 @@ Nm = 1
 
 # Problem variables
 Dimension = "1D"
-Nxi = 800
+Nxi = 400
 Neta = 1
-Nt = 1400
+Nt = 700
 
 # Wildfire solver initialization along with grid initialization
 wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=3*Nt//4)
@@ -30,7 +30,7 @@ wf.Grid()
 
 
 # %%
-n_c = 800  # Number of controls
+n_c = 400  # Number of controls
 f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
 
 # Control matrix
@@ -69,9 +69,9 @@ kwargs = {
     'n_c': n_c,
     'lamda': 0.5,  # Regularization parameter
     'omega': 1,  # initial step size for gradient update
-    'delta_conv': 1e-4,  # Convergence criteria
+    'delta_conv': 7e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 30,  # Total iterations
+    'opt_iter': 50,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'shift_sample': 200,  # Number of samples for shift interpolation
     'verbose': True  # Print options
@@ -121,10 +121,10 @@ var_target = np.concatenate((as_target, z_target), axis=0)
 stag_cntr = 0
 
 
-red_state_time = []
-cost_time = []
-red_adjoint_time = []
-update_time = []
+# red_state_time = []
+# cost_time = []
+# red_adjoint_time = []
+# update_time = []
 
 start = time.time()
 # %%
@@ -141,7 +141,7 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
-    red_state_time.append(time_odeint)
+    # red_state_time.append(time_odeint)
 
     '''
     Objective and costs for control
@@ -155,7 +155,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
 
-    cost_time.append(time_odeint)
+    # cost_time.append(time_odeint)
 
     '''
     Backward calculation with the reduced system
@@ -167,7 +167,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
 
-    red_adjoint_time.append(time_odeint)
+    # red_adjoint_time.append(time_odeint)
 
     '''
      Update Control
@@ -178,7 +178,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
 
-    update_time.append(perf_counter() - time_odeint)
+    # update_time.append(perf_counter() - time_odeint)
 
 
     # qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
@@ -283,7 +283,8 @@ if Dimension == "1D":
 
 
 
-print(sum(red_state_time) / kwargs['opt_iter'])
-print(sum(cost_time) / kwargs['opt_iter'])
-print(sum(red_adjoint_time) / kwargs['opt_iter'])
-print(sum(update_time) / kwargs['opt_iter'])
+# print(sum(red_state_time) / kwargs['opt_iter'])
+# print(sum(cost_time) / kwargs['opt_iter'])
+# print(sum(red_adjoint_time) / kwargs['opt_iter'])
+# print(sum(update_time) / kwargs['opt_iter'])
+

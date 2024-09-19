@@ -18,9 +18,9 @@ n_rom = 140
 
 # Problem variables
 Dimension = "1D"
-Nxi = 800
+Nxi = 400
 Neta = 1
-Nt = 1400
+Nt = 700
 
 # solver initialization along with grid initialization
 wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=3*Nt//4)
@@ -69,9 +69,9 @@ kwargs = {
     'n_c': n_c,
     'lamda': 1e-3,  # Regularization parameter
     'omega': 1,   # initial step size for gradient update
-    'delta_conv': 1e-4,  # Convergence criteria
+    'delta_conv': 7e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 10,  # Total iterations
+    'opt_iter': 50,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'verbose': True  # Print options
 }
@@ -79,12 +79,12 @@ kwargs = {
 stag_cntr = 0
 
 
-state_basis_time = []
-red_state_time = []
-cost_time = []
-adjoint_basis_time = []
-red_adjoint_time = []
-update_time = []
+# state_basis_time = []
+# red_state_time = []
+# cost_time = []
+# adjoint_basis_time = []
+# red_adjoint_time = []
+# update_time = []
 
 start = time.time()
 # %%
@@ -113,7 +113,7 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward basis refinement t_cpu = %1.3f" % time_odeint)
 
-    state_basis_time.append(time_odeint)
+    # state_basis_time.append(time_odeint)
 
 
     '''
@@ -124,7 +124,7 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
-    red_state_time.append(time_odeint)
+    # red_state_time.append(time_odeint)
 
     '''
     Objective and costs for control
@@ -134,7 +134,7 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
-    cost_time.append(time_odeint)
+    # cost_time.append(time_odeint)
 
 
     time_odeint = perf_counter()  # save timing
@@ -158,7 +158,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Backward basis refinement t_cpu = %1.3f" % time_odeint)
 
 
-    adjoint_basis_time.append(time_odeint)
+    # adjoint_basis_time.append(time_odeint)
 
 
     '''
@@ -169,7 +169,7 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
-    red_adjoint_time.append(time_odeint)
+    # red_adjoint_time.append(time_odeint)
 
 
     '''
@@ -181,7 +181,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
 
-    update_time.append(perf_counter() - time_odeint)
+    # update_time.append(perf_counter() - time_odeint)
 
     J_opt_list.append(J_opt)
     dL_du_list.append(dL_du)
@@ -274,10 +274,10 @@ if Dimension == "1D":
 
 
 
-
-print(sum(state_basis_time) / kwargs['opt_iter'])
-print(sum(red_state_time) / kwargs['opt_iter'])
-print(sum(cost_time) / kwargs['opt_iter'])
-print(sum(adjoint_basis_time) / kwargs['opt_iter'])
-print(sum(red_adjoint_time) / kwargs['opt_iter'])
-print(sum(update_time) / kwargs['opt_iter'])
+#
+# print(sum(state_basis_time) / kwargs['opt_iter'])
+# print(sum(red_state_time) / kwargs['opt_iter'])
+# print(sum(cost_time) / kwargs['opt_iter'])
+# print(sum(adjoint_basis_time) / kwargs['opt_iter'])
+# print(sum(red_adjoint_time) / kwargs['opt_iter'])
+# print(sum(update_time) / kwargs['opt_iter'])

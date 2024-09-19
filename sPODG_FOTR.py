@@ -10,16 +10,16 @@ from time import perf_counter
 import numpy as np
 import time
 
-impath = "./data/sPODG/FOTR/Nm=19/"  # for data
-immpath = "./plots/sPODG/FOTR/Nm=19/"  # for plots
+impath = "./data/sPODG/FOTR/Nm=30/"  # for data
+immpath = "./plots/sPODG/FOTR/Nm=30/"  # for plots
 os.makedirs(impath, exist_ok=True)
-Nm = 19
+Nm = 30
 
 # Problem variables
 Dimension = "1D"
-Nxi = 800
+Nxi = 400
 Neta = 1
-Nt = 1400
+Nt = 700
 
 # Wildfire solver initialization along with grid initialization
 wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=3*Nt//4)
@@ -66,9 +66,9 @@ kwargs = {
     'n_c': n_c,
     'lamda': 1e-3,  # Regularization parameter
     'omega': 1,  # initial step size for gradient update
-    'delta_conv': 1e-4,  # Convergence criteria
+    'delta_conv': 7e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 10,  # Total iterations
+    'opt_iter': 50,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'shift_sample': 200,  # Number of samples for shift interpolation
     'verbose': True  # Print options
@@ -90,12 +90,12 @@ stag_cntr = 0
 
 
 
-state_basis_time = []
-red_state_time = []
-cost_time = []
-adjoint_basis_time = []
-red_adjoint_time = []
-update_time = []
+# state_basis_time = []
+# red_state_time = []
+# cost_time = []
+# adjoint_basis_time = []
+# red_adjoint_time = []
+# update_time = []
 
 
 start = time.time()
@@ -113,8 +113,8 @@ for opt_step in range(kwargs['opt_iter']):
 
     qs_s = T.reverse(qs)
     V_p, qs_s_POD = compute_red_basis(qs_s, Nm)
-    err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
-    print(f"Relative error for shifted primal: {err}, with Nm_primal: {Nm}")
+    # err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
+    # print(f"Relative error for shifted primal: {err}, with Nm_primal: {Nm}")
 
     # Construct the primal system matrices for the sPOD-Galerkin approach
     Vd_p, Wd_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'])
@@ -126,7 +126,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Forward basis refinement t_cpu = %1.3f" % time_odeint)
 
 
-    state_basis_time.append(time_odeint)
+    # state_basis_time.append(time_odeint)
 
     '''
     Forward calculation
@@ -137,7 +137,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
 
-    red_state_time.append(time_odeint)
+    # red_state_time.append(time_odeint)
 
     '''
     Objective and costs for control
@@ -151,7 +151,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
 
-    cost_time.append(time_odeint)
+    # cost_time.append(time_odeint)
 
 
     time_odeint = perf_counter()  # save timing
@@ -177,7 +177,7 @@ for opt_step in range(kwargs['opt_iter']):
 
 
 
-    adjoint_basis_time.append(time_odeint)
+    # adjoint_basis_time.append(time_odeint)
 
 
     '''
@@ -189,7 +189,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
 
-    red_adjoint_time.append(time_odeint)
+    # red_adjoint_time.append(time_odeint)
 
     '''
      Update Control
@@ -200,7 +200,7 @@ for opt_step in range(kwargs['opt_iter']):
     if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
 
-    update_time.append(perf_counter() - time_odeint)
+    # update_time.append(perf_counter() - time_odeint)
 
     J_opt_list.append(J_opt)
     dL_du_list.append(dL_du)
@@ -309,9 +309,9 @@ if Dimension == "1D":
 
 
 
-print(sum(state_basis_time) / kwargs['opt_iter'])
-print(sum(red_state_time) / kwargs['opt_iter'])
-print(sum(cost_time) / kwargs['opt_iter'])
-print(sum(adjoint_basis_time) / kwargs['opt_iter'])
-print(sum(red_adjoint_time) / kwargs['opt_iter'])
-print(sum(update_time) / kwargs['opt_iter'])
+# print(sum(state_basis_time) / kwargs['opt_iter'])
+# print(sum(red_state_time) / kwargs['opt_iter'])
+# print(sum(cost_time) / kwargs['opt_iter'])
+# print(sum(adjoint_basis_time) / kwargs['opt_iter'])
+# print(sum(red_adjoint_time) / kwargs['opt_iter'])
+# print(sum(update_time) / kwargs['opt_iter'])

@@ -10,16 +10,16 @@ from time import perf_counter
 import numpy as np
 import time
 
-impath = "./data/sPODG/FRTO/Nm=19/"  # for data
-immpath = "./plots/sPODG/FRTO/Nm=19/"  # for plots
+impath = "./data/sPODG/FRTO/Nm=26/"  # for data
+immpath = "./plots/sPODG/FRTO/Nm=26/"  # for plots
 os.makedirs(impath, exist_ok=True)
-Nm = 19
+Nm = 26
 
 # Problem variables
 Dimension = "1D"
-Nxi = 800
+Nxi = 400
 Neta = 1
-Nt = 1400
+Nt = 700
 
 # solver initialization along with grid initialization
 wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=3 * Nt // 4)
@@ -66,9 +66,9 @@ kwargs = {
     'n_c': n_c,
     'lamda': 1e-3,  # Regularization parameter
     'omega': 1,  # initial step size for gradient update
-    'delta_conv': 1e-4,  # Convergence criteria
+    'delta_conv': 7e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 30,  # Total iterations
+    'opt_iter': 50,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'shift_sample': 200,  # Number of samples for shift interpolation
     'verbose': True  # Print options
@@ -90,14 +90,11 @@ _, T = get_T(delta_init, wf.X, wf.t)
 
 stag_cntr = 0
 
-
-state_basis_time = []
-red_state_time = []
-cost_time = []
-red_adjoint_time = []
-update_time = []
-
-
+# state_basis_time = []
+# red_state_time = []
+# cost_time = []
+# red_adjoint_time = []
+# update_time = []
 
 start = time.time()
 # %%
@@ -119,7 +116,7 @@ for opt_step in range(kwargs['opt_iter']):
 
     # Construct the primal system matrices for the sPOD-Galerkin approach
     Vd_p, Wd_p, lhs_p, rhs_p, c_p, T_p = wf.mat_primal_sPODG_FRTO(T_delta, V, A_p, psi, D,
-                                                             samples=kwargs['shift_sample'])
+                                                                  samples=kwargs['shift_sample'])
 
     # Initial condition for dynamical simulation
     a_p = wf.IC_primal_sPODG_FRTO(q0, delta_s, Vd_p)
@@ -128,8 +125,7 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Basis refinement t_cpu = %1.3f" % time_odeint)
 
-
-    state_basis_time.append(time_odeint)
+    # if opt_step > 4: state_basis_time.append(time_odeint)
 
     '''
     Forward calculation with the reduced system
@@ -139,8 +135,7 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
-
-    red_state_time.append(time_odeint)
+    # if opt_step > 4: red_state_time.append(time_odeint)
 
     '''
     Objective and costs for control
@@ -153,30 +148,28 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
-
-    cost_time.append(time_odeint)
+    # if opt_step > 4: cost_time.append(time_odeint)
 
     '''
     Backward calculation with the reduced system
     '''
     time_odeint = perf_counter()  # save timing
-    as_adj = wf.TI_adjoint_sPODG_FRTO(a_a, f, as_, lhs_p, rhs_p, c_p, T_p, Vd_p, Wd_p, qs_target, D, A_p, psi, as_dot, delta_s)
+    as_adj = wf.TI_adjoint_sPODG_FRTO(a_a, f, as_, lhs_p, rhs_p, c_p, T_p, Vd_p, Wd_p, qs_target, D, A_p, psi, as_dot,
+                                      delta_s)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
-
-    red_adjoint_time.append(time_odeint)
+    # if opt_step > 4: red_adjoint_time.append(time_odeint)
 
     '''
      Update Control
     '''
     time_odeint = perf_counter() - time_odeint
     f, J_opt, dL_du, stag = Update_Control_sPODG_FRTO(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_, as_adj, qs_target,
-                                                        delta_s, J, intIds, weights, wf=wf, **kwargs)
+                                                      delta_s, J, intIds, weights, wf=wf, **kwargs)
     if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
-
-    update_time.append(perf_counter() - time_odeint)
+    # if opt_step > 4: update_time.append(perf_counter() - time_odeint)
 
     J_opt_list.append(J_opt)
     dL_du_list.append(dL_du)
@@ -231,7 +224,6 @@ for i in range(f.shape[1]):
 
 f_opt = psi @ f
 
-
 # Compute the cost with the optimal control
 qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
 J = Calc_Cost(qs_opt_full, qs_target, f, **kwargs)
@@ -259,7 +251,6 @@ qs_opt = np.load(impath + 'qs_opt.npy')
 qs_adj_opt = np.load(impath + 'qs_adj_opt.npy')
 f_opt = np.load(impath + 'f_opt.npy')
 
-
 # Plot the results
 pf = PlotFlow(wf.X, wf.Y, wf.t)
 if Dimension == "1D":
@@ -273,11 +264,8 @@ if Dimension == "1D":
                           dL_du_ratio_list,
                           immpath=immpath)
 
-
-
-
-print(sum(state_basis_time) / kwargs['opt_iter'])
-print(sum(red_state_time) / kwargs['opt_iter'])
-print(sum(cost_time) / kwargs['opt_iter'])
-print(sum(red_adjoint_time) / kwargs['opt_iter'])
-print(sum(update_time) / kwargs['opt_iter'])
+# print(sum(state_basis_time) / (kwargs['opt_iter'] - 4))
+# print(sum(red_state_time) / (kwargs['opt_iter'] - 4))
+# print(sum(cost_time) / (kwargs['opt_iter'] - 4))
+# print(sum(red_adjoint_time) / (kwargs['opt_iter'] - 4))
+# print(sum(update_time) / (kwargs['opt_iter'] - 4))
