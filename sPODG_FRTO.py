@@ -13,7 +13,7 @@ import time
 impath = "./data/sPODG/FRTO/Nm=26/"  # for data
 immpath = "./plots/sPODG/FRTO/Nm=26/"  # for plots
 os.makedirs(impath, exist_ok=True)
-Nm = 26
+Nm = 26  # Number of modes
 
 # Problem variables
 Dimension = "1D"
@@ -90,12 +90,6 @@ _, T = get_T(delta_init, wf.X, wf.t)
 
 stag_cntr = 0
 
-# state_basis_time = []
-# red_state_time = []
-# cost_time = []
-# red_adjoint_time = []
-# update_time = []
-
 start = time.time()
 # %%
 for opt_step in range(kwargs['opt_iter']):
@@ -125,8 +119,6 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Basis refinement t_cpu = %1.3f" % time_odeint)
 
-    # if opt_step > 4: state_basis_time.append(time_odeint)
-
     '''
     Forward calculation with the reduced system
     '''
@@ -134,8 +126,6 @@ for opt_step in range(kwargs['opt_iter']):
     as_, as_dot = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f, delta_s)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
-
-    # if opt_step > 4: red_state_time.append(time_odeint)
 
     '''
     Objective and costs for control
@@ -148,8 +138,6 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
-    # if opt_step > 4: cost_time.append(time_odeint)
-
     '''
     Backward calculation with the reduced system
     '''
@@ -159,8 +147,6 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
-    # if opt_step > 4: red_adjoint_time.append(time_odeint)
-
     '''
      Update Control
     '''
@@ -168,8 +154,6 @@ for opt_step in range(kwargs['opt_iter']):
     f, J_opt, dL_du, stag = Update_Control_sPODG_FRTO(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_, as_adj, qs_target,
                                                       delta_s, J, intIds, weights, wf=wf, **kwargs)
     if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
-
-    # if opt_step > 4: update_time.append(perf_counter() - time_odeint)
 
     J_opt_list.append(J_opt)
     dL_du_list.append(dL_du)
@@ -263,9 +247,3 @@ if Dimension == "1D":
     pf.plot1D_ROM_converg(J_opt_list,
                           dL_du_ratio_list,
                           immpath=immpath)
-
-# print(sum(state_basis_time) / (kwargs['opt_iter'] - 4))
-# print(sum(red_state_time) / (kwargs['opt_iter'] - 4))
-# print(sum(cost_time) / (kwargs['opt_iter'] - 4))
-# print(sum(red_adjoint_time) / (kwargs['opt_iter'] - 4))
-# print(sum(update_time) / (kwargs['opt_iter'] - 4))
