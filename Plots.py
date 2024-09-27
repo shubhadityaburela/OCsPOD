@@ -112,7 +112,7 @@ class PlotFlow:
         ax3.set_ylabel(r"relative $\quad \frac{dL}{du}$", color="C0")
         fig3.savefig(immpath + "dL_du_ratio", dpi=300, transparent=True)
 
-    def plot1D_ROM_converg(self, J, dL_du, immpath):
+    def plot1D_ROM_converg(self, J, dL_du, err, Nm, immpath):
 
         os.makedirs(immpath, exist_ok=True)
 
@@ -133,3 +133,17 @@ class PlotFlow:
         ax3.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
         ax3.set_ylabel(r"relative $\quad \frac{dL}{du}$", color="C0")
         fig3.savefig(immpath + "dL_du_ratio", dpi=300, transparent=True)
+
+        fig4 = plt.figure(figsize=(8, 8))
+        ax4 = fig4.add_subplot(111, label="5")
+        ax4.semilogy(np.arange(len(err)), err)
+        ax4.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
+        ax4.set_ylabel(r"relative recon. err", color="C0")
+        fig4.savefig(immpath + "Offline_error", dpi=300, transparent=True)
+
+        fig5 = plt.figure(figsize=(8, 8))
+        ax5 = fig5.add_subplot(111, label="6")
+        ax5.scatter(np.arange(len(Nm)), Nm)
+        ax5.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
+        ax5.set_ylabel(r"$Nm$", color="C0")
+        fig5.savefig(immpath + "Truncated modes", dpi=300, transparent=True)

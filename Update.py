@@ -277,6 +277,62 @@ def Update_Control_PODG_FOTR(f, a0_primal, as_adj, qs_target, V_p, Ar_p, psir_p,
                         omega = omega / 4
 
 
+
+def Update_Control_PODG_FOTR_adaptive(f, a0_primal, qs_adj, qs_target, V_p, Ar_p, psir_p, mask, J_prev, wf, **kwargs):
+    print("Armijo iterations.........")
+    count = 0
+    itr = 5
+    omega = kwargs['omega']
+
+    time_odeint = perf_counter()  # save timing
+    dL_du = Calc_Grad(mask, f, qs_adj, **kwargs)
+    time_odeint = perf_counter() - time_odeint
+    if kwargs['verbose']: print("Calc_Grad t_cpu = %1.6f" % time_odeint)
+    for k in range(kwargs['Armijo_iter']):
+        f_new = f - omega * dL_du
+
+        # Solve the primal equation
+        as_ = wf.TI_primal_PODG_FOTR(a0_primal, f_new, Ar_p, psir_p)
+
+        if np.isnan(as_).any() and k < kwargs['Armijo_iter'] - 1:
+            print(f"Warning!!! step size omega = {omega} too large!", f"Reducing the step size at iter={k + 1}")
+            omega = omega / 4
+        elif np.isnan(as_).any() and k == kwargs['Armijo_iter'] - 1:
+            print("With the given Armijo iterations the procedure did not converge. Increase the max_Armijo_iter")
+            exit()
+        else:
+            J = Calc_Cost_PODG(V_p, as_, qs_target, f_new, **kwargs)
+            dJ = J_prev - kwargs['delta'] * omega * np.linalg.norm(dL_du) ** 2
+            if J < dJ:
+                J_opt = J
+                f_opt = f_new
+                print(f"Armijo iteration converged after {k + 1} steps")
+                return f_opt, J_opt, np.linalg.norm(dL_du), False
+            elif J >= dJ or np.isnan(J):
+                if k == kwargs['Armijo_iter'] - 1:
+                    J_opt = J
+                    f_opt = f_new
+                    print(f"Armijo iteration reached maximum limit thus exiting the Armijo loop......")
+                    return f_opt, J_opt, np.linalg.norm(dL_du), True
+                else:
+                    if J == dJ:
+                        if kwargs['verbose']: print(f"J has started to saturate now so we reduce the omega = {omega}!",
+                              f"Reducing omega at iter={k + 1}, with J={J}")
+                        omega = omega / 4
+                        count = count + 1
+                        if count > itr:
+                            J_opt = J
+                            f_opt = f_new
+                            print(
+                                f"Armijo iteration reached a point where J does not change thus exiting the Armijo loop......")
+                            return f_opt, J_opt, np.linalg.norm(dL_du), True
+                    else:
+                        if kwargs['verbose']: print(f"No NANs found but step size omega = {omega} too large!",
+                              f"Reducing omega at iter={k + 1}")
+                        omega = omega / 4
+
+
+
 def Update_Control_sPODG_FOTR(f, lhs, rhs, c, a0_primal, as_adj, qs_target, delta_s, Vdp, C_a, J_prev, intIds,
                               weights, wf, **kwargs):
     print("Armijo iterations.........")
@@ -286,6 +342,62 @@ def Update_Control_sPODG_FOTR(f, lhs, rhs, c, a0_primal, as_adj, qs_target, delt
 
     time_odeint = perf_counter()  # save timing
     dL_du = Calc_Grad_sPODG_FOTR(f, C_a, intIds, weights, as_adj, **kwargs)
+    time_odeint = perf_counter() - time_odeint
+    if kwargs['verbose']: print("Calc_Grad t_cpu = %1.6f" % time_odeint)
+    for k in range(kwargs['Armijo_iter']):
+        f_new = f - omega * dL_du
+
+        # Solve the primal equation
+        as_ = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s)
+
+        if np.isnan(as_).any() and k < kwargs['Armijo_iter'] - 1:
+            print(f"Warning!!! step size omega = {omega} too large!", f"Reducing the step size at iter={k + 1}")
+            omega = omega / 4
+        elif np.isnan(as_).any() and k == kwargs['Armijo_iter'] - 1:
+            print("With the given Armijo iterations the procedure did not converge. Increase the max_Armijo_iter")
+            exit()
+        else:
+            J = Calc_Cost_sPODG(Vdp, as_, qs_target, f_new, intIds, weights, **kwargs)
+            dJ = J_prev - kwargs['delta'] * omega * np.linalg.norm(dL_du) ** 2
+            if J < dJ:
+                J_opt = J
+                f_opt = f_new
+                print(f"Armijo iteration converged after {k + 1} steps")
+                return f_opt, J_opt, np.linalg.norm(dL_du), False
+            elif J >= dJ or np.isnan(J):
+                if k == kwargs['Armijo_iter'] - 1:
+                    J_opt = J
+                    f_opt = f_new
+                    print(f"Armijo iteration reached maximum limit thus exiting the Armijo loop......")
+                    return f_opt, J_opt, np.linalg.norm(dL_du), True
+                else:
+                    if J == dJ:
+                        if kwargs['verbose']: print(f"J has started to saturate now so we reduce the omega = {omega}!",
+                                          f"Reducing omega at iter={k + 1}, with J={J}")
+                        omega = omega / 4
+                        count = count + 1
+                        if count > itr:
+                            J_opt = J
+                            f_opt = f_new
+                            print(
+                                f"Armijo iteration reached a point where J does not change thus exiting the Armijo loop......")
+                            return f_opt, J_opt, np.linalg.norm(dL_du), True
+                    else:
+                        if kwargs['verbose']: print(f"No NANs found but step size omega = {omega} too large!",
+                              f"Reducing omega at iter={k + 1}")
+                        omega = omega / 4
+
+
+
+def Update_Control_sPODG_FOTR_adaptive(f, lhs, rhs, c, a0_primal, qs_adj, qs_target, delta_s, Vdp, mask, J_prev, intIds,
+                              weights, wf, **kwargs):
+    print("Armijo iterations.........")
+    count = 0
+    itr = 5
+    omega = kwargs['omega']
+
+    time_odeint = perf_counter()  # save timing
+    dL_du = Calc_Grad(mask, f, qs_adj, **kwargs)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Grad t_cpu = %1.6f" % time_odeint)
     for k in range(kwargs['Armijo_iter']):

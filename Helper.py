@@ -1,5 +1,6 @@
 import numpy as np
 from jax import jit, jacobian
+from sklearn.utils.extmath import randomized_svd
 from jax.scipy.optimize import minimize
 from scipy.optimize import root
 from scipy import integrate
@@ -43,7 +44,7 @@ def L2norm_ROM(q, **kwargs):
 def ControlSelectionMatrix_advection(wf, n_c):
     psi = np.zeros((wf.Nxi, n_c))
     for i in range(n_c):
-        psi[:, i] = func(wf.X - 2.5 - i * 2.5, sigma=4)
+        psi[:, i] = func(wf.X - 0.25 - i * 0.25, sigma=2)  # wf.X - 2.5 - i * 2.5, sigma=4
 
     return psi
 
@@ -79,7 +80,7 @@ def calc_shift(qs, qs_0, X, t):
 
 
 def compute_red_basis(qs, nm):
-    U, S, VT = np.linalg.svd(qs, full_matrices=False)
+    U, S, VT = randomized_svd(qs, n_components=nm, random_state=0)
 
     return U[:, :nm], U[:, :nm].dot(np.diag(S[:nm]).dot(VT[:nm, :]))
 
