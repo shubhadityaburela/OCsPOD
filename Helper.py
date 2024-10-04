@@ -18,24 +18,20 @@ def trapezoidal_integration_control(q, **kwargs):
 
 
 
-def integrate_cost(q, **kwargs):
-    q[:, 0] = q[:, 0] / 2
-    q[:, -1] = q[:, -1] / 2
+def L2norm_FOM(qq, **kwargs):
+    q = np.copy(qq)
+    q[:, 0] = q[:, 0] / np.sqrt(2)
+    q[0, :] = q[0, :] / np.sqrt(2)
+    q[:, -1] = q[:, -1] / np.sqrt(2)
+    q[-1, :] = q[-1, :] / np.sqrt(2)
     q = q.reshape((-1))
     return np.sum(np.square(q)) * kwargs.get('dx') * kwargs.get('dt')
 
 
-
-def integrate_cost_TA(q, **kwargs):
-    q[:, 0] = q[:, 0] / 2
-    q[:, -1] = q[:, -1] / 2
-    q = q.reshape((-1))
-    return np.sum(np.square(q)) * kwargs.get('dt')
-
-
-def L2norm_ROM(q, **kwargs):
-    q[:, 0] = q[:, 0] / 2
-    q[:, -1] = q[:, -1] / 2
+def L2norm_ROM(qq, **kwargs):
+    q = np.copy(qq)
+    q[:, 0] = q[:, 0] / np.sqrt(2)
+    q[:, -1] = q[:, -1] / np.sqrt(2)
     q = q.reshape((-1))
     return np.sum(np.square(q)) * kwargs.get('dt')
 
@@ -44,7 +40,7 @@ def L2norm_ROM(q, **kwargs):
 def ControlSelectionMatrix_advection(wf, n_c):
     psi = np.zeros((wf.Nxi, n_c))
     for i in range(n_c):
-        psi[:, i] = func(wf.X - 0.25 - i * 0.25, sigma=2)  # wf.X - 2.5 - i * 2.5, sigma=4
+        psi[:, i] = func(wf.X - wf.Lxi/n_c - i * wf.Lxi/n_c, sigma=2)  # wf.X - 2.5 - i * 2.5, sigma=4
 
     return psi
 
@@ -79,8 +75,15 @@ def calc_shift(qs, qs_0, X, t):
     return optimal_c
 
 
-def compute_red_basis(qs, nm):
+def compute_red_basis(qs, threshold):
+    U, S, VT = np.linalg.svd(qs, full_matrices=False)
+    indices = np.where(S / S[0] > threshold)[0]
+    return U[:, :indices[-1] + 1], U[:, :indices[-1] + 1].dot(np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :]))
+
+
+def compute_red_basis_Nm(qs, nm):
     U, S, VT = randomized_svd(qs, n_components=nm, random_state=0)
 
     return U[:, :nm], U[:, :nm].dot(np.diag(S[:nm]).dot(VT[:nm, :]))
+
 

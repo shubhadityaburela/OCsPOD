@@ -1,7 +1,7 @@
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
 from Helper import ControlSelectionMatrix_advection
-from Update import Update_Control
+from Update import Update_Control, Update_Control_TWBT
 from advection import advection
 from Plots import PlotFlow
 import numpy as np
@@ -38,9 +38,6 @@ Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
 A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
 A_a = A_p.transpose()
 
-A_p = A_p.todense()
-A_a = A_a.todense()
-
 #%% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
 np.save(impath + 'qs_org.npy', qs_org)
@@ -69,12 +66,22 @@ kwargs = {
     'n_c': n_c,
     'lamda': 1e-3,  # Regularization parameter
     'omega': 1,   # initial step size for gradient update
-    'delta_conv': 7e-4,  # Convergence criteria
+    'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 50000,  # Total iterations
+    'opt_iter': 500,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
-    'verbose': True  # Print options
+    'omega_decr': 4,  # Decrease omega by a factor for simple Armijo
+    'beta': 1 / 2,  # Beta factor for two-way backtracking line search
+    'verbose': True,  # Print options
+    'simple_Armijo': False  # Switch true for simple Armijo and False for two-way backtracking
 }
+
+
+imp = "./data/FOM/intermediate/"
+os.makedirs(imp, exist_ok=True)
+
+# For two-way backtracking line search
+omega = 1
 
 
 start = time.time()
@@ -120,9 +127,20 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    time_odeint = perf_counter() - time_odeint
-    f, J_opt, dL_du = Update_Control(f, q0, qs_adj, qs_target, psi, A_p, J, wf=wf, **kwargs)
-    if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
+    if kwargs['simple_Armijo']:
+        time_odeint = perf_counter() - time_odeint
+        f, J_opt, dL_du = Update_Control(f, q0, qs_adj, qs_target, psi, A_p, J, wf=wf, **kwargs)
+        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
+    else:
+        time_odeint = perf_counter() - time_odeint
+        f, J_opt, dL_du, omega = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
+        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
+
+    if opt_step % 50 == 0:
+        qs_opt = wf.TI_primal(q0, f, A_p, psi)
+        np.save(imp + "snapshot_prev_" + str(opt_step) + ".npy", qs)
+        np.save(imp + "snapshot_" + str(opt_step) + ".npy", qs_opt)
+        np.save(imp + "control_" + str(opt_step) + ".npy", f)
 
 
     # Save for plotting

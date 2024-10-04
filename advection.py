@@ -78,11 +78,8 @@ class advection:
         # Time loop
         qs = np.zeros((self.Nxi * self.Neta, self.Nt))
         qs[:, 0] = q
-
         for n in range(1, self.Nt):
-            t = qs[:, n - 1]
-            tt = f0[:, n - 1]
-            qs[:, n] = rk4(self.RHS_primal, t[:, np.newaxis], tt[:, np.newaxis], self.dt, A, psi).squeeze()
+            qs[:, n] = rk4(self.RHS_primal, qs[:, n - 1], f0[:, n - 1], self.dt, A, psi)
 
         return qs
 
@@ -106,11 +103,8 @@ class advection:
         qs_adj[:, -1] = q0_adj
 
         for n in range(1, self.Nt):
-            t = qs_adj[:, -n]
-            tt = qs[:, -n]
-            ttt = qs_target[:, -n]
-            qs_adj[:, -(n + 1)] = rk4(self.RHS_adjoint, t[:, np.newaxis], f0[:, -n], -self.dt, tt[:, np.newaxis],
-                                      ttt[:, np.newaxis], A).squeeze()
+            qs_adj[:, -(n + 1)] = rk4(self.RHS_adjoint, qs_adj[:, -n], f0[:, -n], -self.dt, qs[:, -n],
+                                      qs_target[:, -n], A)
 
         return qs_adj
 
@@ -404,6 +398,16 @@ class advection:
 
         return a
 
+
+    def IC_primal_sPODG_FOTR_tmp(self, q0, V, D):
+        z = 0
+        V_p, W_p = make_V_W_delta_tmp(V, D, np.asarray([z]), self.X, self.t)
+        a = V_p.transpose() @ q0
+        # Initialize the shifts with zero for online phase
+        a = np.concatenate((a, np.asarray([z])))
+
+        return a
+
     def mat_primal_sPODG_FOTR(self, T_delta, V_p, A_p, psi, D, samples):
 
         # Construct V_delta and W_delta matrix
@@ -439,6 +443,24 @@ class advection:
 
         return np.linalg.solve(M, A @ a + C)
 
+    def RHS_primal_sPODG_FOTR_tmp(self, a, f, A_p, V_p, D, psi):
+
+        # Assemble the dynamic matrix D(a)
+        Da = make_Da(a)
+
+        V_delta, W_delta = make_V_W_delta_tmp(V_p, D, np.asarray([a[-1]]), self.X, self.t)
+
+        # Prepare the LHS side of the matrix using D(a)
+        M = LHS_online_primal_FOTR_tmp(V_delta, W_delta, Da)
+
+        # Prepare the RHS side of the matrix using D(a)
+        A = RHS_online_primal_FOTR_tmp(V_delta, W_delta, A_p, Da)
+
+        # Prepare the online control matrix
+        C = Control_online_primal_FOTR_tmp(V_delta, W_delta, Da, psi, f)
+
+        return np.linalg.solve(M, A @ a + C)
+
     def TI_primal_sPODG_FOTR(self, lhs, rhs, c, a, f0, delta_s):
         # Time loop
         as_ = np.zeros((a.shape[0], self.Nt))
@@ -446,6 +468,17 @@ class advection:
 
         for n in range(1, self.Nt):
             as_[:, n] = rk4(self.RHS_primal_sPODG_FOTR, as_[:, n - 1], f0[:, n - 1], self.dt, lhs, rhs, c, delta_s)
+
+        return as_
+
+
+    def TI_primal_sPODG_FOTR_tmp(self, A_p, V_p, D, a, f0, psi):
+        # Time loop
+        as_ = np.zeros((a.shape[0], self.Nt))
+        as_[:, 0] = a
+
+        for n in range(1, self.Nt):
+            as_[:, n] = rk4(self.RHS_primal_sPODG_FOTR_tmp, as_[:, n - 1], f0[:, n - 1], self.dt, A_p, V_p, D, psi)
 
         return as_
 

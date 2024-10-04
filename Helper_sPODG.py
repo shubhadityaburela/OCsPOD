@@ -92,7 +92,7 @@ def findIntervalAndGiveInterpolationWeight_1D(xPoints, xStar):
 
 
 def make_Da(a):
-    D_a = a[:len(a) - 1]
+    D_a = np.copy(a[:len(a) - 1])
 
     return D_a[:, np.newaxis]
 
@@ -167,7 +167,7 @@ def Target_offline_adjoint_FRTO(D, V_delta):
 
 
 def LHS_online_primal_FRTO(LHS_matrix, Da):
-    M11 = LHS_matrix[0]
+    M11 = np.copy(LHS_matrix[0])
     M12 = LHS_matrix[1] @ Da
     M21 = M12.transpose()
     M22 = (Da.transpose() @ LHS_matrix[2]) @ Da
@@ -181,7 +181,7 @@ def LHS_online_primal_FRTO(LHS_matrix, Da):
 
 
 def RHS_online_primal_FRTO(RHS_matrix, Da):
-    A11 = RHS_matrix[0]
+    A11 = np.copy(RHS_matrix[0])
     A21 = Da.transpose() @ RHS_matrix[1]
 
     A = np.block([
@@ -202,9 +202,9 @@ def Control_online_primal_FRTO(f, C, Da, intervalIdx, weight):
 
 
 def LHS_online_adjoint_FRTO(LHS_matrix, Da):
-    M1 = LHS_matrix[0]
-    N = LHS_matrix[1]
-    M2 = LHS_matrix[2]
+    M1 = np.copy(LHS_matrix[0])
+    N = np.copy(LHS_matrix[1])
+    M2 = np.copy(LHS_matrix[2])
 
     Q1_1_red = Q11(M1)
     Q1_2_red = Q12(N, Da)
@@ -262,10 +262,10 @@ def Target_online_adjoint_FRTO(a_, Dfd, Vdp, qs_target, Tp, intervalIdx, weight)
 
 
 def Target_online_adjoint_FRTO_newcost(a_, var_target):
-    as_target = var_target[:-1]
-    z_target = var_target[-1:]
-    C1_1 = a_[:-1] - as_target
-    C2_1 = a_[-1:] - z_target
+    as_target = np.copy(var_target[:-1])
+    z_target = np.copy(var_target[-1:])
+    C1_1 = np.copy(a_[:-1] - as_target)
+    C2_1 = np.copy(a_[-1:] - z_target)
 
     C = np.concatenate((C1_1, C2_1))
 
@@ -273,9 +273,9 @@ def Target_online_adjoint_FRTO_newcost(a_, var_target):
 
 
 def check_invertability_FRTO(LHS_matrix, a_):
-    M1 = LHS_matrix[0]
-    N = LHS_matrix[1]
-    M2 = LHS_matrix[2]
+    M1 = np.copy(LHS_matrix[0])
+    N = np.copy(LHS_matrix[1])
+    M2 = np.copy(LHS_matrix[2])
     D = make_Da(a_)
 
     Z1_1_red = Z11(M1)
@@ -334,7 +334,7 @@ def Control_offline_primal_FOTR(V_delta, W_delta, psi):
 
 
 def LHS_online_primal_FOTR(LHS_matrix, Da):
-    M11 = LHS_matrix[0]
+    M11 = np.copy(LHS_matrix[0])
     M12 = LHS_matrix[1] @ Da
     M21 = M12.transpose()
     M22 = (Da.transpose() @ LHS_matrix[2]) @ Da
@@ -348,7 +348,7 @@ def LHS_online_primal_FOTR(LHS_matrix, Da):
 
 
 def RHS_online_primal_FOTR(RHS_matrix, Da):
-    A11 = RHS_matrix[0]
+    A11 = np.copy(RHS_matrix[0])
     A21 = Da.transpose() @ RHS_matrix[1]
 
     A = np.block([
@@ -398,6 +398,94 @@ def Target_online_adjoint_FOTR(T_a, Vda, Wda, qs_target, a_, Da, intervalIdx, we
     W_a = weight * Wda[intervalIdx] + (1 - weight) * Wda[intervalIdx + 1]
     C1 = (VdaTVdp @ a_ - V_a.transpose() @ qs_target)
     C2 = Da.transpose() @ (WdaTVdp @ a_ - W_a.transpose() @ qs_target)
+
+    C = np.concatenate((C1, C2))
+
+    return C
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+######################################################################################################################
+def make_V_W_delta_tmp(U, D, delta, X, t):
+
+    Nx = len(X)
+    Nt = len(t)
+
+    data_shape = [Nx, 1, 1, Nt]
+    dx = X[1] - X[0]
+    L = [X[-1]]
+
+    # Create the transformations
+    trafo_1 = Transform(data_shape, L, shifts=delta,
+                        dx=[dx],
+                        use_scipy_transform=False,
+                        interp_order=5)
+
+    V_delta = trafo_1.shifts_pos[0] @ U
+    W_delta = D @ (trafo_1.shifts_pos[0] @ U)
+
+    return V_delta, W_delta
+
+
+
+def LHS_online_primal_FOTR_tmp(V_delta, W_delta, Da):
+
+    M11 = V_delta.transpose() @ V_delta
+    M12 = (V_delta.transpose() @ W_delta) @ Da
+    M21 = M12.transpose()
+    M22 = (Da.transpose() @ (W_delta.transpose() @ W_delta)) @ Da
+
+
+    M = np.block([
+        [M11, M12],
+        [M21, M22]
+    ])
+
+    return M
+
+
+def RHS_online_primal_FOTR_tmp(V_delta, W_delta, A, Da):
+    A11 = (V_delta.transpose() @ A) @ V_delta
+    A21 = Da.transpose() @ ((W_delta.transpose() @ A) @ V_delta)
+
+    A = np.block([
+        [A11, np.zeros((A11.shape[0], 1))],
+        [A21, np.zeros((A21.shape[0], 1))]
+    ])
+
+    return A
+
+
+
+def Control_online_primal_FOTR_tmp(V_delta, W_delta, Da, B, f):
+    C1 = (V_delta.transpose() @ B) @ f
+    C2 = Da.transpose() @ ((W_delta.transpose() @ B) @ f)
 
     C = np.concatenate((C1, C2))
 

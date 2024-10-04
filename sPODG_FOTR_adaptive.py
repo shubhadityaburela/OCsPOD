@@ -1,12 +1,12 @@
 """
-This file is the adaptive version. It can handle all the three scenarios.
+This file is the adaptive version. It can handle both the three scenarios.
 1. Fixed tolerance
 2. Adjustable tolerance
-3. Advanced adjustable tolerance
 """
 
 from Coefficient_Matrix import CoefficientMatrix
-from Update import Update_Control_sPODG_FOTR, Update_Control_sPODG_FOTR_adaptive
+from Update import Update_Control_sPODG_FOTR, Update_Control_sPODG_FOTR_adaptive, \
+    Update_Control_sPODG_FOTR_adaptive_TWBT
 from advection import advection
 from Plots import PlotFlow
 from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
@@ -17,8 +17,8 @@ from time import perf_counter
 import numpy as np
 import time
 
-impath = "./data/sPODG/FOTR/adaptive/Fixtol=1e-2/"  # for data
-immpath = "./plots/sPODG/FOTR/adaptive/Fixtol=1e-2/"  # for plots
+impath = "./data/sPODG/FOTR/Fixtol=1e-2/"  # for data
+immpath = "./plots/sPODG/FOTR/Fixtol=1e-2/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
@@ -32,7 +32,7 @@ wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, c
 wf.Grid()
 
 # %%
-n_c = 400  # Number of controls
+n_c = 40  # Number of controls
 f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
 
 # Selection matrix for the control input
@@ -63,7 +63,6 @@ dL_du_ratio_list = []  # Collecting the ratio of gradients for plotting
 err_list = []  # Offline error reached according to the tolerance
 trunc_modes_list = []  # Number of modes needed to reach the offline error
 
-
 # List of problem constants
 kwargs = {
     'dx': wf.dx,
@@ -77,16 +76,17 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 50,  # Total iterations
+    'opt_iter': 1500,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
-    'shift_sample': 200,  # Number of samples for shift interpolation
+    'omega_decr': 4,  # Decrease omega by a factor
+    'shift_sample': 4000,  # Number of samples for shift interpolation
+    'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
-    'base_tol': 1e-2,  # Base tolerance for selecting number of modes for the adaptivity
-    'tol': 1e-2,  # Initial tolerance set for adaptivity
-    'stag': False,  # Stagnation variable set as False (no need to change)
+    'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking
+    'base_tol': 5e-4,  # Base tolerance for selecting number of modes for the adaptivity
+    'tol': 5e-4,  # Initial tolerance set for adaptivity
+    'omega_cutoff': 1e-9,  # Below this cutoff the Armijo and Backtracking should exit the update loop (only for Adaptive version)
     'Adtol': False,  # Adjustable tolerance is activated if True
-    'AdAdtol': False,  # Advanced adjustable tolerance is set if True.
-    # (The Adtol and AdAdtol should not be used together)
 }
 
 # %% ROM Variables
@@ -101,7 +101,11 @@ T_delta, _ = get_T(delta_s, wf.X, wf.t)
 delta_init = calc_shift(qs_org, q0, wf.X, wf.t)
 _, T = get_T(delta_init, wf.X, wf.t)
 
+# For two-way backtracking line search
+omega = 1
+
 stag_cntr = 0
+stag = False
 
 start = time.time()
 # %%
@@ -120,32 +124,18 @@ for opt_step in range(kwargs['opt_iter']):
 
     qs_s = T.reverse(qs)
     if kwargs['Adtol']:  # Adjustable tolerance
-        if kwargs['stag']:
-            kwargs['tol'] = 1 * kwargs['tol'] / 2
-        else:
-            kwargs['tol'] = kwargs['base_tol']
-        print(f"Base tolerance: {kwargs['base_tol']}")
-        print(f"Running tolerance: {kwargs['tol']}")
-    elif kwargs['AdAdtol']:  # Advanced adjustable tolerance
-        if kwargs['stag']:
-            if stag_cntr % 100 == 0 and stag_cntr != 0:
-                kwargs['base_tol'] = 3 * kwargs['base_tol'] / 4
-                print(f"NOTE:......Base tolerance decreased to: {kwargs['base_tol']}")
-                kwargs['tol'] = kwargs['base_tol']
-            else:
-                kwargs['tol'] = 3 * kwargs['tol'] / 4
+        if stag:
+            kwargs['tol'] = 3 * kwargs['tol'] / 4
         else:
             kwargs['tol'] = kwargs['base_tol']
         print(f"Base tolerance: {kwargs['base_tol']}")
         print(f"Running tolerance: {kwargs['tol']}")
 
     # Fixed tolerance (default)
-    while err > kwargs['tol']:
-        Nm = Nm + 1
-        V_p, qs_s_POD = compute_red_basis(qs_s, Nm)
-        err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
-        print(f"Relative error for shifted primal: {err}, with Nm: {Nm}")
-
+    V_p, qs_s_POD = compute_red_basis(qs_s, kwargs['tol'])
+    Nm = V_p.shape[1]
+    err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
+    print(f"Relative error for shifted primal: {err}, with Nm: {Nm}")
 
     err_list.append(err)
     trunc_modes_list.append(Nm)
@@ -189,11 +179,21 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    time_odeint = perf_counter() - time_odeint
-    f, J_opt, dL_du, stag = Update_Control_sPODG_FOTR_adaptive(f, lhs_p, rhs_p, c_p, a_p, qs_adj, qs_target, delta_s,
-                                                               Vd_p,
-                                                               psi, J, intIds, weights, wf=wf, **kwargs)
-    if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
+    if kwargs['simple_Armijo']:
+        time_odeint = perf_counter() - time_odeint
+        f, J_opt, dL_du, stag = Update_Control_sPODG_FOTR_adaptive(f, lhs_p, rhs_p, c_p, a_p, qs_adj, qs_target,
+                                                                   delta_s,
+                                                                   Vd_p,
+                                                                   psi, J, wf=wf, **kwargs)
+        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
+    else:
+        time_odeint = perf_counter() - time_odeint
+        f, J_opt, dL_du, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
+                                                                               qs_target, delta_s,
+                                                                               Vd_p,
+                                                                               psi, J, omega, intIds, weights, wf=wf,
+                                                                               **kwargs)
+        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
     J_opt_list.append(J_opt)
     dL_du_list.append(dL_du)
@@ -228,7 +228,7 @@ for opt_step in range(kwargs['opt_iter']):
                 break
             if stag:
                 stag_cntr = stag_cntr + 1
-                if stag_cntr > 100:
+                if stag_cntr > kwargs['opt_iter']:
                     print(f"WARNING: Armijo stagnated !!!!")
                     break
 
@@ -260,7 +260,6 @@ np.save(impath + 'J_opt_list.npy', J_opt_list)
 np.save(impath + 'dL_du_ratio_list.npy', dL_du_ratio_list)
 np.save(impath + 'err_list.npy', err_list)
 np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
-
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs)
