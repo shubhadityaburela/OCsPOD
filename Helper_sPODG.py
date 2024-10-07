@@ -1,5 +1,3 @@
-import timeit
-
 import numpy as np
 from scipy import sparse
 import sys
@@ -261,17 +259,6 @@ def Target_online_adjoint_FRTO(a_, Dfd, Vdp, qs_target, Tp, intervalIdx, weight)
     return C
 
 
-def Target_online_adjoint_FRTO_newcost(a_, var_target):
-    as_target = np.copy(var_target[:-1])
-    z_target = np.copy(var_target[-1:])
-    C1_1 = np.copy(a_[:-1] - as_target)
-    C2_1 = np.copy(a_[-1:] - z_target)
-
-    C = np.concatenate((C1_1, C2_1))
-
-    return C
-
-
 def check_invertability_FRTO(LHS_matrix, a_):
     M1 = np.copy(LHS_matrix[0])
     N = np.copy(LHS_matrix[1])
@@ -363,129 +350,6 @@ def RHS_online_primal_FOTR(RHS_matrix, Da):
 def Control_online_primal_FOTR(f, C, Da, intervalIdx, weight):
     C1 = (weight * C[intervalIdx][0] + (1 - weight) * C[intervalIdx + 1][0]) @ f
     C2 = Da.transpose() @ ((weight * C[intervalIdx][1] + (1 - weight) * C[intervalIdx + 1][1]) @ f)
-
-    C = np.concatenate((C1, C2))
-
-    return C
-
-
-def Target_offline_adjoint_FOTR(Vd_p, Vd_a, Wd_a):
-    T1 = []
-    for it in range(len(Vd_p)):
-        T_11 = Vd_a[it].transpose() @ Vd_p[it]
-        T_21 = Wd_a[it].transpose() @ Vd_p[it]
-
-        T1.append([T_11, T_21])
-
-    return T1
-
-
-def Control_update_online_adjoint_FOTR(Vd_a, psi):
-    C_mat = []
-    Ns = len(Vd_a)
-    for it in range(Ns):
-        C_mat.append(psi.transpose() @ Vd_a[it])
-
-    return C_mat
-
-
-def Target_online_adjoint_FOTR(T_a, Vda, Wda, qs_target, a_, Da, intervalIdx, weight):
-
-    VdaTVdp = (weight * T_a[intervalIdx][0] + (1 - weight) * T_a[intervalIdx + 1][0])
-    WdaTVdp = (weight * T_a[intervalIdx][1] + (1 - weight) * T_a[intervalIdx + 1][1])
-
-    V_a = weight * Vda[intervalIdx] + (1 - weight) * Vda[intervalIdx + 1]
-    W_a = weight * Wda[intervalIdx] + (1 - weight) * Wda[intervalIdx + 1]
-    C1 = (VdaTVdp @ a_ - V_a.transpose() @ qs_target)
-    C2 = Da.transpose() @ (WdaTVdp @ a_ - W_a.transpose() @ qs_target)
-
-    C = np.concatenate((C1, C2))
-
-    return C
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-######################################################################################################################
-def make_V_W_delta_tmp(U, D, delta, X, t):
-
-    Nx = len(X)
-    Nt = len(t)
-
-    data_shape = [Nx, 1, 1, Nt]
-    dx = X[1] - X[0]
-    L = [X[-1]]
-
-    # Create the transformations
-    trafo_1 = Transform(data_shape, L, shifts=delta,
-                        dx=[dx],
-                        use_scipy_transform=False,
-                        interp_order=5)
-
-    V_delta = trafo_1.shifts_pos[0] @ U
-    W_delta = D @ (trafo_1.shifts_pos[0] @ U)
-
-    return V_delta, W_delta
-
-
-
-def LHS_online_primal_FOTR_tmp(V_delta, W_delta, Da):
-
-    M11 = V_delta.transpose() @ V_delta
-    M12 = (V_delta.transpose() @ W_delta) @ Da
-    M21 = M12.transpose()
-    M22 = (Da.transpose() @ (W_delta.transpose() @ W_delta)) @ Da
-
-
-    M = np.block([
-        [M11, M12],
-        [M21, M22]
-    ])
-
-    return M
-
-
-def RHS_online_primal_FOTR_tmp(V_delta, W_delta, A, Da):
-    A11 = (V_delta.transpose() @ A) @ V_delta
-    A21 = Da.transpose() @ ((W_delta.transpose() @ A) @ V_delta)
-
-    A = np.block([
-        [A11, np.zeros((A11.shape[0], 1))],
-        [A21, np.zeros((A21.shape[0], 1))]
-    ])
-
-    return A
-
-
-
-def Control_online_primal_FOTR_tmp(V_delta, W_delta, Da, B, f):
-    C1 = (V_delta.transpose() @ B) @ f
-    C2 = Da.transpose() @ ((W_delta.transpose() @ B) @ f)
 
     C = np.concatenate((C1, C2))
 

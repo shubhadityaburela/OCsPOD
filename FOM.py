@@ -50,9 +50,9 @@ q0 = wf.IC_primal()
 q0_adj = wf.IC_adjoint()
 
 #%% Optimal control
-J_list = []  # Collecting cost functional over the optimization steps
 dL_du_list = []  # Collecting the gradient over the optimization steps
 J_opt_list = []  # Collecting the optimal cost functional for plotting
+running_time = []  # Time calculated for each iteration in a running manner
 dL_du_ratio_list = []  # Collecting the ratio of gradients for plotting
 
 # List of problem constants
@@ -68,7 +68,7 @@ kwargs = {
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 500,  # Total iterations
+    'opt_iter': 25000,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor for simple Armijo
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
@@ -77,14 +77,15 @@ kwargs = {
 }
 
 
-imp = "./data/FOM/intermediate/"
-os.makedirs(imp, exist_ok=True)
+# imp = "./data/FOM/intermediate/"
+# os.makedirs(imp, exist_ok=True)
 
 # For two-way backtracking line search
 omega = 1
-
+stag = False
 
 start = time.time()
+time_odeint_s = perf_counter()  # save running time
 #%%
 for opt_step in range(kwargs['opt_iter']):
     '''
@@ -106,14 +107,6 @@ for opt_step in range(kwargs['opt_iter']):
     J = Calc_Cost(qs, qs_target, f, **kwargs)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
-    if opt_step == 0:
-        pass
-    else:
-        dJ = (J - J_list[-1]) / J_list[0]
-        if abs(dJ) == 0:
-            print("WARNING: dJ has turned 0...")
-            break
-    J_list.append(J)
 
     '''
     Adjoint calculation
@@ -123,25 +116,25 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
-
     '''
      Update Control
     '''
     if kwargs['simple_Armijo']:
         time_odeint = perf_counter() - time_odeint
-        f, J_opt, dL_du = Update_Control(f, q0, qs_adj, qs_target, psi, A_p, J, wf=wf, **kwargs)
+        f, J_opt, dL_du, stag = Update_Control(f, q0, qs_adj, qs_target, psi, A_p, J, wf=wf, **kwargs)
         if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
     else:
         time_odeint = perf_counter() - time_odeint
-        f, J_opt, dL_du, omega = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
+        f, J_opt, dL_du, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
         if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
-    if opt_step % 50 == 0:
-        qs_opt = wf.TI_primal(q0, f, A_p, psi)
-        np.save(imp + "snapshot_prev_" + str(opt_step) + ".npy", qs)
-        np.save(imp + "snapshot_" + str(opt_step) + ".npy", qs_opt)
-        np.save(imp + "control_" + str(opt_step) + ".npy", f)
+    # if opt_step % 50 == 0:
+    #     qs_opt = wf.TI_primal(q0, f, A_p, psi)
+    #     np.save(imp + "snapshot_prev_" + str(opt_step) + ".npy", qs)
+    #     np.save(imp + "snapshot_" + str(opt_step) + ".npy", qs_opt)
+    #     np.save(imp + "control_" + str(opt_step) + ".npy", f)
 
+    running_time.append(perf_counter() - time_odeint_s)
 
     # Save for plotting
     J_opt_list.append(J_opt)
@@ -167,6 +160,23 @@ for opt_step in range(kwargs['opt_iter']):
             f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}"
         )
         break
+    else:
+        if opt_step == 0:
+            if stag:
+                print("\n\n-------------------------------")
+                print(f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at {opt_step} with "
+                      f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
+                break
+        else:
+            dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
+            if abs(dJ) == 0:
+                print(f"WARNING: dJ has turned close to 0...")
+                break
+            if stag:
+                print("\n-------------------------------")
+                print(f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at {opt_step} with "
+                      f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
+                break
 
 # Final state corresponding to the optimal control f
 qs_opt = wf.TI_primal(q0, f, A_p, psi)
@@ -186,11 +196,13 @@ print("Total time elapsed = %1.3f" % (end - start))
 # Save the convergence lists
 np.save(impath + 'J_opt_list.npy', J_opt_list)
 np.save(impath + 'dL_du_ratio_list.npy', dL_du_ratio_list)
+np.save(impath + 'running_time.npy', running_time)
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs_opt)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
+np.save(impath + 'f_opt_low.npy', f)
 
 
 #%%

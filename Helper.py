@@ -7,6 +7,7 @@ from scipy import integrate
 import jax.numpy as jnp
 import jax
 from scipy import optimize
+import sys
 
 
 def trapezoidal_integration(q, **kwargs):
@@ -75,15 +76,11 @@ def calc_shift(qs, qs_0, X, t):
     return optimal_c
 
 
-def compute_red_basis(qs, threshold):
+def compute_red_basis(qs, **kwargs):
     U, S, VT = np.linalg.svd(qs, full_matrices=False)
-    indices = np.where(S / S[0] > threshold)[0]
-    return U[:, :indices[-1] + 1], U[:, :indices[-1] + 1].dot(np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :]))
-
-
-def compute_red_basis_Nm(qs, nm):
-    U, S, VT = randomized_svd(qs, n_components=nm, random_state=0)
-
-    return U[:, :nm], U[:, :nm].dot(np.diag(S[:nm]).dot(VT[:nm, :]))
-
+    if kwargs['threshold']:
+        indices = np.where(S / S[0] > kwargs['base_tol'])[0]
+        return U[:, :indices[-1] + 1], U[:, :indices[-1] + 1].dot(np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :]))
+    else:
+        return U[:, :kwargs['Nm']], U[:, :kwargs['Nm']].dot(np.diag(S[:kwargs['Nm']]).dot(VT[:kwargs['Nm'], :]))
 

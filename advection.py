@@ -295,46 +295,6 @@ class advection:
 
         return as_adj
 
-    ################################## FRTO sPOD (new cost functional) #########################################
-    def RHS_adjoint_sPODG_FRTO_newcost(self, a, f, a_dot, z_dot, a_, Vdp, Wdp, lhsp, rhsp, cp, var_target, ds, Dfd, psi):
-
-        # Compute the interpolation weight and the interval in which the shift lies
-        intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -a_[-1])
-
-        # Assemble the dynamic matrix D(a_)
-        Da = make_Da(a_)
-
-        # Prepare the LHS side of the matrix using D(a_)
-        M = LHS_online_adjoint_FRTO(lhsp, Da)
-
-        # Prepare the RHS side of the matrix using D(a_)
-        A = RHS_online_adjoint_FRTO(rhsp, lhsp, cp, psi, a_dot, z_dot, Da, a_, Dfd, Vdp, Wdp, f, intervalIdx, weight)
-
-        # Prepare the online control matrix
-        C = Target_online_adjoint_FRTO_newcost(a_, var_target)
-
-        return np.linalg.solve(M, -A @ a - C)
-
-    def TI_adjoint_sPODG_FRTO_newcost(self, at_adj, f0, as_, lhsp, rhsp, cp, Vdp, Wdp, var_target, Dfd, A, psi, as_dot, delta_s):
-        # Time loop
-        as_adj = np.zeros((at_adj.shape[0], self.Nt))
-        as_adj[:, -1] = at_adj
-
-        for n in range(1, self.Nt):
-            a_dot = [np.squeeze(as_dot[0, :-1, -n]),
-                     np.squeeze(as_dot[1, :-1, -n]),
-                     np.squeeze(as_dot[2, :-1, -n]),
-                     np.squeeze(as_dot[3, :-1, -n])]
-            z_dot = [np.squeeze(as_dot[0, -1:, -n]),
-                     np.squeeze(as_dot[1, -1:, -n]),
-                     np.squeeze(as_dot[2, -1:, -n]),
-                     np.squeeze(as_dot[3, -1:, -n])]
-            as_adj[:, -(n + 1)] = rk4__(self.RHS_adjoint_sPODG_FRTO_newcost, as_adj[:, -n], f0[:, -n],
-                                        -self.dt, a_dot, z_dot, as_[:, -n], Vdp, Wdp, lhsp, rhsp, cp, var_target[:, -n],
-                                        delta_s, Dfd, psi)
-
-        return as_adj
-
     ############################################### FOTR POD ############################################
     def IC_primal_PODG_FOTR(self, V_p, q0):
 
@@ -360,32 +320,6 @@ class advection:
 
         return (V_pT @ A_p) @ V_p, V_pT @ psi
 
-    def IC_adjoint_PODG_FOTR(self, V_a, q0_adj):
-
-        return V_a.transpose() @ q0_adj
-
-    def RHS_adjoint_PODG_FOTR(self, a_adj, f, a, Tarr_a, Ar_a, Tr_a):
-
-        return - (Ar_a.dot(a_adj) + (Tr_a.dot(a) - Tarr_a))
-
-    def TI_adjoint_PODG_FOTR(self, at_adj, f0, as_, Ar_a, Tr_a, Tarr_a):
-        # Time loop
-        as_adj = np.zeros((at_adj.shape[0], self.Nt))
-        as_adj[:, -1] = at_adj
-
-        for n in range(1, self.Nt):
-            as_adj[:, -(n + 1)] = rk4(self.RHS_adjoint_PODG_FOTR, as_adj[:, -n], f0[:, -n], -self.dt,
-                                      as_[:, -n],
-                                      Tarr_a[:, -n],
-                                      Ar_a, Tr_a)
-
-        return as_adj
-
-    def mat_adjoint_PODG_FOTR(self, V_a, A_p, V_p, q_target, psi):
-        V_aT = V_a.transpose()
-        return (V_aT @ A_p.transpose()) @ V_a, V_aT @ V_p, V_aT @ q_target, V_aT @ psi
-
-
 
     ######################################### FOTR sPOD  #############################################
     def IC_primal_sPODG_FOTR(self, q0, ds, Vd):
@@ -393,16 +327,6 @@ class advection:
         intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], z)
         V = weight * Vd[intervalIdx] + (1 - weight) * Vd[intervalIdx + 1]
         a = V.transpose() @ q0
-        # Initialize the shifts with zero for online phase
-        a = np.concatenate((a, np.asarray([z])))
-
-        return a
-
-
-    def IC_primal_sPODG_FOTR_tmp(self, q0, V, D):
-        z = 0
-        V_p, W_p = make_V_W_delta_tmp(V, D, np.asarray([z]), self.X, self.t)
-        a = V_p.transpose() @ q0
         # Initialize the shifts with zero for online phase
         a = np.concatenate((a, np.asarray([z])))
 
@@ -443,24 +367,6 @@ class advection:
 
         return np.linalg.solve(M, A @ a + C)
 
-    def RHS_primal_sPODG_FOTR_tmp(self, a, f, A_p, V_p, D, psi):
-
-        # Assemble the dynamic matrix D(a)
-        Da = make_Da(a)
-
-        V_delta, W_delta = make_V_W_delta_tmp(V_p, D, np.asarray([a[-1]]), self.X, self.t)
-
-        # Prepare the LHS side of the matrix using D(a)
-        M = LHS_online_primal_FOTR_tmp(V_delta, W_delta, Da)
-
-        # Prepare the RHS side of the matrix using D(a)
-        A = RHS_online_primal_FOTR_tmp(V_delta, W_delta, A_p, Da)
-
-        # Prepare the online control matrix
-        C = Control_online_primal_FOTR_tmp(V_delta, W_delta, Da, psi, f)
-
-        return np.linalg.solve(M, A @ a + C)
-
     def TI_primal_sPODG_FOTR(self, lhs, rhs, c, a, f0, delta_s):
         # Time loop
         as_ = np.zeros((a.shape[0], self.Nt))
@@ -470,76 +376,4 @@ class advection:
             as_[:, n] = rk4(self.RHS_primal_sPODG_FOTR, as_[:, n - 1], f0[:, n - 1], self.dt, lhs, rhs, c, delta_s)
 
         return as_
-
-
-    def TI_primal_sPODG_FOTR_tmp(self, A_p, V_p, D, a, f0, psi):
-        # Time loop
-        as_ = np.zeros((a.shape[0], self.Nt))
-        as_[:, 0] = a
-
-        for n in range(1, self.Nt):
-            as_[:, n] = rk4(self.RHS_primal_sPODG_FOTR_tmp, as_[:, n - 1], f0[:, n - 1], self.dt, A_p, V_p, D, psi)
-
-        return as_
-
-    def IC_adjoint_sPODG_FOTR(self, Nm_adjoint, a_):
-        # Initialize the shift adjoint with zero for online phase
-        a = np.concatenate((np.zeros(Nm_adjoint), np.asarray([a_[-1, -1]])))
-
-        return a
-
-    def mat_adjoint_sPODG_FOTR(self, T_delta, V_delta_primal, V_a, A_a, D, psi, samples):
-
-        # Construct V_delta and W_delta matrix
-        V_delta_adjoint, W_delta_adjoint = make_V_W_delta(V_a, T_delta, D, samples)
-
-        # Construct LHS matrix
-        LHS_matrix = LHS_offline_primal_FOTR(V_delta_adjoint, W_delta_adjoint)
-
-        # Construct RHS matrix
-        RHS_matrix = RHS_offline_primal_FOTR(V_delta_adjoint, W_delta_adjoint, A_a)
-
-        # Construct the target precomputed terms
-        Tar_matrix = Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint)
-
-        # Construct the control update precomputation matrix
-        C_matrix = Control_update_online_adjoint_FOTR(V_delta_adjoint, psi)
-
-        return V_delta_adjoint, W_delta_adjoint, LHS_matrix, RHS_matrix, Tar_matrix, C_matrix
-
-    def RHS_adjoint_sPODG_FOTR(self, a, f, a_, lhs, rhs, T_a, Vda, Wda, qs_target, ds):
-
-        # Compute the interpolation weight and the interval in which the shift lies
-        intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -a_[-1])
-
-        # Assemble the dynamic matrix D(a)
-        Da = make_Da(a)
-
-        # Prepare the LHS side of the matrix using D(a)
-        M = LHS_online_primal_FOTR(lhs, Da)
-
-        # Prepare the RHS side of the matrix using D(a)
-        A = RHS_online_primal_FOTR(rhs, Da)
-
-        # Prepare the online control matrix
-        C = Target_online_adjoint_FOTR(T_a, Vda, Wda, qs_target, a_[:-1], Da, intervalIdx, weight)
-
-        if np.linalg.cond(M, p='fro') == np.inf:
-            res = np.linalg.solve(M.T.dot(M) + 1e-14 * np.identity(M.shape[1]), M.T.dot(-A @ a - C))
-        else:
-            res = np.linalg.solve(M, -A @ a - C)
-
-        return res
-
-    def TI_adjoint_sPODG_FOTR(self, lhs, rhs, T_a, Vda, Wda, qs_target, at_adj, f0, as_, delta_s):
-        # Time loop
-        as_adj = np.zeros((at_adj.shape[0], self.Nt))
-        as_adj[:, -1] = at_adj
-
-        for n in range(1, self.Nt):
-            as_adj[:, -(n + 1)] = rk4(self.RHS_adjoint_sPODG_FOTR, as_adj[:, -n], f0[:, -n],
-                                      -self.dt, as_[:, -n], lhs, rhs, T_a, Vda, Wda,
-                                      qs_target[:, -n], delta_s)
-
-        return as_adj
 
