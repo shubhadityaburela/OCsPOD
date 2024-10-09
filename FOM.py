@@ -73,7 +73,8 @@ kwargs = {
     'omega_decr': 4,  # Decrease omega by a factor for simple Armijo
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
-    'simple_Armijo': False  # Switch true for simple Armijo and False for two-way backtracking
+    'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking
+    'omega_cutoff': 1e-10  # Below this cutoff the Armijo and Backtracking should exit the update loop
 }
 
 

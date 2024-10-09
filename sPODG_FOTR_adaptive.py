@@ -17,8 +17,8 @@ from time import perf_counter
 import numpy as np
 import time
 
-impath = "./data/sPODG/FOTR/Nm=10,TWBT/"  # for data
-immpath = "./plots/sPODG/FOTR/Nm=10,TWBT/"  # for plots
+impath = "./data/sPODG/FOTR/Nm=12,TWBT/"  # for data
+immpath = "./plots/sPODG/FOTR/Nm=12,TWBT/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
@@ -87,9 +87,9 @@ kwargs = {
     'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking
     'base_tol': 1e-3,  # Base tolerance for selecting number of modes (main variable for truncation)
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-    'threshold': True,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
+    'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 5,  # Number of modes for truncation if threshold selected to False.
+    'Nm': 12,  # Number of modes for truncation if threshold selected to False.
 }
 
 # %% ROM Variables
@@ -123,6 +123,10 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     qs = wf.TI_primal(q0, f, A_p, psi)
 
+    # if stag:
+    #     z = as_[-1, :]
+    #     _, T = get_T(z[np.newaxis, :], wf.X, wf.t)
+
     qs_s = T.reverse(qs)
 
     V_p, qs_s_POD = compute_red_basis(qs_s, **kwargs)
@@ -133,11 +137,11 @@ for opt_step in range(kwargs['opt_iter']):
     err_list.append(err)
     trunc_modes_list.append(Nm)
 
+    # Initial condition for dynamical simulation
+    a_p = wf.IC_primal_sPODG_FOTR(q0, delta_s, V_p)
+
     # Construct the primal system matrices for the sPOD-Galerkin approach
     Vd_p, Wd_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'])
-
-    # Initial condition for dynamical simulation
-    a_p = wf.IC_primal_sPODG_FOTR(q0, delta_s, Vd_p)
 
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward basis refinement t_cpu = %1.3f" % time_odeint)

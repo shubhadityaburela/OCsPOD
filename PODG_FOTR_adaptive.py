@@ -18,8 +18,8 @@ import os
 from time import perf_counter
 import time
 
-impath = "./data/PODG/FOTR/Nm=25,TWBT/"  # for data
-immpath = "./plots/PODG/FOTR/Nm=25,TWBT/"  # for plots
+impath = "./data/PODG/FOTR/Nm=80,TWBT/"  # for data
+immpath = "./plots/PODG/FOTR/Nm=80,TWBT/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
@@ -79,7 +79,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 25,  # Total iterations
+    'opt_iter': 25000,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
@@ -87,9 +87,9 @@ kwargs = {
     'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking(Preferable option)
     'base_tol': 1e-2,  # Base tolerance for selecting number of modes (main variable for truncation)
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-    'threshold': True,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
+    'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 20,  # Number of modes for truncation if threshold selected to False.
+    'Nm': 80,  # Number of modes for truncation if threshold selected to False.
 }
 
 # For two-way backtracking line search

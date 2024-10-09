@@ -41,7 +41,6 @@ def central_FDMatrix(order, Nx, dx):
 def subsample(X, num_sample):
     active_subspace_factor = -1
 
-    # sampling points for the shifts (The shift values can range from 0 to X/2 and then is a mirror image for X/2 to X)
     delta_samples = np.linspace(0, X[-1], num_sample)
 
     delta_sampled = [active_subspace_factor * delta_samples,
@@ -71,7 +70,7 @@ def get_T(delta_s, X, t):
 def make_V_W_delta(U, T_delta, D, num_sample):
 
     V_delta = [T_delta[it] @ U for it in range(num_sample)]
-    W_delta = [D @ (T_delta[it] @ U) for it in range(num_sample)]
+    W_delta = [D @ V_delta[it] for it in range(num_sample)]
 
     return V_delta, W_delta
 

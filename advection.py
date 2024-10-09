@@ -79,7 +79,7 @@ class advection:
         qs = np.zeros((self.Nxi * self.Neta, self.Nt))
         qs[:, 0] = q
         for n in range(1, self.Nt):
-            qs[:, n] = rk4(self.RHS_primal, qs[:, n - 1], f0[:, n - 1], self.dt, A, psi)
+            qs[:, n] = rk4(self.RHS_primal, qs[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, A, psi)
 
         return qs
 
@@ -103,7 +103,7 @@ class advection:
         qs_adj[:, -1] = q0_adj
 
         for n in range(1, self.Nt):
-            qs_adj[:, -(n + 1)] = rk4(self.RHS_adjoint, qs_adj[:, -n], f0[:, -n], -self.dt, qs[:, -n],
+            qs_adj[:, -(n + 1)] = rk4(self.RHS_adjoint, qs_adj[:, -n], f0[:, -n], f0[:, -(n + 1)], -self.dt, qs[:, -n],
                                       qs_target[:, -n], A)
 
         return qs_adj
@@ -121,7 +121,7 @@ class advection:
         qs[:, 0] = q
 
         for n in range(1, self.Nt):
-            qs[:, n] = rk4(self.RHS_primal_target, qs[:, n - 1], f0[:, n - 1], self.dt, Mat, self.v_x_target[n - 1],
+            qs[:, n] = rk4(self.RHS_primal_target, qs[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, Mat, self.v_x_target[n - 1],
                            self.v_y_target[n - 1])
 
         return qs
@@ -141,7 +141,7 @@ class advection:
         as_[:, 0] = a
 
         for n in range(1, self.Nt):
-            as_[:, n] = rk4(self.RHS_primal_PODG_FRTO, as_[:, n - 1], f0[:, n - 1], self.dt, Ar_p, psir_p)
+            as_[:, n] = rk4(self.RHS_primal_PODG_FRTO, as_[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, Ar_p, psir_p)
 
         return as_
 
@@ -165,7 +165,7 @@ class advection:
         as_adj[:, -1] = at_adj
 
         for n in range(1, self.Nt):
-            as_adj[:, -(n + 1)] = rk4(self.RHS_adjoint_PODG_FRTO, as_adj[:, -n], f0[:, -n], -self.dt,
+            as_adj[:, -(n + 1)] = rk4(self.RHS_adjoint_PODG_FRTO, as_adj[:, -n], f0[:, -n], f0[:, -(n + 1)], -self.dt,
                                       as_[:, -n],
                                       Tarr_a[:, -n],
                                       Ar_a)
@@ -310,7 +310,7 @@ class advection:
         as_[:, 0] = a
 
         for n in range(1, self.Nt):
-            as_[:, n] = rk4(self.RHS_primal_PODG_FOTR, as_[:, n - 1], f0[:, n - 1], self.dt, Ar_p, psir_p)
+            as_[:, n] = rk4(self.RHS_primal_PODG_FOTR, as_[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, Ar_p, psir_p)
 
         return as_
 
@@ -322,10 +322,8 @@ class advection:
 
 
     ######################################### FOTR sPOD  #############################################
-    def IC_primal_sPODG_FOTR(self, q0, ds, Vd):
+    def IC_primal_sPODG_FOTR(self, q0, ds, V):
         z = 0
-        intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], z)
-        V = weight * Vd[intervalIdx] + (1 - weight) * Vd[intervalIdx + 1]
         a = V.transpose() @ q0
         # Initialize the shifts with zero for online phase
         a = np.concatenate((a, np.asarray([z])))
@@ -373,7 +371,7 @@ class advection:
         as_[:, 0] = a
 
         for n in range(1, self.Nt):
-            as_[:, n] = rk4(self.RHS_primal_sPODG_FOTR, as_[:, n - 1], f0[:, n - 1], self.dt, lhs, rhs, c, delta_s)
+            as_[:, n] = rk4(self.RHS_primal_sPODG_FOTR, as_[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, lhs, rhs, c, delta_s)
 
         return as_
 

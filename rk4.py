@@ -3,13 +3,14 @@ from Helper import *
 
 def rk4(RHS: callable,
         q0: np.ndarray,
-        u: np.ndarray,
+        u1: np.ndarray,
+        u2: np.ndarray,
         dt,
         *args) -> np.ndarray:
-    k1 = RHS(q0, u, *args)
-    k2 = RHS(q0 + dt / 2 * k1, u, *args)
-    k3 = RHS(q0 + dt / 2 * k2, u, *args)
-    k4 = RHS(q0 + dt * k3, u, *args)
+    k1 = RHS(q0, u1, *args)
+    k2 = RHS(q0 + dt / 2 * k1, (u1 + u2) / 2, *args)
+    k3 = RHS(q0 + dt / 2 * k2, (u1 + u2) / 2, *args)
+    k4 = RHS(q0 + dt * k3, u2, *args)
 
     u1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
