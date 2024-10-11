@@ -22,9 +22,7 @@ def trapezoidal_integration_control(q, **kwargs):
 def L2norm_FOM(qq, **kwargs):
     q = np.copy(qq)
     q[:, 0] = q[:, 0] / np.sqrt(2)
-    q[0, :] = q[0, :] / np.sqrt(2)
     q[:, -1] = q[:, -1] / np.sqrt(2)
-    q[-1, :] = q[-1, :] / np.sqrt(2)
     q = q.reshape((-1))
     return np.sum(np.square(q)) * kwargs.get('dx') * kwargs.get('dt')
 
@@ -41,7 +39,7 @@ def L2norm_ROM(qq, **kwargs):
 def ControlSelectionMatrix_advection(wf, n_c):
     psi = np.zeros((wf.Nxi, n_c))
     for i in range(n_c):
-        psi[:, i] = func(wf.X - wf.Lxi/n_c - i * wf.Lxi/n_c, sigma=2)  # wf.X - 2.5 - i * 2.5, sigma=4
+        psi[:, i] = func(wf.X - wf.Lxi/n_c - i * wf.Lxi/n_c, sigma=2)
 
     return psi
 

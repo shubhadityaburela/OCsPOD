@@ -17,8 +17,8 @@ from time import perf_counter
 import numpy as np
 import time
 
-impath = "./data/sPODG/FOTR/Nm=12,TWBT/"  # for data
-immpath = "./plots/sPODG/FOTR/Nm=12,TWBT/"  # for plots
+impath = "./data/sPODG/FOTR/Nm=6,TWBT/"  # for data
+immpath = "./plots/sPODG/FOTR/Nm=6,TWBT/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
@@ -89,7 +89,9 @@ kwargs = {
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
     'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 12,  # Number of modes for truncation if threshold selected to False.
+    'Nm': 6,  # Number of modes for truncation if threshold selected to False.
+    'use_shift_new': True,  # This when set True would shift the primal with the most recent shift value calculated
+    # from the calc_shift function. BUT this would significantly slow down the computation
 }
 
 # %% ROM Variables
@@ -123,12 +125,7 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     qs = wf.TI_primal(q0, f, A_p, psi)
 
-    # if stag:
-    #     z = as_[-1, :]
-    #     _, T = get_T(z[np.newaxis, :], wf.X, wf.t)
-
     qs_s = T.reverse(qs)
-
     V_p, qs_s_POD = compute_red_basis(qs_s, **kwargs)
     Nm = V_p.shape[1]
     err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
@@ -138,10 +135,10 @@ for opt_step in range(kwargs['opt_iter']):
     trunc_modes_list.append(Nm)
 
     # Initial condition for dynamical simulation
-    a_p = wf.IC_primal_sPODG_FOTR(q0, delta_s, V_p)
+    a_p = wf.IC_primal_sPODG_FOTR(q0, V_p)
 
     # Construct the primal system matrices for the sPOD-Galerkin approach
-    Vd_p, Wd_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'])
+    Vd_p, Wd_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'], modes=Nm)
 
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward basis refinement t_cpu = %1.3f" % time_odeint)
@@ -169,7 +166,7 @@ for opt_step in range(kwargs['opt_iter']):
     Backward calculation with FOM system
     '''
     time_odeint = perf_counter()  # save timing
-    qs_adj = wf.TI_adjoint(q0_adj, f, qs, qs_target, A_a)
+    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
@@ -177,14 +174,14 @@ for opt_step in range(kwargs['opt_iter']):
      Update Control
     '''
     if kwargs['simple_Armijo']:
-        time_odeint = perf_counter() - time_odeint
+        time_odeint = perf_counter()
         f, J_opt, dL_du, stag = Update_Control_sPODG_FOTR_adaptive(f, lhs_p, rhs_p, c_p, a_p, qs_adj, qs_target,
                                                                    delta_s,
                                                                    Vd_p,
                                                                    psi, J, wf=wf, **kwargs)
         if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
     else:
-        time_odeint = perf_counter() - time_odeint
+        time_odeint = perf_counter()
         f, J_opt, dL_du, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
                                                                                qs_target, delta_s,
                                                                                Vd_p,
@@ -237,7 +234,7 @@ for opt_step in range(kwargs['opt_iter']):
                 print("\n-------------------------------")
                 print(f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
                       f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
-                break
+                # break
 
 # Compute the final state
 as__ = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s)

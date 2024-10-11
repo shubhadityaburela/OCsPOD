@@ -67,10 +67,13 @@ def get_T(delta_s, X, t):
     return trafo_1.shifts_pos, trafo_1
 
 
-def make_V_W_delta(U, T_delta, D, num_sample):
+def make_V_W_delta(U, T_delta, D, num_sample, Nx, modes):
 
-    V_delta = [T_delta[it] @ U for it in range(num_sample)]
-    W_delta = [D @ V_delta[it] for it in range(num_sample)]
+    V_delta = np.zeros((num_sample, Nx, modes))
+    W_delta = np.zeros((num_sample, Nx, modes))
+    for it in range(num_sample):
+        V_delta[it] = T_delta[it] @ U
+        W_delta[it] = D @ V_delta[it]
 
     return V_delta, W_delta
 
@@ -142,7 +145,6 @@ def RHS_offline_primal_FRTO(V_delta, W_delta, A):
 
 def Control_offline_primal_FRTO(V_delta, W_delta, psi, D):
     C_mat = []
-
     for it in range(len(V_delta)):
         C_1 = (V_delta[it].transpose() @ psi)
         C_2 = (W_delta[it].transpose() @ psi)
@@ -205,12 +207,12 @@ def LHS_online_adjoint_FRTO(LHS_matrix, Da):
 
     Q1_1_red = Q11(M1)
     Q1_2_red = Q12(N, Da)
-    Q2_1_red = Q21(N, Da)
+    # Q2_1_red = Q21(N, Da)
     Q2_2_red = Q22(M2, Da)
 
     LHS = np.block([
         [Q1_1_red.transpose(), Q1_2_red.transpose()],
-        [Q2_1_red.transpose(), Q2_2_red.transpose()]
+        [Q1_2_red, Q2_2_red.transpose()]
     ])
 
     return LHS
@@ -303,17 +305,10 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A):
 
 
 def Control_offline_primal_FOTR(V_delta, W_delta, psi):
-    C_mat = []
-    Ns = len(V_delta)
 
-    for it in range(Ns):
-        C_1 = (V_delta[it].transpose() @ psi)
-        C_2 = (W_delta[it].transpose() @ psi)
-
-        C_mat.append([C_1, C_2])
-
-    # print(timeit.timeit(tmp1, number=1000))
-    # print(timeit.timeit(tmp2, number=1000))
+    C_1 = np.matmul(V_delta.transpose(0, 2, 1), psi)
+    C_2 = np.matmul(W_delta.transpose(0, 2, 1), psi)
+    C_mat = np.stack((C_1, C_2), axis=0)
 
     return C_mat
 
@@ -347,8 +342,8 @@ def RHS_online_primal_FOTR(RHS_matrix, Da):
 
 
 def Control_online_primal_FOTR(f, C, Da, intervalIdx, weight):
-    C1 = (weight * C[intervalIdx][0] + (1 - weight) * C[intervalIdx + 1][0]) @ f
-    C2 = Da.transpose() @ ((weight * C[intervalIdx][1] + (1 - weight) * C[intervalIdx + 1][1]) @ f)
+    C1 = (weight * C[0, intervalIdx] + (1 - weight) * C[0, intervalIdx + 1]) @ f
+    C2 = Da.transpose() @ ((weight * C[1, intervalIdx] + (1 - weight) * C[1, intervalIdx + 1]) @ f)
 
     C = np.concatenate((C1, C2))
 

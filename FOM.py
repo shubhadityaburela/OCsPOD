@@ -113,7 +113,7 @@ for opt_step in range(kwargs['opt_iter']):
     Adjoint calculation
     '''
     time_odeint = perf_counter()  # save timing
-    qs_adj = wf.TI_adjoint(q0_adj, f, qs, qs_target, A_a)
+    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 

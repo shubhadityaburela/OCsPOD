@@ -1,5 +1,5 @@
 from Helper_sPODG import *
-from rk4 import rk4, rk4_, rk4__
+from rk4 import rk4, rk4_, rk4__, rk4_adj
 from numba import njit
 
 
@@ -91,20 +91,20 @@ class advection:
 
         return q_adj
 
-    def RHS_adjoint(self, q_adj, f, q, q_tar, A):
+    def RHS_adjoint(self, q_adj, q, q_tar, A):
 
         q_adj_dot = - A.dot(q_adj) - (q - q_tar)
 
         return q_adj_dot
 
-    def TI_adjoint(self, q0_adj, f0, qs, qs_target, A):
+    def TI_adjoint(self, q0_adj, qs, qs_target, A):
         # Time loop
         qs_adj = np.zeros((self.Nxi * self.Neta, self.Nt))
         qs_adj[:, -1] = q0_adj
 
         for n in range(1, self.Nt):
-            qs_adj[:, -(n + 1)] = rk4(self.RHS_adjoint, qs_adj[:, -n], f0[:, -n], f0[:, -(n + 1)], -self.dt, qs[:, -n],
-                                      qs_target[:, -n], A)
+            qs_adj[:, -(n + 1)] = rk4_adj(self.RHS_adjoint, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
+                                          qs_target[:, -n], qs_target[:, -(n + 1)], -self.dt, A)
 
         return qs_adj
 
@@ -155,20 +155,19 @@ class advection:
 
         return V.transpose() @ q0_adj
 
-    def RHS_adjoint_PODG_FRTO(self, a_adj, f, a, Tarr_a, Ar_a):
+    def RHS_adjoint_PODG_FRTO(self, a_adj, a, Tarr_a, Ar_a):
 
         return - (Ar_a.dot(a_adj) + (a - Tarr_a))
 
-    def TI_adjoint_PODG_FRTO(self, at_adj, f0, as_, Ar_a, Tarr_a):
+    def TI_adjoint_PODG_FRTO(self, at_adj, as_, Ar_a, Tarr_a):
         # Time loop
         as_adj = np.zeros((at_adj.shape[0], self.Nt))
         as_adj[:, -1] = at_adj
 
         for n in range(1, self.Nt):
-            as_adj[:, -(n + 1)] = rk4(self.RHS_adjoint_PODG_FRTO, as_adj[:, -n], f0[:, -n], f0[:, -(n + 1)], -self.dt,
-                                      as_[:, -n],
-                                      Tarr_a[:, -n],
-                                      Ar_a)
+            as_adj[:, -(n + 1)] = rk4_adj(self.RHS_adjoint_PODG_FRTO, as_adj[:, -n], as_[:, -n], as_[:, -(n + 1)],
+                                          Tarr_a[:, -n], Tarr_a[:, -(n + 1)], -self.dt,
+                                          Ar_a)
 
         return as_adj
 
@@ -177,20 +176,18 @@ class advection:
         return (V_T @ A_a) @ V, V_T @ qs_target
 
     ############################################### FRTO sPOD ############################################
-    def IC_primal_sPODG_FRTO(self, q0, ds, Vd):
+    def IC_primal_sPODG_FRTO(self, q0, V):
         z = 0
-        intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], z)
-        V = weight * Vd[intervalIdx] + (1 - weight) * Vd[intervalIdx + 1]
         a = V.transpose() @ q0
         # Initialize the shifts with zero for online phase
         a = np.concatenate((a, np.asarray([z])))
 
         return a
 
-    def mat_primal_sPODG_FRTO(self, T_delta, V_p, A_p, psi, D, samples):
+    def mat_primal_sPODG_FRTO(self, T_delta, V_p, A_p, psi, D, samples, modes):
 
         # Construct V_delta and W_delta matrix
-        V_delta_primal, W_delta_primal = make_V_W_delta(V_p, T_delta, D, samples)
+        V_delta_primal, W_delta_primal = make_V_W_delta(V_p, T_delta, D, samples, self.Nxi, modes)
 
         # Construct LHS matrix
         LHS_matrix = LHS_offline_primal_FRTO(V_delta_primal, W_delta_primal)
@@ -232,14 +229,14 @@ class advection:
 
         as_[:, 0] = a
         for n in range(1, self.Nt):
-            as_[:, n], a_dot = rk4_(self.RHS_primal_sPODG_FRTO, as_[:, n - 1], f0[:, n - 1], self.dt, lhs, rhs, c,
+            as_[:, n], a_dot = rk4_(self.RHS_primal_sPODG_FRTO, as_[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, lhs, rhs, c,
                                     delta_s)
             as_dot[0, :, n - 1] = a_dot[0]
             as_dot[1, :, n - 1] = a_dot[1]
             as_dot[2, :, n - 1] = a_dot[2]
             as_dot[3, :, n - 1] = a_dot[3]
 
-        _, a_dot = rk4_(self.RHS_primal_sPODG_FRTO, as_[:, -1], f0[:, -1], self.dt, lhs, rhs, c, delta_s)
+        _, a_dot = rk4_(self.RHS_primal_sPODG_FRTO, as_[:, -1], f0[:, -1], f0[:, -1], self.dt, lhs, rhs, c, delta_s)
         as_dot[0, :, -1] = a_dot[0]
         as_dot[1, :, -1] = a_dot[1]
         as_dot[2, :, -1] = a_dot[2]
@@ -247,17 +244,15 @@ class advection:
 
         return as_, as_dot
 
-    def IC_adjoint_sPODG_FRTO(self, q0_adj, ds, Vd):
+    def IC_adjoint_sPODG_FRTO(self, q0_adj, V):
         z = 0
-        intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], z)
-        V = weight * Vd[intervalIdx] + (1 - weight) * Vd[intervalIdx + 1]
         a = V.transpose() @ q0_adj
         # Initialize the shifts with zero for online phase
         a = np.concatenate((a, np.asarray([z])))
 
         return a
 
-    def RHS_adjoint_sPODG_FRTO(self, a, f, a_dot, z_dot, a_, Vdp, Wdp, lhsp, rhsp, cp, Tp, qs_target, ds, Dfd, psi):
+    def RHS_adjoint_sPODG_FRTO(self, a, f, a_, qs_target, a_dot, z_dot, Vdp, Wdp, lhsp, rhsp, cp, Tp, ds, Dfd, psi):
 
         # Compute the interpolation weight and the interval in which the shift lies
         intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -a_[-1])
@@ -289,8 +284,9 @@ class advection:
                      np.squeeze(as_dot[1, -1:, -n]),
                      np.squeeze(as_dot[2, -1:, -n]),
                      np.squeeze(as_dot[3, -1:, -n])]
-            as_adj[:, -(n + 1)] = rk4__(self.RHS_adjoint_sPODG_FRTO, as_adj[:, -n], f0[:, -n],
-                                        -self.dt, a_dot, z_dot, as_[:, -n], Vdp, Wdp, lhsp, rhsp, cp, Tp, qs_target[:, -n],
+            as_adj[:, -(n + 1)] = rk4__(self.RHS_adjoint_sPODG_FRTO, as_adj[:, -n], f0[:, -n], f0[:, -(n + 1)],
+                                        as_[:, -n], as_[:, -(n + 1)], qs_target[:, -n], qs_target[:, -(n + 1)],
+                                        -self.dt, a_dot, z_dot, Vdp, Wdp, lhsp, rhsp, cp, Tp,
                                         delta_s, Dfd, psi)
 
         return as_adj
@@ -322,7 +318,7 @@ class advection:
 
 
     ######################################### FOTR sPOD  #############################################
-    def IC_primal_sPODG_FOTR(self, q0, ds, V):
+    def IC_primal_sPODG_FOTR(self, q0, V):
         z = 0
         a = V.transpose() @ q0
         # Initialize the shifts with zero for online phase
@@ -330,10 +326,10 @@ class advection:
 
         return a
 
-    def mat_primal_sPODG_FOTR(self, T_delta, V_p, A_p, psi, D, samples):
+    def mat_primal_sPODG_FOTR(self, T_delta, V_p, A_p, psi, D, samples, modes):
 
         # Construct V_delta and W_delta matrix
-        V_delta_primal, W_delta_primal = make_V_W_delta(V_p, T_delta, D, samples)
+        V_delta_primal, W_delta_primal = make_V_W_delta(V_p, T_delta, D, samples, self.Nxi, modes)
 
         # Construct LHS matrix
         LHS_matrix = LHS_offline_primal_FOTR(V_delta_primal, W_delta_primal)
