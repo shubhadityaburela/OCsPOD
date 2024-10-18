@@ -1,7 +1,7 @@
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
 from Helper import ControlSelectionMatrix_advection
-from Update import Update_Control, Update_Control_TWBT
+from Update import Update_Control_TWBT
 from advection import advection
 from Plots import PlotFlow
 import numpy as np
@@ -68,7 +68,7 @@ kwargs = {
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 1,  # Total iterations
+    'opt_iter': 30,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor for simple Armijo
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
@@ -105,7 +105,7 @@ for opt_step in range(kwargs['opt_iter']):
     Objective and costs for control
     '''
     time_odeint = perf_counter()  # save timing
-    J = Calc_Cost(qs, qs_target, f, **kwargs)
+    J = Calc_Cost(qs, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
@@ -120,14 +120,9 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    if kwargs['simple_Armijo']:
-        time_odeint = perf_counter() - time_odeint
-        f, J_opt, dL_du, stag = Update_Control(f, q0, qs_adj, qs_target, psi, A_p, J, wf=wf, **kwargs)
-        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
-    else:
-        time_odeint = perf_counter() - time_odeint
-        f, J_opt, dL_du, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
-        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
+    time_odeint = perf_counter() - time_odeint
+    f, J_opt, dL_du, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
+    if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
     # if opt_step % 50 == 0:
     #     qs_opt = wf.TI_primal(q0, f, A_p, psi)
@@ -185,7 +180,7 @@ f_opt = psi @ f
 
 
 # Compute the cost with the optimal control
-J = Calc_Cost(qs_opt, qs_target, f, **kwargs)
+J = Calc_Cost(qs_opt, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 print("\n")
 print(f"J with respect to the optimal control for FOM: {J}")
 

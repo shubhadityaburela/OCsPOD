@@ -3,15 +3,12 @@ import numpy as np
 from scipy import sparse
 import sys
 
-from Helper_sPODG_FRTO import Q11, Q12, Q21, Q22, B11, B12, B21, B22, C1, C2, Z11, Z12, Z21, Z22, VT_dash, WT_dash, \
-    V_dash
-
 sys.path.append('./sPOD/lib/')
 
 ########################################################################################################################
 # sPOD Galerkin helper functions
 from transforms import Transform
-from numba import njit
+from numba import njit, prange
 
 
 # General functions
@@ -39,16 +36,17 @@ def central_FDMatrix(order, Nx, dx):
     return D_1 * (1 / dx)
 
 
+@njit
 def subsample(X, num_sample):
     active_subspace_factor = -1
+    delta_sampled = np.zeros((3, num_sample))
 
     delta_samples = np.linspace(0, X[-1], num_sample)
 
-    delta_sampled = [active_subspace_factor * delta_samples,
-                     np.zeros_like(delta_samples),
-                     delta_samples]
+    delta_sampled[0, :] = active_subspace_factor * delta_samples
+    delta_sampled[2, :] = delta_samples
 
-    return np.array(delta_sampled)
+    return np.ascontiguousarray(delta_sampled)
 
 
 def get_T(delta_s, X, t):
@@ -75,7 +73,7 @@ def make_V_W_delta(U, T_delta, D, num_sample, Nx, modes):
         V_delta[it] = T_delta[it] @ U
         W_delta[it] = D @ V_delta[it]
 
-    return V_delta, W_delta
+    return np.ascontiguousarray(V_delta), np.ascontiguousarray(W_delta)
 
 
 @njit
@@ -93,195 +91,24 @@ def findIntervalAndGiveInterpolationWeight_1D(xPoints, xStar):
     return intervalIdx, alpha
 
 
-def make_Da(a, modes):
-    D_a = a[:modes]
+def make_Da(a):
+    D_a = a.reshape(-1, 1)
 
-    return D_a[:, np.newaxis]
-
-
-def get_online_state(T_trafo, V, a, X, t):
-    Nx = len(X)
-    Nt = len(t)
-    qs_online = np.zeros((Nx, Nt))
-    q = V @ a
-
-    qs_online += T_trafo[0].apply(q)
-
-    return qs_online
+    return np.ascontiguousarray(D_a)
 
 
-@njit
+@njit(parallel=True)
 def findIntervals(delta_s, delta):
     Nt = len(delta)
     intIds = np.zeros(Nt, dtype=np.int32)
     weights = np.zeros(Nt)
 
-    for i in range(Nt):
+    for i in prange(Nt):
         intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(delta_s[2], -delta[i])
         intIds[i] = intervalIdx
         weights[i] = weight
 
     return intIds, weights
-
-
-######################################### FRTO sPOD functions #########################################
-def LHS_offline_primal_FRTO(V_delta, W_delta):
-    # D(a) matrices are dynamic in nature thus need to be included in the time integration part
-    LHS11 = V_delta[0].transpose() @ V_delta[0]
-    LHS12 = V_delta[0].transpose() @ W_delta[0]
-    LHS22 = W_delta[0].transpose() @ W_delta[0]
-
-    LHS_mat = [LHS11, LHS12, LHS22]
-
-    return LHS_mat
-
-
-def RHS_offline_primal_FRTO(V_delta, W_delta, A):
-    A_1 = (V_delta[0].transpose() @ A) @ V_delta[0]
-    A_2 = (W_delta[0].transpose() @ A) @ V_delta[0]
-
-    RHS_mat = [A_1, A_2]
-
-    return RHS_mat
-
-
-def Control_offline_primal_FRTO(V_delta, W_delta, psi, D):
-    C_mat = []
-    for it in range(len(V_delta)):
-        C_1 = (V_delta[it].transpose() @ psi)
-        C_2 = (W_delta[it].transpose() @ psi)
-        C_3 = VT_dash(D, V_delta[it]) @ psi
-        C_4 = WT_dash(D, W_delta[it]) @ psi
-
-        C_mat.append([C_1, C_2, C_3, C_4])
-
-    return C_mat
-
-
-def Target_offline_adjoint_FRTO(D, V_delta):
-    T_mat = []
-
-    for it in range(len(V_delta)):
-        T_mat.append(V_dash(D, V_delta[it]).transpose() @ V_delta[it])
-
-    return T_mat
-
-
-def LHS_online_primal_FRTO(LHS_matrix, Da):
-    M11 = np.copy(LHS_matrix[0])
-    M12 = LHS_matrix[1] @ Da
-    M21 = M12.transpose()
-    M22 = (Da.transpose() @ LHS_matrix[2]) @ Da
-
-    M = np.block([
-        [M11, M12],
-        [M21, M22]
-    ])
-
-    return M
-
-
-def RHS_online_primal_FRTO(RHS_matrix, Da):
-    A11 = np.copy(RHS_matrix[0])
-    A21 = Da.transpose() @ RHS_matrix[1]
-
-    A = np.block([
-        [A11, np.zeros((A11.shape[0], Da.shape[1]))],
-        [A21, np.zeros((A21.shape[0], Da.shape[1]))]
-    ])
-
-    return A
-
-
-def Control_online_primal_FRTO(f, C, Da, intervalIdx, weight):
-    C1 = (weight * C[intervalIdx][0] + (1 - weight) * C[intervalIdx + 1][0]) @ f
-    C2 = Da.transpose() @ ((weight * C[intervalIdx][1] + (1 - weight) * C[intervalIdx + 1][1]) @ f)
-
-    C = np.concatenate((C1, C2))
-
-    return C
-
-
-def LHS_online_adjoint_FRTO(LHS_matrix, Da):
-    M1 = np.copy(LHS_matrix[0])
-    N = np.copy(LHS_matrix[1])
-    M2 = np.copy(LHS_matrix[2])
-
-    Q1_1_red = Q11(M1)
-    Q1_2_red = Q12(N, Da)
-    # Q2_1_red = Q21(N, Da)
-    Q2_2_red = Q22(M2, Da)
-
-    LHS = np.block([
-        [Q1_1_red.transpose(), Q1_2_red.transpose()],
-        [Q1_2_red, Q2_2_red.transpose()]
-    ])
-
-    return LHS
-
-
-def RHS_online_adjoint_FRTO(RHS_matrix, LHS_matrix, C_matrix, psi, a_dot, z_dot, Da, a_, Dfd, Vdp, Wdp, u,
-                            intervalIdx, weight):
-    r = len(a_) - 1
-    a_s = np.atleast_2d(a_[:-1]).T
-    z = np.atleast_2d(a_[-1:]).T
-    a_dot = np.atleast_2d(a_dot).T
-    z_dot = np.atleast_2d(z_dot).T
-    u = np.atleast_2d(u).T
-
-    WTB = weight * C_matrix[intervalIdx][1] + (1 - weight) * C_matrix[intervalIdx + 1][1]
-    VTdashB = weight * C_matrix[intervalIdx][2] + (1 - weight) * C_matrix[intervalIdx + 1][2]
-    WTdashB = weight * C_matrix[intervalIdx][3] + (1 - weight) * C_matrix[intervalIdx + 1][3]
-
-    N = LHS_matrix[1]
-    M2 = LHS_matrix[2]
-    A1 = RHS_matrix[0]
-    A2 = RHS_matrix[1]
-
-    B1_1_red = B11(N, A1, z_dot, r)
-    B1_2_red = B12(M2, N, A2, Da, WTB, a_dot, z_dot, a_s, u, r)
-    B2_1_red = B21(Dfd, N, VTdashB, a_dot, u)
-    B2_2_red = B22(Dfd, M2, Da, WTdashB, a_dot, u)
-
-    RHS = np.block([
-        [B1_1_red.transpose(), B1_2_red.transpose()],
-        [B2_1_red.transpose(), B2_2_red.transpose()]
-    ])
-
-    return RHS
-
-
-def Target_online_adjoint_FRTO(a_, Dfd, Vdp, qs_target, Tp, intervalIdx, weight):
-    V = weight * Vdp[intervalIdx] + (1 - weight) * Vdp[intervalIdx + 1]
-    T = weight * Tp[intervalIdx] + (1 - weight) * Tp[intervalIdx + 1]
-    C1_1 = C1(V, qs_target, a_[:-1])
-    C2_1 = C2(Dfd, V, qs_target, T, a_[:-1])
-
-    C = np.concatenate((C1_1, C2_1))
-
-    return C
-
-
-def check_invertability_FRTO(LHS_matrix, a_):
-    M1 = np.copy(LHS_matrix[0])
-    N = np.copy(LHS_matrix[1])
-    M2 = np.copy(LHS_matrix[2])
-    D = make_Da(a_)
-
-    Z1_1_red = Z11(M1)
-    Z1_2_red = Z12(N, D)
-    Z2_1_red = Z21(N, D)
-    Z2_2_red = Z22(M2, D)
-
-    Z = np.block([
-        [Z1_1_red.transpose(), Z1_2_red.transpose()],
-        [Z2_1_red.transpose(), Z2_2_red.transpose()]
-    ])
-
-    if np.linalg.cond(Z) < 1 / sys.float_info.epsilon:
-        return True
-    else:
-        return False
 
 
 ######################################### FOTR sPOD functions #########################################
@@ -294,7 +121,7 @@ def LHS_offline_primal_FOTR(V_delta, W_delta, modes):
     LHS_mat[1, ...] = V_delta[0].T @ W_delta[0]
     LHS_mat[2, ...] = W_delta[0].T @ W_delta[0]
 
-    return LHS_mat
+    return np.ascontiguousarray(LHS_mat)
 
 
 def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
@@ -302,15 +129,28 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
     RHS_mat[0, ...] = V_delta[0].T @ A @ V_delta[0]
     RHS_mat[1, ...] = W_delta[0].T @ A @ V_delta[0]
 
-    return RHS_mat
+    return np.ascontiguousarray(RHS_mat)
 
 
+@njit(parallel=True)
 def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
-    C_mat = np.zeros((2, samples, modes, psi.shape[1]))
-    C_mat[0, ...] = np.matmul(V_delta.transpose(0, 2, 1), psi)
-    C_mat[1, ...] = np.matmul(W_delta.transpose(0, 2, 1), psi)
 
-    return C_mat
+    # C_mat = np.zeros((2, samples, modes, psi.shape[1]))
+    # C_mat[0, ...] = np.matmul(V_delta.transpose(0, 2, 1), psi)
+    # C_mat[1, ...] = np.matmul(W_delta.transpose(0, 2, 1), psi)
+
+    # Ensure arrays are contiguous
+    V_delta = np.ascontiguousarray(V_delta)
+    W_delta = np.ascontiguousarray(W_delta)
+    psi = np.ascontiguousarray(psi)
+
+    C_mat = np.zeros((2, samples, modes, psi.shape[1]), dtype=V_delta.dtype)
+
+    for i in prange(samples):
+        C_mat[0, i, :, :] = V_delta[i].T @ psi
+        C_mat[1, i, :, :] = W_delta[i].T @ psi
+
+    return np.ascontiguousarray(C_mat)
 
 
 @njit
@@ -323,15 +163,21 @@ def LHS_online_primal_FOTR(LHS_matrix, Da, modes):
     M[modes:, :modes] = M12.T
     M[modes:, modes:] = Da.T @ LHS_matrix[2] @ Da
 
-    return M
+    return np.ascontiguousarray(M)
 
 
 @njit
 def RHS_online_primal_FOTR(RHS_matrix, Da, a, C, f, intervalIdx, weight, modes):
-    RHS = np.zeros(modes + 1)
-    RHS[:modes] = RHS_matrix[0] @ a[:modes] + np.add(weight * C[0, intervalIdx],
-                                                     (1 - weight) * C[0, intervalIdx + 1]) @ f
-    RHS[modes:] = Da.T @ (RHS_matrix[1] @ a[:modes] + np.add(weight * C[1, intervalIdx],
-                                                             (1 - weight) * C[1, intervalIdx + 1]) @ f)
 
-    return RHS
+    RHS_matrix_cont = np.ascontiguousarray(RHS_matrix)
+    C_cont = np.ascontiguousarray(C)
+    a_cont = np.ascontiguousarray(a)
+    f_cont = np.ascontiguousarray(f)
+
+    RHS = np.zeros(modes + 1)
+    RHS[:modes] = RHS_matrix_cont[0] @ a_cont + np.add(weight * C_cont[0, intervalIdx],
+                                                     (1 - weight) * C_cont[0, intervalIdx + 1]) @ f_cont
+    RHS[modes:] = Da.T @ (RHS_matrix_cont[1] @ a_cont + np.add(weight * C_cont[1, intervalIdx],
+                                                             (1 - weight) * C_cont[1, intervalIdx + 1]) @ f_cont)
+
+    return np.ascontiguousarray(RHS)

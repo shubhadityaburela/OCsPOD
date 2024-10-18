@@ -8,7 +8,7 @@ from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
 from Grads import Calc_Grad
 from Helper import ControlSelectionMatrix_advection, compute_red_basis
-from Update import Update_Control_PODG_FOTR_adaptive, Update_Control_PODG_FOTR_adaptive_TWBT, \
+from Update import Update_Control_PODG_FOTR_adaptive_TWBT, \
     Update_Control_TWBT
 from advection import advection
 from Plots import PlotFlow
@@ -140,7 +140,8 @@ for opt_step in range(kwargs['opt_iter']):
     Objective and costs for control
     '''
     time_odeint = perf_counter()  # save timing
-    J = Calc_Cost_PODG(V_p, as_, qs_target, f, **kwargs)
+    J = Calc_Cost_PODG(V_p, as_, qs_target, f,
+                       kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
@@ -155,23 +156,17 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    if kwargs['simple_Armijo']:
-        time_odeint = perf_counter()
-        f, J_opt, dL_du, stag = Update_Control_PODG_FOTR_adaptive(f, a_p, qs_adj, qs_target, V_p, Ar_p, psir_p, psi, J,
-                                                                  wf=wf, **kwargs)
-        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
-    else:
-        time_odeint = perf_counter()
-        f, J_opt, dL_du, omega, stag = Update_Control_PODG_FOTR_adaptive_TWBT(f, a_p, qs_adj, qs_target, V_p, Ar_p,
-                                                                              psir_p, psi, J, omega,
-                                                                              wf=wf, **kwargs)
-        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
+    time_odeint = perf_counter()
+    f, J_opt, dL_du, omega, stag = Update_Control_PODG_FOTR_adaptive_TWBT(f, a_p, qs_adj, qs_target, V_p, Ar_p,
+                                                                          psir_p, psi, J, omega,
+                                                                          wf=wf, **kwargs)
+    if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
 
     running_time.append(perf_counter() - time_odeint_s)
 
     qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
-    JJ = Calc_Cost(qs_opt_full, qs_target, f, **kwargs)
+    JJ = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 
     J_opt_FOM_list.append(JJ)
     J_opt_list.append(J_opt)
@@ -222,7 +217,7 @@ f_opt = psi @ f
 
 # Compute the cost with the optimal control
 qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
-J = Calc_Cost(qs_opt_full, qs_target, f, **kwargs)
+J = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 print("\n")
 print(f"J with respect to the optimal control for FOM: {J}")
 

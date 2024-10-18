@@ -5,8 +5,7 @@ This file is the adaptive version. It can handle both the scenarios.
 """
 
 from Coefficient_Matrix import CoefficientMatrix
-from Update import Update_Control_sPODG_FOTR_adaptive, \
-    Update_Control_sPODG_FOTR_adaptive_TWBT
+from Update import Update_Control_sPODG_FOTR_adaptive_TWBT
 from advection import advection
 from Plots import PlotFlow
 from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
@@ -17,18 +16,18 @@ from time import perf_counter
 import numpy as np
 import time
 
-impath = "./data/sPODG/FOTR/Nm=6,TWBT/"  # for data
-immpath = "./plots/sPODG/FOTR/Nm=6,TWBT/"  # for plots
+impath = "./data/sPODG/FOTR/Nm=8,TWBT/"  # for data
+immpath = "./plots/sPODG/FOTR/Nm=8,TWBT/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
 Dimension = "1D"
-Nxi = 400
+Nxi = 800
 Neta = 1
-Nt = 700
+Nt = 1400
 
 # Wildfire solver initialization along with grid initialization
-wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=3 * Nt // 4)
+wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=9 * Nt // 10)
 wf.Grid()
 
 # %%
@@ -78,20 +77,17 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 25000,  # Total iterations
+    'opt_iter': 100,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor
-    'shift_sample': 4000,  # Number of samples for shift interpolation
+    'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
-    'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking
-    'base_tol': 1e-3,  # Base tolerance for selecting number of modes (main variable for truncation)
+    'base_tol': 1e-2,  # Base tolerance for selecting number of modes (main variable for truncation)
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
     'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 6,  # Number of modes for truncation if threshold selected to False.
-    'use_shift_new': True,  # This when set True would shift the primal with the most recent shift value calculated
-    # from the calc_shift function. BUT this would significantly slow down the computation
+    'Nm': 8  # Number of modes for truncation if threshold selected to False.
 }
 
 # %% ROM Variables
@@ -126,6 +122,7 @@ for opt_step in range(kwargs['opt_iter']):
     qs = wf.TI_primal(q0, f, A_p, psi)
 
     qs_s = T.reverse(qs)
+
     V_p, qs_s_POD = compute_red_basis(qs_s, **kwargs)
     Nm = V_p.shape[1]
     err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
@@ -138,7 +135,8 @@ for opt_step in range(kwargs['opt_iter']):
     a_p = wf.IC_primal_sPODG_FOTR(q0, V_p)
 
     # Construct the primal system matrices for the sPOD-Galerkin approach
-    Vd_p, Wd_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'], modes=Nm)
+    Vd_p, Wd_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'],
+                                                             modes=Nm)
 
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward basis refinement t_cpu = %1.3f" % time_odeint)
@@ -147,7 +145,7 @@ for opt_step in range(kwargs['opt_iter']):
     Forward calculation
     '''
     time_odeint = perf_counter()  # save timing
-    as_ = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s)
+    as_, intIds, weights = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
@@ -157,8 +155,8 @@ for opt_step in range(kwargs['opt_iter']):
     # Compute the interpolation weight and the interval in which the shift lies corresponding to which we compute the
     # V_delta and W_delta matrices
     time_odeint = perf_counter()  # save timing
-    intIds, weights = findIntervals(delta_s, as_[-1, :])
-    J = Calc_Cost_sPODG(Vd_p, as_, qs_target, f, intIds, weights, **kwargs)
+    J = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
+                        kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
@@ -173,26 +171,18 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    if kwargs['simple_Armijo']:
-        time_odeint = perf_counter()
-        f, J_opt, dL_du, stag = Update_Control_sPODG_FOTR_adaptive(f, lhs_p, rhs_p, c_p, a_p, qs_adj, qs_target,
-                                                                   delta_s,
-                                                                   Vd_p,
-                                                                   psi, J, wf=wf, **kwargs)
-        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
-    else:
-        time_odeint = perf_counter()
-        f, J_opt, dL_du, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
-                                                                               qs_target, delta_s,
-                                                                               Vd_p,
-                                                                               psi, J, omega, wf=wf,
-                                                                               **kwargs)
-        if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
-
+    time_odeint = perf_counter()
+    f, J_opt, dL_du, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
+                                                                           qs_target, delta_s,
+                                                                           Vd_p,
+                                                                           psi, J, omega, Nm, wf=wf,
+                                                                           **kwargs)
+    if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
     running_time.append(perf_counter() - time_odeint_s)
     qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
-    JJ = Calc_Cost(qs_opt_full, qs_target, f, **kwargs)
+    JJ = Calc_Cost(qs_opt_full, qs_target, f,
+                   kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 
     J_opt_FOM_list.append(JJ)
     J_opt_list.append(J_opt)
@@ -237,11 +227,10 @@ for opt_step in range(kwargs['opt_iter']):
                 break
 
 # Compute the final state
-as__ = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s)
+as__, intIds, weights = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm)
 as_online = as__[:Nm]
 delta_online = as__[-1]
 qs = np.zeros_like(qs_target)
-intIds, weights = findIntervals(delta_s, delta_online)
 for i in range(f.shape[1]):
     V_delta = weights[i] * Vd_p[intIds[i]] + (1 - weights[i]) * Vd_p[intIds[i] + 1]
     qs[:, i] = V_delta @ as_online[:, i]
@@ -250,7 +239,7 @@ f_opt = psi @ f
 
 # Compute the cost with the optimal control
 qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
-J = Calc_Cost(qs_opt_full, qs_target, f, **kwargs)
+J = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 print("\n")
 print(f"J with respect to the optimal control for FOM: {J}")
 
