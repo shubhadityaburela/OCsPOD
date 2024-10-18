@@ -234,7 +234,7 @@ for opt_step in range(kwargs['opt_iter']):
                 print("\n-------------------------------")
                 print(f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
                       f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
-                # break
+                break
 
 # Compute the final state
 as__ = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s)

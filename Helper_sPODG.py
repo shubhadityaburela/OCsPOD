@@ -1,3 +1,4 @@
+import line_profiler
 import numpy as np
 from scipy import sparse
 import sys
@@ -60,15 +61,14 @@ def get_T(delta_s, X, t):
 
     # Create the transformations
     trafo_1 = Transform(data_shape, L, shifts=delta_s[0],
-                         dx=[dx],
-                         use_scipy_transform=False,
-                         interp_order=5)
+                        dx=[dx],
+                        use_scipy_transform=False,
+                        interp_order=5)
 
     return trafo_1.shifts_pos, trafo_1
 
 
 def make_V_W_delta(U, T_delta, D, num_sample, Nx, modes):
-
     V_delta = np.zeros((num_sample, Nx, modes))
     W_delta = np.zeros((num_sample, Nx, modes))
     for it in range(num_sample):
@@ -80,19 +80,21 @@ def make_V_W_delta(U, T_delta, D, num_sample, Nx, modes):
 
 @njit
 def findIntervalAndGiveInterpolationWeight_1D(xPoints, xStar):
-    intervalBool_arr = np.where(xStar >= xPoints, 1, 0)
-    mixed = intervalBool_arr[:-1] * (1 - intervalBool_arr)[1:]
-    index = np.sum(mixed * np.arange(0, mixed.shape[0]))
+    # Use binary search to find the interval index
+    intervalIdx = np.searchsorted(xPoints, xStar) - 1
 
-    intervalIdx = index
-    alpha = (xPoints[intervalIdx + 1] - xStar) / (
-            xPoints[intervalIdx + 1] - xPoints[intervalIdx])
+    # Ensure intervalIdx is within valid range
+    intervalIdx = max(0, min(intervalIdx, len(xPoints) - 2))
+
+    # Compute interpolation weight alpha
+    x1, x2 = xPoints[intervalIdx], xPoints[intervalIdx + 1]
+    alpha = (x2 - xStar) / (x2 - x1)
 
     return intervalIdx, alpha
 
 
-def make_Da(a):
-    D_a = np.copy(a[:len(a) - 1])
+def make_Da(a, modes):
+    D_a = a[:modes]
 
     return D_a[:, np.newaxis]
 
@@ -111,13 +113,13 @@ def get_online_state(T_trafo, V, a, X, t):
 @njit
 def findIntervals(delta_s, delta):
     Nt = len(delta)
-    intIds = []
-    weights = []
+    intIds = np.zeros(Nt, dtype=np.int32)
+    weights = np.zeros(Nt)
 
     for i in range(Nt):
         intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(delta_s[2], -delta[i])
-        intIds.append(intervalIdx)
-        weights.append(weight)
+        intIds[i] = intervalIdx
+        weights[i] = weight
 
     return intIds, weights
 
@@ -284,67 +286,52 @@ def check_invertability_FRTO(LHS_matrix, a_):
 
 ######################################### FOTR sPOD functions #########################################
 
-def LHS_offline_primal_FOTR(V_delta, W_delta):
+@njit
+def LHS_offline_primal_FOTR(V_delta, W_delta, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
-    LHS11 = V_delta[0].transpose() @ V_delta[0]
-    LHS12 = V_delta[0].transpose() @ W_delta[0]
-    LHS22 = W_delta[0].transpose() @ W_delta[0]
-
-    LHS_mat = [LHS11, LHS12, LHS22]
+    LHS_mat = np.zeros((3, modes, modes))
+    LHS_mat[0, ...] = V_delta[0].T @ V_delta[0]
+    LHS_mat[1, ...] = V_delta[0].T @ W_delta[0]
+    LHS_mat[2, ...] = W_delta[0].T @ W_delta[0]
 
     return LHS_mat
 
 
-def RHS_offline_primal_FOTR(V_delta, W_delta, A):
-    A_1 = (V_delta[0].transpose() @ A) @ V_delta[0]
-    A_2 = (W_delta[0].transpose() @ A) @ V_delta[0]
-
-    RHS_mat = [A_1, A_2]
+def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
+    RHS_mat = np.zeros((2, modes, modes))
+    RHS_mat[0, ...] = V_delta[0].T @ A @ V_delta[0]
+    RHS_mat[1, ...] = W_delta[0].T @ A @ V_delta[0]
 
     return RHS_mat
 
 
-def Control_offline_primal_FOTR(V_delta, W_delta, psi):
-
-    C_1 = np.matmul(V_delta.transpose(0, 2, 1), psi)
-    C_2 = np.matmul(W_delta.transpose(0, 2, 1), psi)
-    C_mat = np.stack((C_1, C_2), axis=0)
+def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
+    C_mat = np.zeros((2, samples, modes, psi.shape[1]))
+    C_mat[0, ...] = np.matmul(V_delta.transpose(0, 2, 1), psi)
+    C_mat[1, ...] = np.matmul(W_delta.transpose(0, 2, 1), psi)
 
     return C_mat
 
 
-
-def LHS_online_primal_FOTR(LHS_matrix, Da):
-    M11 = np.copy(LHS_matrix[0])
+@njit
+def LHS_online_primal_FOTR(LHS_matrix, Da, modes):
+    M = np.zeros((modes + 1, modes + 1))
     M12 = LHS_matrix[1] @ Da
-    M21 = M12.transpose()
-    M22 = (Da.transpose() @ LHS_matrix[2]) @ Da
 
-    M = np.block([
-        [M11, M12],
-        [M21, M22]
-    ])
+    M[:modes, :modes] = LHS_matrix[0]
+    M[:modes, modes:] = M12
+    M[modes:, :modes] = M12.T
+    M[modes:, modes:] = Da.T @ LHS_matrix[2] @ Da
 
     return M
 
 
-def RHS_online_primal_FOTR(RHS_matrix, Da):
-    A11 = np.copy(RHS_matrix[0])
-    A21 = Da.transpose() @ RHS_matrix[1]
+@njit
+def RHS_online_primal_FOTR(RHS_matrix, Da, a, C, f, intervalIdx, weight, modes):
+    RHS = np.zeros(modes + 1)
+    RHS[:modes] = RHS_matrix[0] @ a[:modes] + np.add(weight * C[0, intervalIdx],
+                                                     (1 - weight) * C[0, intervalIdx + 1]) @ f
+    RHS[modes:] = Da.T @ (RHS_matrix[1] @ a[:modes] + np.add(weight * C[1, intervalIdx],
+                                                             (1 - weight) * C[1, intervalIdx + 1]) @ f)
 
-    A = np.block([
-        [A11, np.zeros((A11.shape[0], 1))],
-        [A21, np.zeros((A21.shape[0], 1))]
-    ])
-
-    return A
-
-
-
-def Control_online_primal_FOTR(f, C, Da, intervalIdx, weight):
-    C1 = (weight * C[0, intervalIdx] + (1 - weight) * C[0, intervalIdx + 1]) @ f
-    C2 = Da.transpose() @ ((weight * C[1, intervalIdx] + (1 - weight) * C[1, intervalIdx + 1]) @ f)
-
-    C = np.concatenate((C1, C2))
-
-    return C
+    return RHS

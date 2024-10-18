@@ -1,7 +1,8 @@
-from Helper_sPODG import *
-from rk4 import rk4, rk4_, rk4__, rk4_adj
-from numba import njit
+import line_profiler
 
+from Helper_sPODG import *
+from rk4 import rk4, rk4_, rk4__, rk4_adj, rk4_rpr
+from numba import njit
 
 class advection:
     def __init__(self, Nxi: int, Neta: int, timesteps: int, cfl: float, tilt_from: int) -> None:
@@ -34,13 +35,13 @@ class advection:
         # Order of accuracy for the derivative matrices of the first and second order
         self.firstderivativeOrder = "6thOrder"
 
-        self.v_x = 0.5 * np.ones(self.Nt)
+        self.v_x = 0.6 * np.ones(self.Nt)   # 0.761 * np.ones(self.Nt)
         self.v_y = np.zeros(self.Nt)
         self.C = 1.0
 
         self.v_x_target = self.v_x
         self.v_y_target = self.v_y
-        self.v_x_target[tilt_from:] = 1.0
+        self.v_x_target[tilt_from:] = 1.3   # -1.3
 
     def Grid(self):
         self.X = np.arange(1, self.Nxi + 1) * self.Lxi / self.Nxi
@@ -62,7 +63,7 @@ class advection:
 
     def IC_primal(self):
         if self.Neta == 1:
-            q = np.exp(-((self.X - self.Lxi / 12) ** 2) / 7)
+            q = np.exp(-((self.X - self.Lxi / 30) ** 2) / 0.5)
 
         q = np.reshape(q, newshape=self.NN, order="F")
 
@@ -296,10 +297,12 @@ class advection:
 
         return V_p.transpose() @ q0
 
+    @line_profiler.profile
     def RHS_primal_PODG_FOTR(self, a, f, Ar_p, psir_p):
 
         return Ar_p.dot(a) + psir_p.dot(f)
 
+    @line_profiler.profile
     def TI_primal_PODG_FOTR(self, a, f0, Ar_p, psir_p):
         # Time loop
         as_ = np.zeros((a.shape[0], self.Nt))
@@ -332,42 +335,47 @@ class advection:
         V_delta_primal, W_delta_primal = make_V_W_delta(V_p, T_delta, D, samples, self.Nxi, modes)
 
         # Construct LHS matrix
-        LHS_matrix = LHS_offline_primal_FOTR(V_delta_primal, W_delta_primal)
+        LHS_matrix = LHS_offline_primal_FOTR(V_delta_primal, W_delta_primal, modes)
 
         # Construct RHS matrix
-        RHS_matrix = RHS_offline_primal_FOTR(V_delta_primal, W_delta_primal, A_p)
+        RHS_matrix = RHS_offline_primal_FOTR(V_delta_primal, W_delta_primal, A_p, modes)
 
         # Construct the control matrix
-        C_matrix = Control_offline_primal_FOTR(V_delta_primal, W_delta_primal, psi)
+        C_matrix = Control_offline_primal_FOTR(V_delta_primal, W_delta_primal, psi, samples, modes)
 
         return V_delta_primal, W_delta_primal, LHS_matrix, RHS_matrix, C_matrix
 
-    def RHS_primal_sPODG_FOTR(self, a, f, lhs, rhs, c, ds):
+    @line_profiler.profile
+    def RHS_primal_sPODG_FOTR(self, a, f, lhs, rhs, c, ds, modes):
 
         # Compute the interpolation weight and the interval in which the shift lies
         intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -a[-1])
 
         # Assemble the dynamic matrix D(a)
-        Da = make_Da(a)
+        Da = make_Da(a, modes)
 
         # Prepare the LHS side of the matrix using D(a)
-        M = LHS_online_primal_FOTR(lhs, Da)
+        M = LHS_online_primal_FOTR(lhs, Da, modes)
 
         # Prepare the RHS side of the matrix using D(a)
-        A = RHS_online_primal_FOTR(rhs, Da)
+        A = RHS_online_primal_FOTR(rhs, Da, a, c, f, intervalIdx, weight, modes)
 
-        # Prepare the online control matrix
-        C = Control_online_primal_FOTR(f, c, Da, intervalIdx, weight)
+        return np.linalg.solve(M, A), intervalIdx, weight
 
-        return np.linalg.solve(M, A @ a + C)
-
-    def TI_primal_sPODG_FOTR(self, lhs, rhs, c, a, f0, delta_s):
+    @line_profiler.profile
+    def TI_primal_sPODG_FOTR(self, lhs, rhs, c, a, f0, delta_s, modes):
         # Time loop
         as_ = np.zeros((a.shape[0], self.Nt))
+        IntIds = np.zeros(self.Nt, dtype=np.int32)
+        weights = np.zeros(self.Nt)
+
         as_[:, 0] = a
 
         for n in range(1, self.Nt):
-            as_[:, n] = rk4(self.RHS_primal_sPODG_FOTR, as_[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, lhs, rhs, c, delta_s)
+            as_[:, n], IntIds[n - 1], weights[n - 1] = rk4_rpr(self.RHS_primal_sPODG_FOTR, as_[:, n - 1], f0[:, n - 1],
+                                                               f0[:, n], self.dt, lhs, rhs, c, delta_s, modes)
 
-        return as_
+        IntIds[-1], weights[-1] = findIntervalAndGiveInterpolationWeight_1D(delta_s[2], -as_[-1, -1])
+
+        return as_, IntIds, weights
 

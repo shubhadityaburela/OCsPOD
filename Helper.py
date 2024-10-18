@@ -39,7 +39,20 @@ def L2norm_ROM(qq, **kwargs):
 def ControlSelectionMatrix_advection(wf, n_c):
     psi = np.zeros((wf.Nxi, n_c))
     for i in range(n_c):
-        psi[:, i] = func(wf.X - wf.Lxi/n_c - i * wf.Lxi/n_c, sigma=2)
+        psi[:, i] = func(wf.X - wf.Lxi/n_c - i * wf.Lxi/n_c, sigma=1)
+
+    # # Switching off the controls:
+    # psi_small = np.zeros_like(psi)
+    # psi_small[:, -15:] = psi[:, -15:]
+
+    # print(n_c)
+    # import matplotlib.pyplot as plt
+    # import matplotlib
+    # matplotlib.use('TkAgg')
+    # for i in range(n_c):
+    #     plt.plot(psi_small[:, i])
+    # plt.show()
+    # exit()
 
     return psi
 

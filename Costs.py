@@ -1,3 +1,5 @@
+from numba import njit
+
 from Helper import *
 
 

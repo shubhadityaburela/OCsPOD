@@ -5,21 +5,26 @@ This file is the adaptive version. It can handle both the scenarios.
 """
 
 from Coefficient_Matrix import CoefficientMatrix
-from Costs import Calc_Cost_PODG, Calc_Cost
-from Grads import Calc_Grad
-from Helper import ControlSelectionMatrix_advection, compute_red_basis
-from Update import Update_Control_PODG_FOTR_adaptive, Update_Control_PODG_FOTR_adaptive_TWBT, \
-    Update_Control_TWBT
+from Update import Update_Control_sPODG_FOTR_adaptive, \
+    Update_Control_sPODG_FOTR_adaptive_TWBT
 from advection import advection
 from Plots import PlotFlow
-import sys
-import numpy as np
+from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
+from Helper_sPODG import subsample, findIntervals, get_T, central_FDMatrix
+from Costs import Calc_Cost_sPODG, Calc_Cost
 import os
 from time import perf_counter
+import numpy as np
 import time
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('TkAgg')
 
-impath = "./test_4/data/PODG/FOTR/Nm=100,TWBT/"  # for data
-immpath = "./test_4/plots/PODG/FOTR/Nm=100,TWBT/"  # for plots
+
+##  Adaptive shift refinement (Sharp Gaussian)
+
+impath = "./test_4/data/sPODG/FOTR/Nm=8,TWBT/"  # for data
+immpath = "./test_4/plots/sPODG/FOTR/Nm=8,TWBT/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
@@ -28,7 +33,7 @@ Nxi = 800
 Neta = 1
 Nt = 1400
 
-# solver initialization along with grid initialization
+# Wildfire solver initialization along with grid initialization
 wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=9 * Nt // 10)
 wf.Grid()
 
@@ -57,7 +62,7 @@ np.save(impath + 'qs_target.npy', qs_target)
 q0 = wf.IC_primal()
 q0_adj = wf.IC_adjoint()
 
-# %% Optimal control
+# %%
 dL_du_list = []  # Collecting the gradient over the optimization steps
 J_opt_FOM_list = []  # Collecting the FOM cost over the optimization steps
 running_time = []  # Time calculated for each iteration in a running manner
@@ -65,6 +70,7 @@ J_opt_list = []  # Collecting the optimal cost functional for plotting
 dL_du_ratio_list = []  # Collecting the ratio of gradients for plotting
 err_list = []  # Offline error reached according to the tolerance
 trunc_modes_list = []  # Number of modes needed to reach the offline error
+shift_refine_cntr_list = []  # Collects the iteration number at which the shifts are refined/updated
 
 # List of problem constants
 kwargs = {
@@ -82,20 +88,36 @@ kwargs = {
     'opt_iter': 100,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor
+    'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
-    'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking(Preferable option)
+    'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking
     'base_tol': 1e-2,  # Base tolerance for selecting number of modes (main variable for truncation)
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
     'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 100,  # Number of modes for truncation if threshold selected to False.
+    'Nm': 8,  # Number of modes for truncation if threshold selected to False.
+    'use_shift_new': True,  # This when set True would shift the primal with the most recent shift value calculated
+    # from the ROM in the previous step. BUT this would significantly slow down the computation
 }
+
+# %% ROM Variables
+D = central_FDMatrix(order=6, Nx=wf.Nxi, dx=wf.dx)
+
+# Generate the shift samples
+delta_s = subsample(wf.X, num_sample=kwargs['shift_sample'])
+
+# Extract transformation operators based on sub-sampled delta
+T_delta, _ = get_T(delta_s, wf.X, wf.t)
+
+delta_init = calc_shift(qs_org, q0, wf.X, wf.t)
+_, T = get_T(delta_init, wf.X, wf.t)
 
 # For two-way backtracking line search
 omega = 1
 
 stag = False
+stag_cntr = 0
 
 start = time.time()
 time_odeint_s = perf_counter()  # save running time
@@ -107,40 +129,59 @@ for opt_step in range(kwargs['opt_iter']):
 
     time_odeint = perf_counter()  # save timing
     '''
-    Forward calculation with primal for basis update
+    Forward calculation with primal FOM for basis update
     '''
     qs = wf.TI_primal(q0, f, A_p, psi)
 
-    V_p, qs_POD = compute_red_basis(qs, **kwargs)
+    if kwargs['use_shift_new']:
+        if opt_step != 0:
+            if stag:
+                z = calc_shift(qs, q0, wf.X, wf.t)
+                _, T = get_T(z, wf.X, wf.t)
+                shift_refine_cntr_list.append(opt_step)
+
+    qs_s = T.reverse(qs)
+
+    # fig = plt.figure(figsize=(5, 5))
+    # ax1 = fig.add_subplot(111)
+    # im1 = ax1.pcolormesh(qs_s.T, cmap='YlOrRd')
+    # ax1.axis('off')
+    # ax1.set_title(r"$q(x, t)$")
+    # plt.show()
+
+    V_p, qs_s_POD = compute_red_basis(qs_s, **kwargs)
     Nm = V_p.shape[1]
-    err = np.linalg.norm(qs - qs_POD) / np.linalg.norm(qs)
-    print(f"Relative error for primal: {err}, with Nm: {Nm}")
+    err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
+    print(f"Relative error for shifted primal: {err}, with Nm: {Nm}")
 
     err_list.append(err)
     trunc_modes_list.append(Nm)
 
     # Initial condition for dynamical simulation
-    a_p = wf.IC_primal_PODG_FOTR(V_p, q0)
+    a_p = wf.IC_primal_sPODG_FOTR(q0, V_p)
 
-    # Construct the primal system matrices for the POD-Galerkin approach
-    Ar_p, psir_p = wf.mat_primal_PODG_FOTR(A_p, V_p, psi)
+    # Construct the primal system matrices for the sPOD-Galerkin approach
+    Vd_p, Wd_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'], modes=Nm)
 
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward basis refinement t_cpu = %1.3f" % time_odeint)
 
     '''
-    Forward calculation with reduced system
+    Forward calculation
     '''
     time_odeint = perf_counter()  # save timing
-    as_ = wf.TI_primal_PODG_FOTR(a_p, f, Ar_p, psir_p)
+    as_, intIds, weights = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
     '''
     Objective and costs for control
     '''
+    # Compute the interpolation weight and the interval in which the shift lies corresponding to which we compute the
+    # V_delta and W_delta matrices
     time_odeint = perf_counter()  # save timing
-    J = Calc_Cost_PODG(V_p, as_, qs_target, f, **kwargs)
+    # intIds, weights = findIntervals(delta_s, as_[-1, :])
+    J = Calc_Cost_sPODG(Vd_p, as_, qs_target, f, intIds, weights, **kwargs)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
@@ -157,19 +198,22 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     if kwargs['simple_Armijo']:
         time_odeint = perf_counter()
-        f, J_opt, dL_du, stag = Update_Control_PODG_FOTR_adaptive(f, a_p, qs_adj, qs_target, V_p, Ar_p, psir_p, psi, J,
-                                                                  wf=wf, **kwargs)
+        f, J_opt, dL_du, stag = Update_Control_sPODG_FOTR_adaptive(f, lhs_p, rhs_p, c_p, a_p, qs_adj, qs_target,
+                                                                   delta_s,
+                                                                   Vd_p,
+                                                                   psi, J, Nm, wf=wf, **kwargs)
         if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
     else:
         time_odeint = perf_counter()
-        f, J_opt, dL_du, omega, stag = Update_Control_PODG_FOTR_adaptive_TWBT(f, a_p, qs_adj, qs_target, V_p, Ar_p,
-                                                                              psir_p, psi, J, omega,
-                                                                              wf=wf, **kwargs)
+        f, J_opt, dL_du, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
+                                                                               qs_target, delta_s,
+                                                                               Vd_p,
+                                                                               psi, J, omega, Nm, wf=wf,
+                                                                               **kwargs)
         if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
 
     running_time.append(perf_counter() - time_odeint_s)
-
     qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
     JJ = Calc_Cost(qs_opt_full, qs_target, f, **kwargs)
 
@@ -200,24 +244,40 @@ for opt_step in range(kwargs['opt_iter']):
     else:
         if opt_step == 0:
             if stag:
-                print("\n\n-------------------------------")
-                print(f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
-                      f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
-                break
+                print("\n-------------------------------")
+                print(
+                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the shifts at itr: {opt_step}")
+                stag_cntr = stag_cntr + 1
+            else:
+                stag_cntr = 0
         else:
             dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
             if abs(dJ) == 0:
                 print(f"WARNING: dJ has turned close to 0...")
                 break
             if stag:
+                stag_cntr = stag_cntr + 1
+                if stag_cntr >= 2:
+                    print(
+                        f"Armijo Stagnated !!!!!! even after 2 consecutive shift updates thus exiting at itr: {opt_step} with "
+                        f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
+                    break
                 print("\n-------------------------------")
-                print(f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
-                      f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
-                break
+                print(
+                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the shifts at itr: {opt_step}")
+            else:
+                stag_cntr = 0
 
 # Compute the final state
-as__ = wf.TI_primal_PODG_FOTR(a_p, f, Ar_p, psir_p)
-qs = V_p @ as__
+as__, intIds, weights = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm)
+as_online = as__[:Nm]
+delta_online = as__[-1]
+qs = np.zeros_like(qs_target)
+# intIds, weights = findIntervals(delta_s, delta_online)
+for i in range(f.shape[1]):
+    V_delta = weights[i] * Vd_p[intIds[i]] + (1 - weights[i]) * Vd_p[intIds[i] + 1]
+    qs[:, i] = V_delta @ as_online[:, i]
+
 f_opt = psi @ f
 
 # Compute the cost with the optimal control
@@ -229,15 +289,16 @@ print(f"J with respect to the optimal control for FOM: {J}")
 end = time.time()
 print("\n")
 print("Total time elapsed = %1.3f" % (end - start))
-
 # %%
+
 # Save the convergence lists
-np.save(impath + 'J_opt_list.npy', J_opt_list)
-np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
+np.save(impath + 'J_opt_FOM_list.npy', J_opt_list)
+np.save(impath + 'J_opt_list.npy', J_opt_FOM_list)
 np.save(impath + 'dL_du_ratio_list.npy', dL_du_ratio_list)
 np.save(impath + 'err_list.npy', err_list)
 np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
+np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs)
@@ -266,3 +327,22 @@ if Dimension == "1D":
                           err_list,
                           trunc_modes_list,
                           immpath=immpath)
+
+
+# np.save('tmp_.npy', tmp_)
+
+# fig = plt.figure(figsize=(5, 5))
+# ax1 = fig.add_subplot(111)
+# im1 = ax1.pcolormesh(qs_s.T, cmap='YlOrRd')
+# ax1.axis('off')
+# ax1.set_title(r"$q(x, t)$")
+# plt.show()
+
+
+
+# tmp_= []
+# tmp_.append(delta_init[0])
+# import matplotlib.pyplot as plt
+# import matplotlib
+# matplotlib.use('TkAgg')
+

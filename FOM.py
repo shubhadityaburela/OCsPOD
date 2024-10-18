@@ -16,12 +16,12 @@ os.makedirs(impath, exist_ok=True)
 
 # Problem variables
 Dimension = "1D"
-Nxi = 400
+Nxi = 800
 Neta = 1
-Nt = 700
+Nt = 1400
 
 # solver initialization along with grid initialization
-wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=3*Nt//4)
+wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=9 * Nt // 10)
 wf.Grid()
 
 #%%
@@ -68,7 +68,7 @@ kwargs = {
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 25000,  # Total iterations
+    'opt_iter': 1,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor for simple Armijo
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search

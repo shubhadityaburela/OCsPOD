@@ -1,3 +1,6 @@
+import line_profiler
+from numba import njit
+
 from Costs import *
 from Grads import *
 from Helper import *
@@ -177,9 +180,8 @@ def Update_Control_PODG_FRTO_adaptive(f, a0_primal, as_adj, qs_target, V, Ar, ps
                         omega = omega / kwargs['omega_decr']
 
 
-
-def Update_Control_PODG_FRTO_adaptive_TWBT(f, a0_primal, as_adj, qs_target, V, Ar, psir, J_prev, omega_prev, wf, **kwargs):
-
+def Update_Control_PODG_FRTO_adaptive_TWBT(f, a0_primal, as_adj, qs_target, V, Ar, psir, J_prev, omega_prev, wf,
+                                           **kwargs):
     time_odeint = perf_counter()  # save timing
     dL_du = Calc_Grad_PODG(psir, f, as_adj, **kwargs)
     time_odeint = perf_counter() - time_odeint
@@ -238,7 +240,7 @@ def Update_Control_PODG_FRTO_adaptive_TWBT(f, a0_primal, as_adj, qs_target, V, A
 
 
 def Update_Control_sPODG_FRTO_adaptive(f, lhs, rhs, c, Vd_p, a0_primal, as_, as_adj, qs_target, delta_s, J_prev,
-                              intIds, weights, wf, **kwargs):
+                                       intIds, weights, wf, **kwargs):
     print("Armijo iterations.........")
     count = 0
     itr = 5
@@ -295,9 +297,9 @@ def Update_Control_sPODG_FRTO_adaptive(f, lhs, rhs, c, Vd_p, a0_primal, as_, as_
                         omega = omega / kwargs['omega_decr']
 
 
-def Update_Control_sPODG_FRTO_adaptive_TWBT(f, lhs, rhs, c, Vd_p, a0_primal, as_, as_adj, qs_target, delta_s, J_prev, omega_prev,
-                                       intIds, weights, wf, **kwargs):
-
+def Update_Control_sPODG_FRTO_adaptive_TWBT(f, lhs, rhs, c, Vd_p, a0_primal, as_, as_adj, qs_target, delta_s, J_prev,
+                                            omega_prev,
+                                            intIds, weights, wf, **kwargs):
     time_odeint = perf_counter()  # save timing
     dL_du = Calc_Grad_sPODG_FRTO(f, c, intIds, weights, as_, as_adj, **kwargs)
     time_odeint = perf_counter() - time_odeint
@@ -356,7 +358,6 @@ def Update_Control_sPODG_FRTO_adaptive_TWBT(f, lhs, rhs, c, Vd_p, a0_primal, as_
 
             if kwargs['verbose']: print(f"Armijo not satisfied thus omega decreased to = {omega}", f"at step={k}")
             k = k + 1
-
 
 
 def Update_Control_PODG_FOTR_adaptive(f, a0_primal, qs_adj, qs_target, V_p, Ar_p, psir_p, mask, J_prev, wf, **kwargs):
@@ -474,7 +475,8 @@ def Update_Control_PODG_FOTR_adaptive_TWBT(f, a0_primal, qs_adj, qs_target, V_p,
             k = k + 1
 
 
-def Update_Control_sPODG_FOTR_adaptive(f, lhs, rhs, c, a0_primal, qs_adj, qs_target, delta_s, Vdp, mask, J_prev, wf, **kwargs):
+def Update_Control_sPODG_FOTR_adaptive(f, lhs, rhs, c, a0_primal, qs_adj, qs_target, delta_s, Vdp, mask, J_prev, modes,
+                                       wf, **kwargs):
     print("Armijo iterations.........")
     count = 0
     itr = 5
@@ -490,7 +492,7 @@ def Update_Control_sPODG_FOTR_adaptive(f, lhs, rhs, c, a0_primal, qs_adj, qs_tar
         f_new = f - omega * dL_du
 
         # Solve the primal equation
-        as_ = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s)
+        as_ = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s, modes)
         intIds_k, weights_k = findIntervals(delta_s, as_[-1, :])
 
         if np.isnan(as_).any() and k < kwargs['Armijo_iter'] - 1:
@@ -532,7 +534,7 @@ def Update_Control_sPODG_FOTR_adaptive(f, lhs, rhs, c, a0_primal, qs_adj, qs_tar
 
 
 def Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, qs_target, delta_s, Vdp, mask, J_prev,
-                                            omega_prev, wf, **kwargs):
+                                            omega_prev, modes, wf, **kwargs):
     time_odeint = perf_counter()  # save timing
     dL_du = Calc_Grad(mask, f, qs_adj, **kwargs)
     time_odeint = perf_counter() - time_odeint
@@ -546,8 +548,8 @@ def Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, q
 
     # Checking the Armijo condition
     f_new = f - omega * dL_du
-    as_ = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s)
-    intIds, weights = findIntervals(delta_s, as_[-1, :])
+    as_, intIds, weights = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s, modes)
+    # intIds, weights = findIntervals(delta_s, as_[-1, :])
     J = Calc_Cost_sPODG(Vdp, as_, qs_target, f_new, intIds, weights, **kwargs)
     dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
     if J < dJ:  # If Armijo satisfied
@@ -558,8 +560,8 @@ def Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, q
             J_final = J
             omega = omega / beta
             f_new = f - omega * dL_du
-            as_ = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s)
-            intIds_n, weights_n = findIntervals(delta_s, as_[-1, :])
+            as_, intIds_n, weights_n = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s, modes)
+            # intIds_n, weights_n = findIntervals(delta_s, as_[-1, :])
             J = Calc_Cost_sPODG(Vdp, as_, qs_target, f_new, intIds_n, weights_n, **kwargs)
             dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
             if J >= dJ:
@@ -574,8 +576,8 @@ def Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, q
         while True:
             omega = beta * omega
             f_new = f - omega * dL_du
-            as_ = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s)
-            intIds_k, weights_k = findIntervals(delta_s, as_[-1, :])
+            as_, intIds_k, weights_k = wf.TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s, modes)
+            # intIds_k, weights_k = findIntervals(delta_s, as_[-1, :])
             J = Calc_Cost_sPODG(Vdp, as_, qs_target, f_new, intIds_k, weights_k, **kwargs)
             dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
             if J < dJ:  # If Armijo satisfied
