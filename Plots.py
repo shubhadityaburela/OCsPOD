@@ -8,7 +8,6 @@ import matplotlib.animation as animation
 from matplotlib import cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.ticker import MaxNLocator
-import moviepy.video.io.ImageSequenceClip
 import glob
 
 plt.rcParams.update({

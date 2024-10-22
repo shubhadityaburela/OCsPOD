@@ -20,16 +20,28 @@ Nxi = 800
 Neta = 1
 Nt = 1400
 
-# solver initialization along with grid initialization
-wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=9 * Nt // 10)
+# Wildfire solver initialization along with grid initialization
+# Thick wave params:                                       # Sharp wave params:
+# cfl = 0.8                                                # cfl = 0.8
+# tilt_from = 3 * Nt // 4                                  # tilt_from = 9 * Nt // 10
+# v_x = 0.5                                                # v_x = 0.6
+# v_x_t = 1.0                                              # v_x_t = 1.3
+# variance = 7                                             # variance = 0.5
+# offset = 12                                              # offset = 30
+# mask_gaussian_sigma = 2                                  # mask_gaussian_sigma = 1
+wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8,
+               tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 wf.Grid()
 
-#%%
-n_c = 40  # Number of controls
-f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
+# %%
+n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c)
+psi = ControlSelectionMatrix_advection(wf, n_c_init, trim_first_n=30, gaussian_mask_sigma=1)  # Changing the value of
+# trim_first_n should basically make the psi matrix and the number of controls to be user defined.
+n_c = psi.shape[1]
+f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
+
 
 #%% Assemble the linear operators
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
@@ -68,11 +80,11 @@ kwargs = {
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 30,  # Total iterations
+    'opt_iter': 10000,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor for simple Armijo
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
-    'verbose': True,  # Print options
+    'verbose': False,  # Print options
     'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking
     'omega_cutoff': 1e-10  # Below this cutoff the Armijo and Backtracking should exit the update loop
 }

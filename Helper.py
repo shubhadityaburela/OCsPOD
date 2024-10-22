@@ -1,14 +1,9 @@
 import line_profiler
 import numpy as np
-from jax import jit, jacobian
 from numba import njit, prange
-from sklearn.decomposition import TruncatedSVD
 from sklearn.utils.extmath import randomized_svd
-from jax.scipy.optimize import minimize
 from scipy.optimize import root
 from scipy import integrate
-import jax.numpy as jnp
-import jax
 from scipy import optimize
 import sys
 
@@ -64,21 +59,21 @@ def L2norm_ROM(qq, dt):
 
 
 # Other Helper functions
-def ControlSelectionMatrix_advection(wf, n_c):
-    psi = np.zeros((wf.Nxi, n_c))
-    for i in range(n_c):
-        psi[:, i] = func(wf.X - wf.Lxi/n_c - i * wf.Lxi/n_c, sigma=1)
-
-    # # Switching off the controls:
-    # psi_small = np.zeros_like(psi)
-    # psi_small[:, -15:] = psi[:, -15:]
+def ControlSelectionMatrix_advection(wf, n_c, trim_first_n=0, gaussian_mask_sigma=1):
+    if trim_first_n >= n_c:
+        print("Number of controls should always be more than the number which you want to trim out. "
+              "Set it accordingly. Exiting !!!!!!!")
+        exit()
+    psi = np.zeros((wf.Nxi, n_c - trim_first_n))
+    for i in range(n_c - trim_first_n):
+        psi[:, i] = func(wf.X - wf.Lxi/n_c - (trim_first_n + i) * wf.Lxi/n_c, sigma=gaussian_mask_sigma)
 
     # print(n_c)
     # import matplotlib.pyplot as plt
     # import matplotlib
     # matplotlib.use('TkAgg')
-    # for i in range(n_c):
-    #     plt.plot(psi_small[:, i])
+    # for i in range(n_c - trim_first_n):
+    #     plt.plot(psi[:, i])
     # plt.show()
     # exit()
 
@@ -124,4 +119,11 @@ def compute_red_basis(qs, **kwargs):
     else:
         U, S, VT = randomized_svd(qs, n_components=kwargs['Nm'], random_state=42)
         return U, U @ np.diag(S) @ VT
+
+
+
+
+def multiply_sparse_dense(args):
+    i, sparse_slice, dense_slice = args
+    return i, sparse_slice @ dense_slice
 

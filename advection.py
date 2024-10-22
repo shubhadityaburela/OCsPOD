@@ -8,7 +8,8 @@ from numba import njit
 
 
 class advection:
-    def __init__(self, Nxi: int, Neta: int, timesteps: int, cfl: float, tilt_from: int) -> None:
+    def __init__(self, Nxi: int, Neta: int, timesteps: int, cfl: float, tilt_from: int, v_x: float, v_x_t: float,
+                 variance: float, offset: int) -> None:
         # Assertion statements for checking the sanctity of the input variables
         assert Nxi > 0, f"Please input sensible values for the X grid points"
         assert Neta > 0, f"Please input sensible values for the Y grid points"
@@ -38,13 +39,16 @@ class advection:
         # Order of accuracy for the derivative matrices of the first and second order
         self.firstderivativeOrder = "6thOrder"
 
-        self.v_x = 0.6 * np.ones(self.Nt)   # 0.761 * np.ones(self.Nt)
+        self.v_x = v_x * np.ones(self.Nt)   # 0.6 * np.ones(self.Nt)
         self.v_y = np.zeros(self.Nt)
         self.C = 1.0
 
         self.v_x_target = self.v_x
         self.v_y_target = self.v_y
-        self.v_x_target[tilt_from:] = 1.3   # -1.3
+        self.v_x_target[tilt_from:] = v_x_t   # 1.3
+
+        self.variance = variance  # Variance of the gaussian for the initial condition
+        self.offset = offset  # Offset from where the wave starts
 
     def Grid(self):
         self.X = np.arange(1, self.Nxi + 1) * self.Lxi / self.Nxi
@@ -66,7 +70,7 @@ class advection:
 
     def IC_primal(self):
         if self.Neta == 1:
-            q = np.exp(-((self.X - self.Lxi / 30) ** 2) / 0.5)
+            q = np.exp(-((self.X - self.Lxi / self.offset) ** 2) / self.variance)
 
         q = np.reshape(q, newshape=self.NN, order="F")
 
@@ -74,7 +78,7 @@ class advection:
 
     def RHS_primal(self, q, f, A, psi):
 
-        return A.dot(q) + psi @ f
+        return A @ q + psi @ f
 
     def TI_primal(self, q, f0=None, A=None, psi=None):
         # Time loop
@@ -93,7 +97,7 @@ class advection:
 
     def RHS_adjoint(self, q_adj, q, q_tar, A):
 
-        return - A.dot(q_adj) - (q - q_tar)
+        return - A @ q_adj - (q - q_tar)
 
 
     def TI_adjoint(self, q0_adj, qs, qs_target, A):

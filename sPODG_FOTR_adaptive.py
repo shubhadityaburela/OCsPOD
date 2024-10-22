@@ -15,9 +15,10 @@ import os
 from time import perf_counter
 import numpy as np
 import time
+from scipy.sparse import csr_matrix
 
-impath = "./data/sPODG/FOTR/Nm=8,TWBT/"  # for data
-immpath = "./plots/sPODG/FOTR/Nm=8,TWBT/"  # for plots
+impath = ".test/data/sPODG/FOTR/Nm=8,TWBT/"  # for data
+immpath = ".test/plots/sPODG/FOTR/Nm=8,TWBT/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
@@ -27,15 +28,26 @@ Neta = 1
 Nt = 1400
 
 # Wildfire solver initialization along with grid initialization
-wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=9 * Nt // 10)
+# Thick wave params:                                       # Sharp wave params:
+# cfl = 0.8                                                # cfl = 0.8
+# tilt_from = 3 * Nt // 4                                  # tilt_from = 9 * Nt // 10
+# v_x = 0.5                                                # v_x = 0.6
+# v_x_t = 1.0                                              # v_x_t = 1.3
+# variance = 7                                             # variance = 0.5
+# offset = 12                                              # offset = 30
+# mask_gaussian_sigma = 2                                  # mask_gaussian_sigma = 1
+wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8,
+               tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 wf.Grid()
 
 # %%
-n_c = 40  # Number of controls
-f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
+n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c)
+psi = ControlSelectionMatrix_advection(wf, n_c_init, trim_first_n=0, gaussian_mask_sigma=1)  # Changing the value of
+# trim_first_n should basically make the psi matrix and the number of controls to be user defined.
+n_c = psi.shape[1]
+f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
 
 # %% Assemble the linear operators
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
@@ -63,6 +75,8 @@ J_opt_list = []  # Collecting the optimal cost functional for plotting
 dL_du_ratio_list = []  # Collecting the ratio of gradients for plotting
 err_list = []  # Offline error reached according to the tolerance
 trunc_modes_list = []  # Number of modes needed to reach the offline error
+shift_refine_cntr_list = []  # Collects the iteration number at which the shifts are refined/updated
+
 
 # List of problem constants
 kwargs = {
@@ -77,7 +91,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100,  # Total iterations
+    'opt_iter': 1000,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor
     'shift_sample': 800,  # Number of samples for shift interpolation
@@ -87,7 +101,7 @@ kwargs = {
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
     'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 8  # Number of modes for truncation if threshold selected to False.
+    'Nm': 3,  # Number of modes for truncation if threshold selected to False.
 }
 
 # %% ROM Variables
@@ -106,6 +120,7 @@ _, T = get_T(delta_init, wf.X, wf.t)
 omega = 1
 
 stag = False
+stag_cntr = 0
 
 start = time.time()
 time_odeint_s = perf_counter()  # save running time
@@ -120,6 +135,11 @@ for opt_step in range(kwargs['opt_iter']):
     Forward calculation with primal FOM for basis update
     '''
     qs = wf.TI_primal(q0, f, A_p, psi)
+
+    if stag:
+        z = calc_shift(qs, q0, wf.X, wf.t)
+        _, T = get_T(z, wf.X, wf.t)
+        shift_refine_cntr_list.append(opt_step)
 
     qs_s = T.reverse(qs)
 
@@ -200,6 +220,7 @@ for opt_step in range(kwargs['opt_iter']):
             f"WARNING... maximal number of steps reached, "
             f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}"
         )
+        f_last_valid = np.copy(f)
         break
     elif dL_du / dL_du_list[0] < kwargs['delta_conv']:
         print("\n\n-------------------------------")
@@ -207,38 +228,44 @@ for opt_step in range(kwargs['opt_iter']):
             f"Optimization converged with, "
             f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}"
         )
+        f_last_valid = np.copy(f)
         break
     else:
         if opt_step == 0:
             if stag:
-                print("\n\n-------------------------------")
-                print(f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
-                      f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
-                break
+                print("\n-------------------------------")
+                print(
+                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the shifts at itr: {opt_step}")
+                stag_cntr = stag_cntr + 1
+                f_last_valid = np.copy(f)
+            else:
+                stag_cntr = 0
         else:
             dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
             if abs(dJ) == 0:
                 print(f"WARNING: dJ has turned close to 0...")
+                f_last_valid = np.copy(f)
                 break
             if stag:
+                stag_cntr = stag_cntr + 1
+                if stag_cntr >= 2:
+                    print(
+                        f"Armijo Stagnated !!!!!! even after 2 consecutive shift updates thus exiting at itr: {opt_step} with "
+                        f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
+                    break
                 print("\n-------------------------------")
-                print(f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
-                      f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
-                break
+                print(
+                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the shifts at itr: {opt_step}")
+                f_last_valid = np.copy(f)
+            else:
+                stag_cntr = 0
 
 # Compute the final state
-as__, intIds, weights = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm)
-as_online = as__[:Nm]
-delta_online = as__[-1]
-qs = np.zeros_like(qs_target)
-for i in range(f.shape[1]):
-    V_delta = weights[i] * Vd_p[intIds[i]] + (1 - weights[i]) * Vd_p[intIds[i] + 1]
-    qs[:, i] = V_delta @ as_online[:, i]
+qs_opt_full = wf.TI_primal(q0, f_last_valid, A_p, psi)
 
 f_opt = psi @ f
 
 # Compute the cost with the optimal control
-qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
 J = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 print("\n")
 print(f"J with respect to the optimal control for FOM: {J}")
@@ -255,9 +282,11 @@ np.save(impath + 'dL_du_ratio_list.npy', dL_du_ratio_list)
 np.save(impath + 'err_list.npy', err_list)
 np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
+np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
+
 
 # Save the optimized solution
-np.save(impath + 'qs_opt.npy', qs)
+np.save(impath + 'qs_opt.npy', qs_opt_full)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
 np.save(impath + 'f_opt_low.npy', f)

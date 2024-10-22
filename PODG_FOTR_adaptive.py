@@ -18,8 +18,8 @@ import os
 from time import perf_counter
 import time
 
-impath = "./test_4/data/PODG/FOTR/Nm=100,TWBT/"  # for data
-immpath = "./test_4/plots/PODG/FOTR/Nm=100,TWBT/"  # for plots
+impath = ".test/data/PODG/FOTR/Nm=100,TWBT/"  # for data
+immpath = ".test/plots/PODG/FOTR/Nm=100,TWBT/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
@@ -28,16 +28,28 @@ Nxi = 800
 Neta = 1
 Nt = 1400
 
-# solver initialization along with grid initialization
-wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8, tilt_from=9 * Nt // 10)
+# Wildfire solver initialization along with grid initialization
+# Thick wave params:                                       # Sharp wave params:
+# cfl = 0.8                                                # cfl = 0.8
+# tilt_from = 3 * Nt // 4                                  # tilt_from = 9 * Nt // 10
+# v_x = 0.5                                                # v_x = 0.6
+# v_x_t = 1.0                                              # v_x_t = 1.3
+# variance = 7                                             # variance = 0.5
+# offset = 12                                              # offset = 30
+# mask_gaussian_sigma = 2                                  # mask_gaussian_sigma = 1
+wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8,
+               tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 wf.Grid()
 
 # %%
-n_c = 40  # Number of controls
-f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
+n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c)
+psi = ControlSelectionMatrix_advection(wf, n_c_init, trim_first_n=10, gaussian_mask_sigma=1)  # Changing the value of
+# trim_first_n should basically make the psi matrix and the number of controls to be user defined.
+n_c = psi.shape[1]
+f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
+
 
 # %% Assemble the linear operators
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
@@ -79,7 +91,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100,  # Total iterations
+    'opt_iter': 10000,  # Total iterations
     'Armijo_iter': 20,  # Armijo iterations
     'omega_decr': 4,  # Decrease omega by a factor
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
@@ -211,12 +223,10 @@ for opt_step in range(kwargs['opt_iter']):
                 break
 
 # Compute the final state
-as__ = wf.TI_primal_PODG_FOTR(a_p, f, Ar_p, psir_p)
-qs = V_p @ as__
+qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
 f_opt = psi @ f
 
 # Compute the cost with the optimal control
-qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
 J = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 print("\n")
 print(f"J with respect to the optimal control for FOM: {J}")
@@ -235,7 +245,7 @@ np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
 
 # Save the optimized solution
-np.save(impath + 'qs_opt.npy', qs)
+np.save(impath + 'qs_opt.npy', qs_opt_full)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
 np.save(impath + 'f_opt_low.npy', f)

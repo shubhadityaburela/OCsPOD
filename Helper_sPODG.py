@@ -2,6 +2,9 @@ import line_profiler
 import numpy as np
 from scipy import sparse
 import sys
+import opt_einsum as oe
+
+from Helper import multiply_sparse_dense
 
 sys.path.append('./sPOD/lib/')
 
@@ -113,13 +116,12 @@ def findIntervals(delta_s, delta):
 
 ######################################### FOTR sPOD functions #########################################
 
-@njit
 def LHS_offline_primal_FOTR(V_delta, W_delta, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
     LHS_mat = np.zeros((3, modes, modes))
-    LHS_mat[0, ...] = V_delta[0].T @ V_delta[0]
-    LHS_mat[1, ...] = V_delta[0].T @ W_delta[0]
-    LHS_mat[2, ...] = W_delta[0].T @ W_delta[0]
+    LHS_mat[0, ...] = oe.contract('ij,jk->ik', V_delta[0].T, V_delta[0])
+    LHS_mat[1, ...] = oe.contract('ij,jk->ik', V_delta[0].T, W_delta[0])
+    LHS_mat[2, ...] = oe.contract('ij,jk->ik', W_delta[0].T, W_delta[0])
 
     return np.ascontiguousarray(LHS_mat)
 
@@ -135,9 +137,9 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
 @njit(parallel=True)
 def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
 
-    # C_mat = np.zeros((2, samples, modes, psi.shape[1]))
-    # C_mat[0, ...] = np.matmul(V_delta.transpose(0, 2, 1), psi)
-    # C_mat[1, ...] = np.matmul(W_delta.transpose(0, 2, 1), psi)
+    # # Nice alternative and is equally faster
+    # VW_delta = np.stack((V_delta, W_delta), axis=0)
+    # C_mat = oe.contract("zabc,bd->zacd", VW_delta, psi)
 
     # Ensure arrays are contiguous
     V_delta = np.ascontiguousarray(V_delta)
@@ -168,13 +170,14 @@ def LHS_online_primal_FOTR(LHS_matrix, Da, modes):
 
 @njit
 def RHS_online_primal_FOTR(RHS_matrix, Da, a, C, f, intervalIdx, weight, modes):
+    RHS = np.zeros(modes + 1)
 
     RHS_matrix_cont = np.ascontiguousarray(RHS_matrix)
     C_cont = np.ascontiguousarray(C)
     a_cont = np.ascontiguousarray(a)
     f_cont = np.ascontiguousarray(f)
 
-    RHS = np.zeros(modes + 1)
+
     RHS[:modes] = RHS_matrix_cont[0] @ a_cont + np.add(weight * C_cont[0, intervalIdx],
                                                      (1 - weight) * C_cont[0, intervalIdx + 1]) @ f_cont
     RHS[modes:] = Da.T @ (RHS_matrix_cont[1] @ a_cont + np.add(weight * C_cont[1, intervalIdx],
