@@ -134,7 +134,6 @@ def calc_shift(qs, qs_0, X, t):
     return optimal_c
 
 
-@line_profiler.profile
 def compute_red_basis(qs, **kwargs):
     if kwargs['threshold']:
         U, S, VT = np.linalg.svd(qs, full_matrices=False)
@@ -143,11 +142,4 @@ def compute_red_basis(qs, **kwargs):
     else:
         U, S, VT = randomized_svd(qs, n_components=kwargs['Nm'], random_state=42)
         return U, U @ np.diag(S) @ VT
-
-
-
-
-def multiply_sparse_dense(args):
-    i, sparse_slice, dense_slice = args
-    return i, sparse_slice @ dense_slice
 

@@ -4,8 +4,6 @@ from scipy import sparse
 import sys
 import opt_einsum as oe
 
-from Helper import multiply_sparse_dense
-
 sys.path.append('./sPOD/lib/')
 
 ########################################################################################################################
@@ -94,10 +92,9 @@ def findIntervalAndGiveInterpolationWeight_1D(xPoints, xStar):
     return intervalIdx, alpha
 
 
+@njit
 def make_Da(a):
-    D_a = a.reshape(-1, 1)
-
-    return np.ascontiguousarray(D_a)
+    return np.ascontiguousarray(a).reshape(-1, 1)
 
 
 @njit(parallel=True)
@@ -134,7 +131,7 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
     return np.ascontiguousarray(RHS_mat)
 
 
-@njit(parallel=True)
+# @njit(parallel=True)
 def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
 
     # # Nice alternative and is equally faster
@@ -157,12 +154,11 @@ def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
 
 @njit
 def LHS_online_primal_FOTR(LHS_matrix, Da, modes):
-    M = np.zeros((modes + 1, modes + 1))
-    M12 = LHS_matrix[1] @ Da
+    M = np.empty((modes + 1, modes + 1), dtype=LHS_matrix[0].dtype)
 
     M[:modes, :modes] = LHS_matrix[0]
-    M[:modes, modes:] = M12
-    M[modes:, :modes] = M12.T
+    M[:modes, modes:] = LHS_matrix[1] @ Da
+    M[modes:, :modes] = M[:modes, modes:].T
     M[modes:, modes:] = Da.T @ LHS_matrix[2] @ Da
 
     return np.ascontiguousarray(M)
@@ -184,3 +180,8 @@ def RHS_online_primal_FOTR(RHS_matrix, Da, a, C, f, intervalIdx, weight, modes):
                                                              (1 - weight) * C_cont[1, intervalIdx + 1]) @ f_cont)
 
     return np.ascontiguousarray(RHS)
+
+
+@njit
+def solve_lin_system(M, A):
+    return np.linalg.solve(M, A)

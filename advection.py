@@ -192,7 +192,10 @@ class advection:
         # Prepare the RHS side of the matrix using D(a)
         A = RHS_online_primal_FOTR(rhs, Da, a[:-1], c, f, intervalIdx, weight, modes)
 
-        return np.linalg.solve(M, A), intervalIdx, weight
+        # Solve the linear system of equations
+        X = solve_lin_system(M, A)
+
+        return X, intervalIdx, weight
 
     @line_profiler.profile
     def TI_primal_sPODG_FOTR(self, lhs, rhs, c, a, f0, delta_s, modes):

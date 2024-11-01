@@ -15,22 +15,34 @@ immpath = "./plots/FOM/"  # Storing plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
-Dimension = "1D"
+problem = 3
 Nxi = 800
 Neta = 1
 Nt = 3360
 
 # Wildfire solver initialization along with grid initialization
-# Thick wave params:                                       # Sharp wave params:
-# cfl = 2 / 6                                              # cfl = 2 / 6
-# tilt_from = 3 * Nt // 4                                  # tilt_from = 9 * Nt // 10
-# v_x = 0.5                                                # v_x = 0.6
-# v_x_t = 1.0                                              # v_x_t = 1.3
-# variance = 7                                             # variance = 0.5
-# offset = 12                                              # offset = 30
-# mask_gaussian_sigma = 2                                  # mask_gaussian_sigma = 1
-wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=2 / 6,
-               tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
+# Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
+# cfl = 2 / 6                         # cfl = 2 / 6                                   # cfl = 2 / 6
+# tilt_from = 3 * Nt // 4             # tilt_from = 3 * Nt // 4                       # tilt_from = 9 * Nt / 10
+# v_x = 0.5                           # v_x = 0.55                                    # v_x = 0.6
+# v_x_t = 1.0                         # v_x_t = 1.0                                   # v_x_t = 1.3
+# variance = 7                        # variance = 0.5                                # variance = 0.5
+# offset = 12                         # offset = 30                                   # offset = 30
+
+
+if problem == 1:
+    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
+                   tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
+elif problem == 2:
+    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
+                   tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
+elif problem == 3:
+    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
+                   tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
+else:  # Default is problem 2
+    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
+                   tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
+
 wf.Grid()
 
 # %%
@@ -87,7 +99,7 @@ kwargs = {
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 60000,  # Total iterations
+    'opt_iter': 100,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'omega_cutoff': 1e-10  # Below this cutoff the Armijo and Backtracking should exit the update loop
@@ -216,11 +228,10 @@ f_opt = np.load(impath + 'f_opt.npy')
 
 # Plot the results
 pf = PlotFlow(wf.X, wf.Y, wf.t)
-if Dimension == "1D":
-    pf.plot1D(qs_org, name="qs_org", immpath=immpath)
-    pf.plot1D(qs_target, name="qs_target", immpath=immpath)
-    pf.plot1D(qs_opt, name="qs_opt", immpath=immpath)
-    pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=immpath)
-    pf.plot1D(f_opt, name="f_opt", immpath=immpath)
 
-    pf.plot1D_FOM_converg(J_opt_list, dL_du_ratio_list, immpath=immpath)
+pf.plot1D(qs_org, name="qs_org", immpath=immpath)
+pf.plot1D(qs_target, name="qs_target", immpath=immpath)
+pf.plot1D(qs_opt, name="qs_opt", immpath=immpath)
+pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=immpath)
+pf.plot1D(f_opt, name="f_opt", immpath=immpath)
+pf.plot1D_FOM_converg(J_opt_list, dL_du_ratio_list, immpath=immpath)
