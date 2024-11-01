@@ -52,7 +52,7 @@ def subsample(X, num_sample):
     return np.ascontiguousarray(delta_sampled)
 
 
-def get_T(delta_s, X, t):
+def get_T(delta_s, X, t, interp_order):
     Nx = len(X)
     Nt = len(t)
 
@@ -64,7 +64,7 @@ def get_T(delta_s, X, t):
     trafo_1 = Transform(data_shape, L, shifts=delta_s[0],
                         dx=[dx],
                         use_scipy_transform=False,
-                        interp_order=5)
+                        interp_order=interp_order)
 
     return trafo_1.shifts_pos, trafo_1
 

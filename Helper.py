@@ -24,8 +24,8 @@ def L2norm_FOM(qq, dx, dt):
     q = qq.copy()  # Copy only if you need to keep qq unchanged
 
     # Scale the first and last column
-    q[:, 0] /= np.sqrt(2)
-    q[:, -1] /= np.sqrt(2)
+    q[:, 0] /= np.sqrt(2.0)
+    q[:, -1] /= np.sqrt(2.0)
 
     # Calculate the squared L2 norm
     # Instead of reshaping, iterate through the elements
@@ -44,8 +44,8 @@ def L2norm_ROM(qq, dt):
     q = qq.copy()  # Copy only if you need to keep qq unchanged
 
     # Scale the first and last column
-    q[:, 0] /= np.sqrt(2)
-    q[:, -1] /= np.sqrt(2)
+    q[:, 0] /= np.sqrt(2.0)
+    q[:, -1] /= np.sqrt(2.0)
 
     # Calculate the squared L2 norm
     # Instead of reshaping, iterate through the elements
@@ -58,15 +58,39 @@ def L2norm_ROM(qq, dt):
     return norm * dt
 
 
+
+def L2inner_prod(qq, dt):
+    # Directly modify the input array if allowed
+    q = qq.copy()  # Copy only if you need to keep qq unchanged
+
+    # Scale the first and last column
+    q[:, 0] /= 2.0
+    q[:, -1] /= 2.0
+
+    norm = 0.0
+    rows, cols = q.shape
+    for i in prange(rows):
+        for j in range(cols):
+            norm += q[i, j]
+
+    return norm * dt
+
+
 # Other Helper functions
-def ControlSelectionMatrix_advection(wf, n_c, trim_first_n=0, gaussian_mask_sigma=1):
+def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, gaussian_mask_sigma=1,
+                                     start_controlling_from=0):
     if trim_first_n >= n_c:
         print("Number of controls should always be more than the number which you want to trim out. "
               "Set it accordingly. Exiting !!!!!!!")
         exit()
     psi = np.zeros((wf.Nxi, n_c - trim_first_n))
-    for i in range(n_c - trim_first_n):
-        psi[:, i] = func(wf.X - wf.Lxi/n_c - (trim_first_n + i) * wf.Lxi/n_c, sigma=gaussian_mask_sigma)
+    if Gaussian:
+        for i in range(n_c - trim_first_n):
+            psi[:, i] = func(wf.X - wf.Lxi/n_c - (trim_first_n + i) * wf.Lxi/n_c, sigma=gaussian_mask_sigma)
+    else:
+        control_index = np.array_split(np.arange(start_controlling_from, wf.Nxi), n_c)
+        for i in range(n_c - trim_first_n):
+            psi[control_index[trim_first_n + i], i] = 1.0
 
     # print(n_c)
     # import matplotlib.pyplot as plt

@@ -8,7 +8,7 @@ import numpy as np
 import os
 from time import perf_counter
 import time
-
+import scipy.sparse as sp
 
 impath = "./data/FOM/"   # Storing data
 immpath = "./plots/FOM/"  # Storing plots
@@ -18,18 +18,18 @@ os.makedirs(impath, exist_ok=True)
 Dimension = "1D"
 Nxi = 800
 Neta = 1
-Nt = 1400
+Nt = 3360
 
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                                       # Sharp wave params:
-# cfl = 0.8                                                # cfl = 0.8
+# cfl = 2 / 6                                              # cfl = 2 / 6
 # tilt_from = 3 * Nt // 4                                  # tilt_from = 9 * Nt // 10
 # v_x = 0.5                                                # v_x = 0.6
 # v_x_t = 1.0                                              # v_x_t = 1.3
 # variance = 7                                             # variance = 0.5
 # offset = 12                                              # offset = 30
 # mask_gaussian_sigma = 2                                  # mask_gaussian_sigma = 1
-wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8,
+wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=2 / 6,
                tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 wf.Grid()
 
@@ -37,7 +37,7 @@ wf.Grid()
 n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c_init, trim_first_n=30, gaussian_mask_sigma=1)  # Changing the value of
+psi = ControlSelectionMatrix_advection(wf, n_c_init)  # Changing the value of
 # trim_first_n should basically make the psi matrix and the number of controls to be user defined.
 n_c = psi.shape[1]
 f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
@@ -49,6 +49,13 @@ Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
 # Convection matrix (Needs to be changed if the velocity is time dependent)
 A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
 A_a = A_p.transpose()
+
+# Grid dependent matrix for Adjoint equation correction
+diagonal = np.ones(wf.Nxi) * np.sqrt(wf.dx)
+diagonal[0] /= np.sqrt(2)
+diagonal[-1] /= np.sqrt(2)
+C = sp.diags(diagonal, format='csc')
+CTC = C.T @ C
 
 #%% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
@@ -80,18 +87,11 @@ kwargs = {
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 10000,  # Total iterations
-    'Armijo_iter': 20,  # Armijo iterations
-    'omega_decr': 4,  # Decrease omega by a factor for simple Armijo
+    'opt_iter': 60000,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
-    'verbose': False,  # Print options
-    'simple_Armijo': False,  # Switch true for simple Armijo and False for two-way backtracking
+    'verbose': True,  # Print options
     'omega_cutoff': 1e-10  # Below this cutoff the Armijo and Backtracking should exit the update loop
 }
-
-
-# imp = "./data/FOM/intermediate/"
-# os.makedirs(imp, exist_ok=True)
 
 # For two-way backtracking line search
 omega = 1
@@ -112,7 +112,6 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
-
     '''
     Objective and costs for control
     '''
@@ -125,7 +124,7 @@ for opt_step in range(kwargs['opt_iter']):
     Adjoint calculation
     '''
     time_odeint = perf_counter()  # save timing
-    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a)
+    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a, CTC)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
@@ -135,12 +134,6 @@ for opt_step in range(kwargs['opt_iter']):
     time_odeint = perf_counter() - time_odeint
     f, J_opt, dL_du, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
     if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
-
-    # if opt_step % 50 == 0:
-    #     qs_opt = wf.TI_primal(q0, f, A_p, psi)
-    #     np.save(imp + "snapshot_prev_" + str(opt_step) + ".npy", qs)
-    #     np.save(imp + "snapshot_" + str(opt_step) + ".npy", qs_opt)
-    #     np.save(imp + "control_" + str(opt_step) + ".npy", f)
 
     running_time.append(perf_counter() - time_odeint_s)
 

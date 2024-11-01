@@ -3,7 +3,7 @@ import scipy
 
 from Helper import RHS_PODG_FOTR_solve
 from Helper_sPODG import *
-from rk4 import rk4, rk4_adj, rk4_rpr
+from rk4 import rk4, rk4_adj, rk4_rpr, exp_eul, exp_eul_adj
 from numba import njit
 
 
@@ -39,13 +39,13 @@ class advection:
         # Order of accuracy for the derivative matrices of the first and second order
         self.firstderivativeOrder = "6thOrder"
 
-        self.v_x = v_x * np.ones(self.Nt)   # 0.6 * np.ones(self.Nt)
+        self.v_x = v_x * np.ones(self.Nt)
         self.v_y = np.zeros(self.Nt)
         self.C = 1.0
 
         self.v_x_target = self.v_x
         self.v_y_target = self.v_y
-        self.v_x_target[tilt_from:] = v_x_t   # 1.3
+        self.v_x_target[tilt_from:] = v_x_t
 
         self.variance = variance  # Variance of the gaussian for the initial condition
         self.offset = offset  # Offset from where the wave starts
@@ -86,7 +86,6 @@ class advection:
         qs[:, 0] = q
         for n in range(1, self.Nt):
             qs[:, n] = rk4(self.RHS_primal, qs[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, A, psi)
-
         return qs
 
     def IC_adjoint(self):
@@ -95,20 +94,18 @@ class advection:
 
         return q_adj
 
-    def RHS_adjoint(self, q_adj, q, q_tar, A):
+    def RHS_adjoint(self, q_adj, q, q_tar, A, CTC):
 
-        return - A @ q_adj - (q - q_tar)
+        return - A @ q_adj - CTC @ (q - q_tar)
 
-
-    def TI_adjoint(self, q0_adj, qs, qs_target, A):
+    def TI_adjoint(self, q0_adj, qs, qs_target, A, CTC):
         # Time loop
         qs_adj = np.zeros((self.Nxi * self.Neta, self.Nt))
         qs_adj[:, -1] = q0_adj
 
         for n in range(1, self.Nt):
             qs_adj[:, -(n + 1)] = rk4_adj(self.RHS_adjoint, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
-                                          qs_target[:, -n], qs_target[:, -(n + 1)], -self.dt, A)
-
+                                          qs_target[:, -n], qs_target[:, -(n + 1)], -self.dt, A, CTC)
         return qs_adj
 
     def RHS_primal_target(self, q, f, Mat, v_x, v_y):
@@ -134,11 +131,9 @@ class advection:
 
         return V_p.T @ q0
 
-
     def RHS_primal_PODG_FOTR(self, a, f, Ar_p, psir_p):
 
         return RHS_PODG_FOTR_solve(Ar_p, a, psir_p, f)
-
 
     def TI_primal_PODG_FOTR(self, a, f0, Ar_p, psir_p):
         # Time loop
@@ -155,7 +150,6 @@ class advection:
         V_pT = V_p.T
 
         return (V_pT @ A_p) @ V_p, V_pT @ psi
-
 
     ######################################### FOTR sPOD  #############################################
     def IC_primal_sPODG_FOTR(self, q0, V):
@@ -216,4 +210,3 @@ class advection:
         IntIds[-1], weights[-1] = findIntervalAndGiveInterpolationWeight_1D(delta_s[2], -as_[-1, -1])
 
         return as_, IntIds, weights
-

@@ -15,28 +15,28 @@ import os
 from time import perf_counter
 import numpy as np
 import time
-from scipy.sparse import csr_matrix
+import scipy.sparse as sp
 
-impath = ".test/data/sPODG/FOTR/Nm=8,TWBT/"  # for data
-immpath = ".test/plots/sPODG/FOTR/Nm=8,TWBT/"  # for plots
+impath = "./data/sPODG/FOTR/Nm=16,TWBT/"  # for data
+immpath = "./plots/sPODG/FOTR/Nm=16,TWBT/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Problem variables
 Dimension = "1D"
 Nxi = 800
 Neta = 1
-Nt = 1400
+Nt = 3360
 
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                                       # Sharp wave params:
-# cfl = 0.8                                                # cfl = 0.8
+# cfl = 2 / 6                                              # cfl = 2 / 6
 # tilt_from = 3 * Nt // 4                                  # tilt_from = 9 * Nt // 10
 # v_x = 0.5                                                # v_x = 0.6
 # v_x_t = 1.0                                              # v_x_t = 1.3
 # variance = 7                                             # variance = 0.5
 # offset = 12                                              # offset = 30
 # mask_gaussian_sigma = 2                                  # mask_gaussian_sigma = 1
-wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=0.8,
+wf = advection(Nxi=Nxi, Neta=Neta if Dimension == "1D" else Nxi, timesteps=Nt, cfl=2 / 6,
                tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 wf.Grid()
 
@@ -44,7 +44,7 @@ wf.Grid()
 n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c_init, trim_first_n=0, gaussian_mask_sigma=1)  # Changing the value of
+psi = ControlSelectionMatrix_advection(wf, n_c_init)  # Changing the value of
 # trim_first_n should basically make the psi matrix and the number of controls to be user defined.
 n_c = psi.shape[1]
 f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
@@ -55,6 +55,13 @@ Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
 # Convection matrix (Needs to be changed if the velocity is time dependent)
 A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
 A_a = A_p.transpose()
+
+# Grid dependent matrix for Adjoint equation correction
+diagonal = np.ones(wf.Nxi) * np.sqrt(wf.dx)
+diagonal[0] /= np.sqrt(2)
+diagonal[-1] /= np.sqrt(2)
+C = sp.diags(diagonal, format='csc')
+CTC = C.T @ C
 
 # %% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
@@ -91,9 +98,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 1000,  # Total iterations
-    'Armijo_iter': 20,  # Armijo iterations
-    'omega_decr': 4,  # Decrease omega by a factor
+    'opt_iter': 100,  # Total iterations
     'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
@@ -101,7 +106,8 @@ kwargs = {
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
     'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 3,  # Number of modes for truncation if threshold selected to False.
+    'Nm': 16,  # Number of modes for truncation if threshold selected to False.
+    'trafo_interp_order': 1,  # Order of the polynomial interpolation for the transformation operators
 }
 
 # %% ROM Variables
@@ -111,10 +117,10 @@ D = central_FDMatrix(order=6, Nx=wf.Nxi, dx=wf.dx)
 delta_s = subsample(wf.X, num_sample=kwargs['shift_sample'])
 
 # Extract transformation operators based on sub-sampled delta
-T_delta, _ = get_T(delta_s, wf.X, wf.t)
+T_delta, _ = get_T(delta_s, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
 
 delta_init = calc_shift(qs_org, q0, wf.X, wf.t)
-_, T = get_T(delta_init, wf.X, wf.t)
+_, T = get_T(delta_init, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
 
 # For two-way backtracking line search
 omega = 1
@@ -138,7 +144,7 @@ for opt_step in range(kwargs['opt_iter']):
 
     if stag:
         z = calc_shift(qs, q0, wf.X, wf.t)
-        _, T = get_T(z, wf.X, wf.t)
+        _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
         shift_refine_cntr_list.append(opt_step)
 
     qs_s = T.reverse(qs)
@@ -184,7 +190,7 @@ for opt_step in range(kwargs['opt_iter']):
     Backward calculation with FOM system
     '''
     time_odeint = perf_counter()  # save timing
-    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a)
+    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a, CTC)
     time_odeint = perf_counter() - time_odeint
     if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
@@ -263,10 +269,10 @@ for opt_step in range(kwargs['opt_iter']):
 # Compute the final state
 qs_opt_full = wf.TI_primal(q0, f_last_valid, A_p, psi)
 
-f_opt = psi @ f
+f_opt = psi @ f_last_valid
 
 # Compute the cost with the optimal control
-J = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+J = Calc_Cost(qs_opt_full, qs_target, f_last_valid, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 print("\n")
 print(f"J with respect to the optimal control for FOM: {J}")
 
@@ -276,8 +282,8 @@ print("Total time elapsed = %1.3f" % (end - start))
 # %%
 
 # Save the convergence lists
-np.save(impath + 'J_opt_FOM_list.npy', J_opt_list)
-np.save(impath + 'J_opt_list.npy', J_opt_FOM_list)
+np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
+np.save(impath + 'J_opt_list.npy', J_opt_list)
 np.save(impath + 'dL_du_ratio_list.npy', dL_du_ratio_list)
 np.save(impath + 'err_list.npy', err_list)
 np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
@@ -289,7 +295,7 @@ np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
 np.save(impath + 'qs_opt.npy', qs_opt_full)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
-np.save(impath + 'f_opt_low.npy', f)
+np.save(impath + 'f_opt_low.npy', f_last_valid)
 
 # %%
 # Load the results

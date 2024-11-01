@@ -127,7 +127,7 @@ class CoefficientMatrix:
         diagonalLow = int(-(len(Coeffs) - 1) / 2)
         diagonalUp = int(-diagonalLow)
 
-        D_1 = sparse.csr_matrix(np.zeros((N, N), dtype=float))
+        D_1 = sparse.csr_matrix(np.zeros((N, N)))
 
         for k in range(diagonalLow, diagonalUp + 1):
             D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(np.diag(np.ones(N - abs(k)), k))
@@ -147,7 +147,7 @@ class CoefficientMatrix:
         diagonalLow = int(-(len(Coeffs) - 1) / 2)
         diagonalUp = int(-diagonalLow)
 
-        D_1 = sparse.csr_matrix(np.zeros((N, N), dtype=float))
+        D_1 = sparse.csr_matrix(np.zeros((N, N)))
 
         for k in range(diagonalLow, diagonalUp + 1):
             D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(np.diag(np.ones(N - abs(k)), k))
