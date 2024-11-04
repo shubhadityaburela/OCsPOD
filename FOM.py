@@ -30,19 +30,18 @@ Nt = 3360
 # offset = 12                         # offset = 30                                   # offset = 30
 
 
-if problem == 1:
+if problem == 1:    # Thick wave params
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
-elif problem == 2:
+elif problem == 2:    # Sharp wave params (earlier kink):
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
-elif problem == 3:
+elif problem == 3:    # Sharp wave params (later kink):
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 else:  # Default is problem 2
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
-
 wf.Grid()
 
 # %%

@@ -25,10 +25,11 @@ def Calc_Cost_PODG(V, as_, qs_target, f, dx, dt, lamda):
 
 @njit(parallel=True)
 def Calc_Cost_sPODG(V, as_, qs_target, f, intIds, weights, dx, dt, lamda):
-    q = np.zeros_like(qs_target)
+    q = np.empty_like(qs_target)
 
     for i in prange(f.shape[1]):
-        V_delta = weights[i] * V[intIds[i]] + (1 - weights[i]) * V[intIds[i] + 1]
+        V_idx = intIds[i]
+        V_delta = weights[i] * V[V_idx] + (1 - weights[i]) * V[V_idx + 1]
         q[:, i] = V_delta @ as_[:, i]
 
     q_res = q - qs_target
@@ -36,3 +37,4 @@ def Calc_Cost_sPODG(V, as_, qs_target, f, intIds, weights, dx, dt, lamda):
     cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda / 2) * (L2norm_ROM(f, dt))
 
     return cost
+

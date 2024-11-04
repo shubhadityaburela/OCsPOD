@@ -127,7 +127,6 @@ def Update_Control_PODG_FOTR_adaptive_TWBT(f, a0_primal, qs_adj, qs_target, V_p,
             k = k + 1
 
 
-@line_profiler.profile
 def Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, qs_target, delta_s, Vdp, mask, J_prev,
                                             omega_prev, modes, wf, **kwargs):
     time_odeint = perf_counter()  # save timing

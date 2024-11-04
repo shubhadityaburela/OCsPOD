@@ -4,12 +4,29 @@ from scipy import sparse
 import sys
 import opt_einsum as oe
 
+from Helper import is_contiguous
+
 sys.path.append('./sPOD/lib/')
 
 ########################################################################################################################
 # sPOD Galerkin helper functions
 from transforms import Transform
 from numba import njit, prange
+
+@njit
+def binary_search_interval(xPoints, xStar):
+    # Perform a binary search to find the interval index
+    left, right = 0, len(xPoints) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if xPoints[mid] <= xStar < xPoints[mid + 1]:
+            return mid
+        elif xPoints[mid] < xStar:
+            left = mid + 1
+        else:
+            right = mid - 1
+    # Clamp to valid interval if xStar is out of bounds
+    return max(0, min(left - 1, len(xPoints) - 2))
 
 
 # General functions
@@ -79,6 +96,14 @@ def make_V_W_delta(U, T_delta, D, num_sample, Nx, modes):
 
 @njit
 def findIntervalAndGiveInterpolationWeight_1D(xPoints, xStar):
+
+    # # Find the interval index using the optimized binary search
+    # intervalIdx = binary_search_interval(xPoints, xStar)
+    #
+    # # Calculate interpolation weight
+    # x1, x2 = xPoints[intervalIdx], xPoints[intervalIdx + 1]
+    # alpha = (x2 - xStar) / (x2 - x1)
+
     # Use binary search to find the interval index
     intervalIdx = np.searchsorted(xPoints, xStar) - 1
 
@@ -90,11 +115,6 @@ def findIntervalAndGiveInterpolationWeight_1D(xPoints, xStar):
     alpha = (x2 - xStar) / (x2 - x1)
 
     return intervalIdx, alpha
-
-
-@njit
-def make_Da(a):
-    return np.ascontiguousarray(a).reshape(-1, 1)
 
 
 @njit(parallel=True)
@@ -131,17 +151,12 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
     return np.ascontiguousarray(RHS_mat)
 
 
-# @njit(parallel=True)
+@njit(parallel=True)
 def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
 
     # # Nice alternative and is equally faster
     # VW_delta = np.stack((V_delta, W_delta), axis=0)
     # C_mat = oe.contract("zabc,bd->zacd", VW_delta, psi)
-
-    # Ensure arrays are contiguous
-    V_delta = np.ascontiguousarray(V_delta)
-    W_delta = np.ascontiguousarray(W_delta)
-    psi = np.ascontiguousarray(psi)
 
     C_mat = np.zeros((2, samples, modes, psi.shape[1]), dtype=V_delta.dtype)
 
@@ -153,33 +168,29 @@ def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
 
 
 @njit
-def LHS_online_primal_FOTR(LHS_matrix, Da, modes):
+def Matrices_online_primal_FOTR(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
     M = np.empty((modes + 1, modes + 1), dtype=LHS_matrix[0].dtype)
+    A = np.empty(modes + 1)
+    as_ = a[:-1]
+    z = a[-1]
+
+    # Compute the interpolation weight and the interval in which the shift lies
+    intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -z)
+
+    Da = as_.reshape(-1, 1)
 
     M[:modes, :modes] = LHS_matrix[0]
     M[:modes, modes:] = LHS_matrix[1] @ Da
     M[modes:, :modes] = M[:modes, modes:].T
-    M[modes:, modes:] = Da.T @ LHS_matrix[2] @ Da
+    M[modes:, modes:] = Da.T @ (LHS_matrix[2] @ Da)
 
-    return np.ascontiguousarray(M)
-
-
-@njit
-def RHS_online_primal_FOTR(RHS_matrix, Da, a, C, f, intervalIdx, weight, modes):
-    RHS = np.zeros(modes + 1)
-
-    RHS_matrix_cont = np.ascontiguousarray(RHS_matrix)
-    C_cont = np.ascontiguousarray(C)
-    a_cont = np.ascontiguousarray(a)
-    f_cont = np.ascontiguousarray(f)
+    A[:modes] = RHS_matrix[0] @ as_ + np.add(weight * C[0, intervalIdx],
+                                                       (1 - weight) * C[0, intervalIdx + 1]) @ f
+    A[modes:] = Da.T @ (RHS_matrix[1] @ as_ + np.add(weight * C[1, intervalIdx],
+                                                               (1 - weight) * C[1, intervalIdx + 1]) @ f)
 
 
-    RHS[:modes] = RHS_matrix_cont[0] @ a_cont + np.add(weight * C_cont[0, intervalIdx],
-                                                     (1 - weight) * C_cont[0, intervalIdx + 1]) @ f_cont
-    RHS[modes:] = Da.T @ (RHS_matrix_cont[1] @ a_cont + np.add(weight * C_cont[1, intervalIdx],
-                                                             (1 - weight) * C_cont[1, intervalIdx + 1]) @ f_cont)
-
-    return np.ascontiguousarray(RHS)
+    return np.ascontiguousarray(M), np.ascontiguousarray(A), intervalIdx, weight
 
 
 @njit

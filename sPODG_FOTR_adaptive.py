@@ -8,7 +8,7 @@ from Coefficient_Matrix import CoefficientMatrix
 from Update import Update_Control_sPODG_FOTR_adaptive_TWBT
 from advection import advection
 from Plots import PlotFlow
-from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
+from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift, is_contiguous
 from Helper_sPODG import subsample, findIntervals, get_T, central_FDMatrix
 from Costs import Calc_Cost_sPODG, Calc_Cost
 import os
@@ -18,16 +18,34 @@ import time
 import scipy.sparse as sp
 
 
-impath = "./data/sPODG/FOTR/Nm=16,TWBT/"  # for data
-immpath = "./plots/sPODG/FOTR/Nm=16,TWBT/"  # for plots
+# Problem variables
+problem = 3   # The example problem
+TYPE = "tol"    # "modes" or "tol"
+if TYPE == "modes":
+    modes = 3
+    threshold = False
+    tol = None
+    VAL = modes
+elif TYPE == "tol":
+    tol = 1e-2
+    modes = None
+    threshold = True
+    VAL = tol
+else:
+    TYPE = "modes"
+    modes = 4
+    threshold = False
+    tol = None
+    VAL = modes
+    print("Default is the mode based study thus running with pre-defined modes")
+
+impath = "./data/sPODG/" + TYPE + "=" + str(VAL) + "/"  # for data
+immpath = "./plots/sPODG/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
-# Problem variables
-problem = 3
 Nxi = 800
 Neta = 1
 Nt = 3360
-
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
 # cfl = 2 / 6                         # cfl = 2 / 6                                   # cfl = 2 / 6
@@ -38,13 +56,13 @@ Nt = 3360
 # offset = 12                         # offset = 30                                   # offset = 30
 
 
-if problem == 1:
+if problem == 1:    # Thick wave params
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
-elif problem == 2:
+elif problem == 2:    # Sharp wave params (earlier kink):
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
-elif problem == 3:
+elif problem == 3:    # Sharp wave params (later kink):
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 else:  # Default is problem 2
@@ -59,7 +77,7 @@ n_c_init = 40  # Number of initial controls
 psi = ControlSelectionMatrix_advection(wf, n_c_init)  # Changing the value of
 # trim_first_n should basically make the psi matrix and the number of controls to be user defined.
 n_c = psi.shape[1]
-f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
+f = np.zeros((n_c, wf.Nt), order="F")  # Initial guess for the control
 
 # %% Assemble the linear operators
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
@@ -110,15 +128,15 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100,  # Total iterations
+    'opt_iter': 5,  # Total iterations
     'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
-    'base_tol': 1e-2,  # Base tolerance for selecting number of modes (main variable for truncation)
+    'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-    'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
+    'threshold': threshold,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 8,  # Number of modes for truncation if threshold selected to False.
+    'Nm': modes,  # Number of modes for truncation if threshold selected to False.
     'trafo_interp_order': 1,  # Order of the polynomial interpolation for the transformation operators
 }
 

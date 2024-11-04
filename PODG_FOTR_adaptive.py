@@ -19,16 +19,34 @@ from time import perf_counter
 import time
 import scipy.sparse as sp
 
-impath = "./data/PODG/FOTR/Nm=100,TWBT/"  # for data
-immpath = "./plots/PODG/FOTR/Nm=100,TWBT/"  # for plots
+# Problem variables
+problem = 3   # The example problem
+TYPE = "tol"    # "modes" or "tol"
+if TYPE == "modes":
+    modes = 3
+    threshold = False
+    tol = None
+    VAL = modes
+elif TYPE == "tol":
+    tol = 1e-2
+    modes = None
+    threshold = True
+    VAL = tol
+else:
+    TYPE = "modes"
+    modes = 4
+    threshold = False
+    tol = None
+    VAL = modes
+    print("Default is the mode based study thus running with pre-defined modes")
+
+impath = "./data/PODG/" + TYPE + "=" + str(VAL) + "/"  # for data
+immpath = "./plots/PODG/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
-# Problem variables
-problem = 3
 Nxi = 800
 Neta = 1
 Nt = 3360
-
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
 # cfl = 2 / 6                         # cfl = 2 / 6                                   # cfl = 2 / 6
@@ -39,13 +57,13 @@ Nt = 3360
 # offset = 12                         # offset = 30                                   # offset = 30
 
 
-if problem == 1:
+if problem == 1:    # Thick wave params
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
-elif problem == 2:
+elif problem == 2:    # Sharp wave params (earlier kink):
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
-elif problem == 3:
+elif problem == 3:    # Sharp wave params (later kink):
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
                    tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 else:  # Default is problem 2

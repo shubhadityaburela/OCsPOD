@@ -1,7 +1,8 @@
 import line_profiler
+import numpy as np
 import scipy
 
-from Helper import RHS_PODG_FOTR_solve
+from Helper import RHS_PODG_FOTR_solve, is_contiguous
 from Helper_sPODG import *
 from rk4 import rk4, rk4_adj, rk4_rpr, exp_eul, exp_eul_adj
 from numba import njit
@@ -180,27 +181,19 @@ class advection:
     @line_profiler.profile
     def RHS_primal_sPODG_FOTR(self, a, f, lhs, rhs, c, ds, modes):
 
-        # Compute the interpolation weight and the interval in which the shift lies
-        intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -a[-1])
-
-        # Assemble the dynamic matrix D(a)
-        Da = make_Da(a[:-1])
-
-        # Prepare the LHS side of the matrix using D(a)
-        M = LHS_online_primal_FOTR(lhs, Da, modes)
-
-        # Prepare the RHS side of the matrix using D(a)
-        A = RHS_online_primal_FOTR(rhs, Da, a[:-1], c, f, intervalIdx, weight, modes)
+        # Prepare the online primal matrices
+        M, A, intervalIdx, weight = Matrices_online_primal_FOTR(lhs, rhs, c, f, a, ds, modes)
 
         # Solve the linear system of equations
         X = solve_lin_system(M, A)
 
         return X, intervalIdx, weight
 
-    @line_profiler.profile
+
     def TI_primal_sPODG_FOTR(self, lhs, rhs, c, a, f0, delta_s, modes):
         # Time loop
-        as_ = np.zeros((a.shape[0], self.Nt))
+        as_ = np.zeros((a.shape[0], self.Nt), order="F")
+        f0 = np.asfortranarray(f0)
         IntIds = np.zeros(self.Nt, dtype=np.int32)
         weights = np.zeros(self.Nt)
 

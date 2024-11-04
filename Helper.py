@@ -28,12 +28,15 @@ def L2norm_FOM(qq, dx, dt):
     q[:, -1] /= np.sqrt(2.0)
 
     # Calculate the squared L2 norm
-    # Instead of reshaping, iterate through the elements
-    norm = 0.0
-    rows, cols = q.shape
-    for i in prange(rows):
-        for j in range(cols):
-            norm += q[i, j] ** 2
+
+    # # Instead of reshaping, iterate through the elements
+    # norm = 0.0
+    # rows, cols = q.shape
+    # for i in prange(rows):
+    #     for j in range(cols):
+    #         norm += q[i, j] ** 2
+
+    norm = np.sum(q ** 2)
 
     return norm * dx * dt
 
@@ -48,12 +51,15 @@ def L2norm_ROM(qq, dt):
     q[:, -1] /= np.sqrt(2.0)
 
     # Calculate the squared L2 norm
-    # Instead of reshaping, iterate through the elements
-    norm = 0.0
-    rows, cols = q.shape
-    for i in prange(rows):
-        for j in range(cols):
-            norm += q[i, j] ** 2
+
+    # # Instead of reshaping, iterate through the elements
+    # norm = 0.0
+    # rows, cols = q.shape
+    # for i in prange(rows):
+    #     for j in range(cols):
+    #         norm += q[i, j] ** 2
+
+    norm = np.sum(q ** 2)
 
     return norm * dt
 
@@ -83,7 +89,7 @@ def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, ga
         print("Number of controls should always be more than the number which you want to trim out. "
               "Set it accordingly. Exiting !!!!!!!")
         exit()
-    psi = np.zeros((wf.Nxi, n_c - trim_first_n))
+    psi = np.zeros((wf.Nxi, n_c - trim_first_n), order="F")
     if Gaussian:
         for i in range(n_c - trim_first_n):
             psi[:, i] = func(wf.X - wf.Lxi/n_c - (trim_first_n + i) * wf.Lxi/n_c, sigma=gaussian_mask_sigma)
@@ -143,3 +149,6 @@ def compute_red_basis(qs, **kwargs):
         U, S, VT = randomized_svd(qs, n_components=kwargs['Nm'], random_state=42)
         return U, U @ np.diag(S) @ VT
 
+
+def is_contiguous(array):
+    return array.flags['C_CONTIGUOUS'] or array.flags['F_CONTIGUOUS']
