@@ -16,31 +16,55 @@ from time import perf_counter
 import numpy as np
 import time
 import scipy.sparse as sp
+import argparse
 
 
-# Problem variables
-problem = 3   # The example problem
-TYPE = "tol"    # "modes" or "tol"
-if TYPE == "modes":
-    modes = 3
+import sys
+sys.path.append('./sPOD/lib/')
+from sPOD_algo import give_interpolation_error
+
+
+parser = argparse.ArgumentParser(description="Input the variables for running the script.")
+parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
+parser.add_argument("--modes", type=int, help="Enter the number of modes for modes test")
+parser.add_argument("--tol", type=float, help="Enter the tolerance level for tolerance test")
+args = parser.parse_args()
+
+problem = args.problem
+print("\n")
+print(f"Solving problem: {args.problem}")
+
+# Check which argument was provided and act accordingly
+if args.modes and args.tol:
+    print(f"Modes test takes precedence.....")
+    print(f"Mode number provided: {args.modes}")
+    TYPE = "modes"
+    modes = args.modes
     threshold = False
     tol = None
     VAL = modes
-elif TYPE == "tol":
-    tol = 1e-2
-    modes = None
+elif args.modes:
+    print(f"Modes test.....")
+    print(f"Mode number provided: {args.modes}")
+    TYPE = "modes"
+    modes = args.modes
+    threshold = False
+    tol = None
+    VAL = modes
+elif args.tol is not None:
+    print(f"Tolerance test.....")
+    print(f"Tolerance provided: {args.tol}")
+    TYPE = "tol"
+    tol = args.tol
     threshold = True
+    modes = None
     VAL = tol
 else:
-    TYPE = "modes"
-    modes = 4
-    threshold = False
-    tol = None
-    VAL = modes
-    print("Default is the mode based study thus running with pre-defined modes")
+    print("No 'modes' or 'tol' argument provided. Please specify one.")
+    exit()
 
-impath = "./data/sPODG/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots/sPODG/" + TYPE + "=" + str(VAL) + "/"  # for plots
+impath = "./data_final/sPODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
+immpath = "./plots_final/sPODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 Nxi = 800
@@ -128,7 +152,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 5,  # Total iterations
+    'opt_iter': 100000,  # Total iterations
     'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
@@ -137,7 +161,7 @@ kwargs = {
     'threshold': threshold,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
     'Nm': modes,  # Number of modes for truncation if threshold selected to False.
-    'trafo_interp_order': 1,  # Order of the polynomial interpolation for the transformation operators
+    'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
 }
 
 # %% ROM Variables
@@ -151,6 +175,8 @@ T_delta, _ = get_T(delta_s, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'
 
 delta_init = calc_shift(qs_org, q0, wf.X, wf.t)
 _, T = get_T(delta_init, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
+
+print(2 * give_interpolation_error(qs_org, T))
 
 # For two-way backtracking line search
 omega = 1
@@ -166,7 +192,6 @@ for opt_step in range(kwargs['opt_iter']):
     print("\n==============================")
     print("Optimization step: %d" % opt_step)
 
-    time_odeint = perf_counter()  # save timing
     '''
     Forward calculation with primal FOM for basis update
     '''
@@ -194,46 +219,32 @@ for opt_step in range(kwargs['opt_iter']):
     Vd_p, Wd_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'],
                                                              modes=Nm)
 
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Forward basis refinement t_cpu = %1.3f" % time_odeint)
-
     '''
     Forward calculation
     '''
-    time_odeint = perf_counter()  # save timing
     as_, intIds, weights = wf.TI_primal_sPODG_FOTR(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm)
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
     '''
     Objective and costs for control
     '''
     # Compute the interpolation weight and the interval in which the shift lies corresponding to which we compute the
     # V_delta and W_delta matrices
-    time_odeint = perf_counter()  # save timing
     J = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
                         kwargs['dx'], kwargs['dt'], kwargs['lamda'])
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
     '''
     Backward calculation with FOM system
     '''
-    time_odeint = perf_counter()  # save timing
     qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a, CTC)
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
     '''
      Update Control
     '''
-    time_odeint = perf_counter()
     f, J_opt, dL_du, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
                                                                            qs_target, delta_s,
                                                                            Vd_p,
                                                                            psi, J, omega, Nm, wf=wf,
                                                                            **kwargs)
-    if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
     running_time.append(perf_counter() - time_odeint_s)
     qs_opt_full = wf.TI_primal(q0, f, A_p, psi)

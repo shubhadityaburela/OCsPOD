@@ -11,12 +11,9 @@ from Helper_sPODG import findIntervals
 
 def Update_Control_TWBT(f, q0, qs_adj, qs_target, mask, A_p, J_prev, omega_prev, wf, **kwargs):  # Two-way back tracking
 
-    time_odeint = perf_counter()  # save timing
     dL_du = Calc_Grad(mask, f, qs_adj, kwargs['lamda'])
-    time_odeint = perf_counter() - time_odeint
     dL_du_norm_square = L2norm_ROM(dL_du, kwargs['dt'])
     dL_du_norm = np.sqrt(dL_du_norm_square)
-    if kwargs['verbose']: print("Calc_Grad t_cpu = %1.6f" % time_odeint)
 
     # Choosing the step size for two-way backtracking
     beta = kwargs['beta']
@@ -70,12 +67,9 @@ def Update_Control_TWBT(f, q0, qs_adj, qs_target, mask, A_p, J_prev, omega_prev,
 
 def Update_Control_PODG_FOTR_adaptive_TWBT(f, a0_primal, qs_adj, qs_target, V_p, Ar_p, psir_p, mask, J_prev, omega_prev,
                                            wf, **kwargs):
-    time_odeint = perf_counter()  # save timing
     dL_du = Calc_Grad(mask, f, qs_adj, kwargs['lamda'])
-    time_odeint = perf_counter() - time_odeint
     dL_du_norm_square = L2norm_ROM(dL_du, kwargs['dt'])
     dL_du_norm = np.sqrt(dL_du_norm_square)
-    if kwargs['verbose']: print("Calc_Grad t_cpu = %1.6f" % time_odeint)
 
     # Choosing the step size for two-way backtracking
     beta = kwargs['beta']
@@ -129,12 +123,9 @@ def Update_Control_PODG_FOTR_adaptive_TWBT(f, a0_primal, qs_adj, qs_target, V_p,
 
 def Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, qs_target, delta_s, Vdp, mask, J_prev,
                                             omega_prev, modes, wf, **kwargs):
-    time_odeint = perf_counter()  # save timing
     dL_du = Calc_Grad(mask, f, qs_adj, kwargs['lamda'])
-    time_odeint = perf_counter() - time_odeint
     dL_du_norm_square = L2norm_ROM(dL_du, kwargs['dt'])
     dL_du_norm = np.sqrt(dL_du_norm_square)
-    if kwargs['verbose']: print("Calc_Grad t_cpu = %1.6f" % time_odeint)
 
     # Choosing the step size for two-way backtracking
     beta = kwargs['beta']

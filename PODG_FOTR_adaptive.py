@@ -18,30 +18,50 @@ import os
 from time import perf_counter
 import time
 import scipy.sparse as sp
+import argparse
 
-# Problem variables
-problem = 3   # The example problem
-TYPE = "tol"    # "modes" or "tol"
-if TYPE == "modes":
-    modes = 3
+
+parser = argparse.ArgumentParser(description="Input the variables for running the script.")
+parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
+parser.add_argument("--modes", type=int, help="Enter the number of modes for modes test")
+parser.add_argument("--tol", type=float, help="Enter the tolerance level for tolerance test")
+args = parser.parse_args()
+
+problem = args.problem
+print("\n")
+print(f"Solving problem: {args.problem}")
+
+# Check which argument was provided and act accordingly
+if args.modes and args.tol:
+    print(f"Modes test takes precedence.....")
+    print(f"Mode number provided: {args.modes}")
+    TYPE = "modes"
+    modes = args.modes
     threshold = False
     tol = None
     VAL = modes
-elif TYPE == "tol":
-    tol = 1e-2
-    modes = None
+elif args.modes:
+    print(f"Modes test.....")
+    print(f"Mode number provided: {args.modes}")
+    TYPE = "modes"
+    modes = args.modes
+    threshold = False
+    tol = None
+    VAL = modes
+elif args.tol is not None:
+    print(f"Tolerance test.....")
+    print(f"Tolerance provided: {args.tol}")
+    TYPE = "tol"
+    tol = args.tol
     threshold = True
+    modes = None
     VAL = tol
 else:
-    TYPE = "modes"
-    modes = 4
-    threshold = False
-    tol = None
-    VAL = modes
-    print("Default is the mode based study thus running with pre-defined modes")
+    print("No 'modes' or 'tol' argument provided. Please specify one.")
+    exit()
 
-impath = "./data/PODG/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots/PODG/" + TYPE + "=" + str(VAL) + "/"  # for plots
+impath = "./data_final/PODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
+immpath = "./plots_final/PODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 Nxi = 800
@@ -128,14 +148,14 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100,  # Total iterations
+    'opt_iter': 100000,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
-    'base_tol': 1e-2,  # Base tolerance for selecting number of modes (main variable for truncation)
+    'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-    'threshold': False,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
+    'threshold': threshold,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': 100,  # Number of modes for truncation if threshold selected to False.
+    'Nm': modes,  # Number of modes for truncation if threshold selected to False.
 }
 
 # For two-way backtracking line search
@@ -151,7 +171,6 @@ for opt_step in range(kwargs['opt_iter']):
     print("\n==============================")
     print("Optimization step: %d" % opt_step)
 
-    time_odeint = perf_counter()  # save timing
     '''
     Forward calculation with primal for basis update
     '''
@@ -171,42 +190,28 @@ for opt_step in range(kwargs['opt_iter']):
     # Construct the primal system matrices for the POD-Galerkin approach
     Ar_p, psir_p = wf.mat_primal_PODG_FOTR(A_p, V_p, psi)
 
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Forward basis refinement t_cpu = %1.3f" % time_odeint)
-
     '''
     Forward calculation with reduced system
     '''
-    time_odeint = perf_counter()  # save timing
     as_ = wf.TI_primal_PODG_FOTR(a_p, f, Ar_p, psir_p)
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
     '''
     Objective and costs for control
     '''
-    time_odeint = perf_counter()  # save timing
     J = Calc_Cost_PODG(V_p, as_, qs_target, f,
                        kwargs['dx'], kwargs['dt'], kwargs['lamda'])
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
     '''
     Backward calculation with FOM system
     '''
-    time_odeint = perf_counter()  # save timing
     qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a, CTC)
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
     '''
      Update Control
     '''
-    time_odeint = perf_counter()
     f, J_opt, dL_du, omega, stag = Update_Control_PODG_FOTR_adaptive_TWBT(f, a_p, qs_adj, qs_target, V_p, Ar_p,
                                                                           psir_p, psi, J, omega,
                                                                           wf=wf, **kwargs)
-    if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
 
     running_time.append(perf_counter() - time_odeint_s)

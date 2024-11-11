@@ -9,16 +9,23 @@ import os
 from time import perf_counter
 import time
 import scipy.sparse as sp
+import argparse
 
-impath = "./data/FOM/"   # Storing data
-immpath = "./plots/FOM/"  # Storing plots
-os.makedirs(impath, exist_ok=True)
+parser = argparse.ArgumentParser(description="Input the variables for running the script.")
+parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
+args = parser.parse_args()
+problem = args.problem
 
-# Problem variables
-problem = 3
+print("\n")
+print(f"Solving problem: {args.problem}")
+
 Nxi = 800
 Neta = 1
 Nt = 3360
+
+impath = "./data_final/FOM/problem=" + str(problem) + "/"  # for data
+immpath = "./plots_final/FOM/problem=" + str(problem) + "/"  # for plots
+os.makedirs(impath, exist_ok=True)
 
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
@@ -82,6 +89,7 @@ q0_adj = wf.IC_adjoint()
 #%% Optimal control
 dL_du_list = []  # Collecting the gradient over the optimization steps
 J_opt_list = []  # Collecting the optimal cost functional for plotting
+J_opt_FOM_list = []  # Collecting the FOM cost over the optimization steps
 running_time = []  # Time calculated for each iteration in a running manner
 dL_du_ratio_list = []  # Collecting the ratio of gradients for plotting
 
@@ -98,7 +106,7 @@ kwargs = {
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100,  # Total iterations
+    'opt_iter': 100000,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'omega_cutoff': 1e-10  # Below this cutoff the Armijo and Backtracking should exit the update loop
@@ -118,38 +126,32 @@ for opt_step in range(kwargs['opt_iter']):
     print("\n-------------------------------")
     print("Optimization step: %d" % opt_step)
 
-    time_odeint = perf_counter()  # save timing
     qs = wf.TI_primal(q0, f, A_p, psi)
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Forward t_cpu = %1.3f" % time_odeint)
 
     '''
     Objective and costs for control
     '''
-    time_odeint = perf_counter()  # save timing
     J = Calc_Cost(qs, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Calc_Cost t_cpu = %1.6f" % time_odeint)
 
     '''
     Adjoint calculation
     '''
-    time_odeint = perf_counter()  # save timing
     qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a, CTC)
-    time_odeint = perf_counter() - time_odeint
-    if kwargs['verbose']: print("Backward t_cpu = %1.3f" % time_odeint)
 
     '''
      Update Control
     '''
-    time_odeint = perf_counter() - time_odeint
     f, J_opt, dL_du, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
-    if kwargs['verbose']: print("Update Control t_cpu = %1.3f" % (perf_counter() - time_odeint))
 
     running_time.append(perf_counter() - time_odeint_s)
 
+    qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
+    JJ = Calc_Cost(qs_opt_full, qs_target, f,
+                   kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+
     # Save for plotting
     J_opt_list.append(J_opt)
+    J_opt_FOM_list.append(JJ)
     dL_du_list.append(dL_du)
     dL_du_ratio_list.append(dL_du / dL_du_list[0])
 

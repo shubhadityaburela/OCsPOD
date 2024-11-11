@@ -10,7 +10,7 @@ from numba import njit
 
 class advection:
     def __init__(self, Nxi: int, Neta: int, timesteps: int, cfl: float, tilt_from: int, v_x: float, v_x_t: float,
-                 variance: float, offset: int) -> None:
+                 variance: float, offset: float) -> None:
         # Assertion statements for checking the sanctity of the input variables
         assert Nxi > 0, f"Please input sensible values for the X grid points"
         assert Neta > 0, f"Please input sensible values for the Y grid points"
