@@ -88,7 +88,7 @@ class PlotFlow:
 
         fig.savefig(immpath + name, dpi=300, transparent=True)
 
-    def plot1D_FOM_converg(self, J, dL_du, immpath):
+    def plot1D_FOM_converg(self, J, immpath):
 
         x = np.arange(len(J))
 
@@ -104,14 +104,7 @@ class PlotFlow:
         ax1.tick_params(axis='y', colors="C0")
         fig1.savefig(immpath + "J", dpi=300, transparent=True)
 
-        fig3 = plt.figure(figsize=(8, 8))
-        ax3 = fig3.add_subplot(111, label="4")
-        ax3.semilogy(np.arange(len(dL_du)), dL_du)
-        ax3.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
-        ax3.set_ylabel(r"relative $\quad \frac{dL}{du}$", color="C0")
-        fig3.savefig(immpath + "dL_du_ratio", dpi=300, transparent=True)
-
-    def plot1D_ROM_converg(self, J, dL_du, err, Nm, immpath):
+    def plot1D_ROM_converg(self, J, err, Nm, immpath):
 
         os.makedirs(immpath, exist_ok=True)
 
@@ -125,13 +118,6 @@ class PlotFlow:
         ax1.tick_params(axis='y', colors="C0")
         ax1.legend()
         fig1.savefig(immpath + "J", dpi=300, transparent=True)
-
-        fig3 = plt.figure(figsize=(8, 8))
-        ax3 = fig3.add_subplot(111, label="4")
-        ax3.semilogy(np.arange(len(dL_du)), dL_du)
-        ax3.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
-        ax3.set_ylabel(r"relative $\quad \frac{dL}{du}$", color="C0")
-        fig3.savefig(immpath + "dL_du_ratio", dpi=300, transparent=True)
 
         fig4 = plt.figure(figsize=(8, 8))
         ax4 = fig4.add_subplot(111, label="5")

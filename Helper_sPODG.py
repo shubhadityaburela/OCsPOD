@@ -13,6 +13,7 @@ sys.path.append('./sPOD/lib/')
 from transforms import Transform
 from numba import njit, prange
 
+
 @njit
 def binary_search_interval(xPoints, xStar):
     # Perform a binary search to find the interval index
@@ -96,7 +97,6 @@ def make_V_W_delta(U, T_delta, D, num_sample, Nx, modes):
 
 @njit
 def findIntervalAndGiveInterpolationWeight_1D(xPoints, xStar):
-
     # # Find the interval index using the optimized binary search
     # intervalIdx = binary_search_interval(xPoints, xStar)
     #
@@ -153,7 +153,6 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
 
 @njit(parallel=True)
 def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
-
     # # Nice alternative and is equally faster
     # VW_delta = np.stack((V_delta, W_delta), axis=0)
     # C_mat = oe.contract("zabc,bd->zacd", VW_delta, psi)
@@ -185,10 +184,9 @@ def Matrices_online_primal_FOTR(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
     M[modes:, modes:] = Da.T @ (LHS_matrix[2] @ Da)
 
     A[:modes] = RHS_matrix[0] @ as_ + np.add(weight * C[0, intervalIdx],
-                                                       (1 - weight) * C[0, intervalIdx + 1]) @ f
+                                             (1 - weight) * C[0, intervalIdx + 1]) @ f
     A[modes:] = Da.T @ (RHS_matrix[1] @ as_ + np.add(weight * C[1, intervalIdx],
-                                                               (1 - weight) * C[1, intervalIdx + 1]) @ f)
-
+                                                     (1 - weight) * C[1, intervalIdx + 1]) @ f)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A), intervalIdx, weight
 
@@ -196,3 +194,62 @@ def Matrices_online_primal_FOTR(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
 @njit
 def solve_lin_system(M, A):
     return np.linalg.solve(M, A)
+
+
+######################################### FRTO sPOD functions #########################################
+def LHS_offline_primal_FRTO(V_delta, W_delta, modes):
+    # D(a) matrices are dynamic in nature thus need to be included in the time integration part
+    LHS_mat = np.zeros((3, modes, modes))
+    LHS_mat[0, ...] = oe.contract('ij,jk->ik', V_delta[0].T, V_delta[0])
+    LHS_mat[1, ...] = oe.contract('ij,jk->ik', V_delta[0].T, W_delta[0])
+    LHS_mat[2, ...] = oe.contract('ij,jk->ik', W_delta[0].T, W_delta[0])
+
+    return np.ascontiguousarray(LHS_mat)
+
+
+def RHS_offline_primal_FRTO(V_delta, W_delta, A, modes):
+    RHS_mat = np.zeros((2, modes, modes))
+    RHS_mat[0, ...] = V_delta[0].T @ A @ V_delta[0]
+    RHS_mat[1, ...] = W_delta[0].T @ A @ V_delta[0]
+
+    return np.ascontiguousarray(RHS_mat)
+
+
+@njit(parallel=True)
+def Control_offline_primal_FRTO(V_delta, W_delta, psi, samples, modes):
+    # # Nice alternative and is equally faster
+    # VW_delta = np.stack((V_delta, W_delta), axis=0)
+    # C_mat = oe.contract("zabc,bd->zacd", VW_delta, psi)
+
+    C_mat = np.zeros((2, samples, modes, psi.shape[1]), dtype=V_delta.dtype)
+
+    for i in prange(samples):
+        C_mat[0, i, :, :] = V_delta[i].T @ psi
+        C_mat[1, i, :, :] = W_delta[i].T @ psi
+
+    return np.ascontiguousarray(C_mat)
+
+
+@njit
+def Matrices_online_primal_FRTO(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
+    M = np.empty((modes + 1, modes + 1), dtype=LHS_matrix[0].dtype)
+    A = np.empty(modes + 1)
+    as_ = a[:-1]
+    z = a[-1]
+
+    # Compute the interpolation weight and the interval in which the shift lies
+    intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -z)
+
+    Da = as_.reshape(-1, 1)
+
+    M[:modes, :modes] = LHS_matrix[0]
+    M[:modes, modes:] = LHS_matrix[1] @ Da
+    M[modes:, :modes] = M[:modes, modes:].T
+    M[modes:, modes:] = Da.T @ (LHS_matrix[2] @ Da)
+
+    A[:modes] = RHS_matrix[0] @ as_ + np.add(weight * C[0, intervalIdx],
+                                             (1 - weight) * C[0, intervalIdx + 1]) @ f
+    A[modes:] = Da.T @ (RHS_matrix[1] @ as_ + np.add(weight * C[1, intervalIdx],
+                                                     (1 - weight) * C[1, intervalIdx + 1]) @ f)
+
+    return np.ascontiguousarray(M), np.ascontiguousarray(A), intervalIdx, weight

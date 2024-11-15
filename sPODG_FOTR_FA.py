@@ -1,8 +1,9 @@
 """
-This file is the adaptive version. It can handle both the scenarios.
+This file is the version with FOM adjoint. It can handle both the scenarios.
 1. Fixed tolerance
 2. Fixed modes
 """
+import matplotlib.pyplot as plt
 
 from Coefficient_Matrix import CoefficientMatrix
 from Update import Update_Control_sPODG_FOTR_adaptive_TWBT
@@ -18,11 +19,14 @@ import time
 import scipy.sparse as sp
 import argparse
 
+import matplotlib
+
+matplotlib.use('TkAgg')
 
 import sys
+
 sys.path.append('./sPOD/lib/')
 from sPOD_algo import give_interpolation_error
-
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
 parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
@@ -67,12 +71,12 @@ impath = "./data_final/sPODG/problem=" + str(problem) + "/" + TYPE + "=" + str(V
 immpath = "./plots_final/sPODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
-Nxi = 800
+Nxi = 3200
 Neta = 1
 Nt = 3360
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
-# cfl = 2 / 6                         # cfl = 2 / 6                                   # cfl = 2 / 6
+# cfl = 8 / 6                         # cfl = 8 / 6                                   # cfl = 8 / 6
 # tilt_from = 3 * Nt // 4             # tilt_from = 3 * Nt // 4                       # tilt_from = 9 * Nt / 10
 # v_x = 0.5                           # v_x = 0.55                                    # v_x = 0.6
 # v_x_t = 1.0                         # v_x_t = 1.0                                   # v_x_t = 1.3
@@ -80,17 +84,17 @@ Nt = 3360
 # offset = 12                         # offset = 30                                   # offset = 30
 
 
-if problem == 1:    # Thick wave params
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
+if problem == 1:  # Thick wave params
+    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
-elif problem == 2:    # Sharp wave params (earlier kink):
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
+elif problem == 2:  # Sharp wave params (earlier kink):
+    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
-elif problem == 3:    # Sharp wave params (later kink):
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
+elif problem == 3:  # Sharp wave params (later kink):
+    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
                    tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 else:  # Default is problem 2
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=2 / 6,
+    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
 wf.Grid()
 
@@ -98,7 +102,7 @@ wf.Grid()
 n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c_init)  # Changing the value of
+psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
 # trim_first_n should basically make the psi matrix and the number of controls to be user defined.
 n_c = psi.shape[1]
 f = np.zeros((n_c, wf.Nt), order="F")  # Initial guess for the control
@@ -129,15 +133,14 @@ q0 = wf.IC_primal()
 q0_adj = wf.IC_adjoint()
 
 # %%
-dL_du_list = []  # Collecting the gradient over the optimization steps
+dL_du_norm_list = []  # Collecting the gradient over the optimization steps
 J_opt_FOM_list = []  # Collecting the FOM cost over the optimization steps
 running_time = []  # Time calculated for each iteration in a running manner
 J_opt_list = []  # Collecting the optimal cost functional for plotting
-dL_du_ratio_list = []  # Collecting the ratio of gradients for plotting
+dL_du_norm_ratio_list = []  # Collecting the ratio of gradients for plotting
 err_list = []  # Offline error reached according to the tolerance
 trunc_modes_list = []  # Number of modes needed to reach the offline error
 shift_refine_cntr_list = []  # Collects the iteration number at which the shifts are refined/updated
-
 
 # List of problem constants
 kwargs = {
@@ -153,12 +156,13 @@ kwargs = {
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
     'opt_iter': 100000,  # Total iterations
-    'shift_sample': 800,  # Number of samples for shift interpolation
+    'shift_sample': wf.Nxi,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-    'threshold': threshold,  # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
+    'threshold': threshold,
+    # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
     'Nm': modes,  # Number of modes for truncation if threshold selected to False.
     'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
@@ -209,6 +213,7 @@ for opt_step in range(kwargs['opt_iter']):
     err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
     print(f"Relative error for shifted primal: {err}, with Nm: {Nm}")
 
+
     err_list.append(err)
     trunc_modes_list.append(Nm)
 
@@ -240,11 +245,11 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    f, J_opt, dL_du, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
-                                                                           qs_target, delta_s,
-                                                                           Vd_p,
-                                                                           psi, J, omega, Nm, wf=wf,
-                                                                           **kwargs)
+    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
+                                                                                   qs_target, delta_s,
+                                                                                   Vd_p,
+                                                                                   psi, J, omega, Nm, wf=wf,
+                                                                                   **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
     qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
@@ -253,11 +258,11 @@ for opt_step in range(kwargs['opt_iter']):
 
     J_opt_FOM_list.append(JJ)
     J_opt_list.append(J_opt)
-    dL_du_list.append(dL_du)
-    dL_du_ratio_list.append(dL_du / dL_du_list[0])
+    dL_du_norm_list.append(dL_du_norm)
+    dL_du_norm_ratio_list.append(dL_du_norm / dL_du_norm_list[0])
 
     print(
-        f"J_opt : {J_opt}, ||dL_du|| = {dL_du}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}"
+        f"J_opt : {J_opt}, ||dL_du|| = {dL_du_norm}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
     )
 
     # Convergence criteria
@@ -265,15 +270,15 @@ for opt_step in range(kwargs['opt_iter']):
         print("\n\n-------------------------------")
         print(
             f"WARNING... maximal number of steps reached, "
-            f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}"
+            f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
         )
         f_last_valid = np.copy(f)
         break
-    elif dL_du / dL_du_list[0] < kwargs['delta_conv']:
+    elif dL_du_norm / dL_du_norm_list[0] < kwargs['delta_conv']:
         print("\n\n-------------------------------")
         print(
             f"Optimization converged with, "
-            f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}"
+            f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
         )
         f_last_valid = np.copy(f)
         break
@@ -298,7 +303,7 @@ for opt_step in range(kwargs['opt_iter']):
                 if stag_cntr >= 2:
                     print(
                         f"Armijo Stagnated !!!!!! even after 2 consecutive shift updates thus exiting at itr: {opt_step} with "
-                        f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du / dL_du_list[0]}")
+                        f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
                     break
                 print("\n-------------------------------")
                 print(
@@ -325,12 +330,10 @@ print("Total time elapsed = %1.3f" % (end - start))
 # Save the convergence lists
 np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
 np.save(impath + 'J_opt_list.npy', J_opt_list)
-np.save(impath + 'dL_du_ratio_list.npy', dL_du_ratio_list)
 np.save(impath + 'err_list.npy', err_list)
 np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
 np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
-
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs_opt_full)
@@ -353,7 +356,6 @@ pf.plot1D(qs_opt, name="qs_opt", immpath=immpath)
 pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=immpath)
 pf.plot1D(f_opt, name="f_opt", immpath=immpath)
 pf.plot1D_ROM_converg(J_opt_list,
-                      dL_du_ratio_list,
                       err_list,
                       trunc_modes_list,
                       immpath=immpath)

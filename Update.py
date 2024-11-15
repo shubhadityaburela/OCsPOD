@@ -1,12 +1,8 @@
-import line_profiler
-from numba import njit
 
 from Costs import *
 from Grads import *
 from Helper import *
-from time import perf_counter
 
-from Helper_sPODG import findIntervals
 
 
 def Update_Control_TWBT(f, q0, qs_adj, qs_target, mask, A_p, J_prev, omega_prev, wf, **kwargs):  # Two-way back tracking
@@ -38,7 +34,7 @@ def Update_Control_TWBT(f, q0, qs_adj, qs_target, mask, A_p, J_prev, omega_prev,
             if J >= dJ:
                 print(
                     f"Armijo satisfied and the inner loop converged at the {n}th step with final omega = {omega_final}")
-                return f_new_final, J_final, dL_du_norm, omega_final, False
+                return f_new_final, J_final, dL_du, dL_du_norm, omega_final, False
             if kwargs['verbose']: print(f"Armijo satisfied but omega too low! thus omega increased to = {omega}",
                                         f"at inner step={n}")
             n = n + 1
@@ -53,13 +49,13 @@ def Update_Control_TWBT(f, q0, qs_adj, qs_target, mask, A_p, J_prev, omega_prev,
             if J < dJ:  # If Armijo satisfied
                 if omega < kwargs['omega_cutoff']:
                     print(f"Omega went below the omega cutoff on the {k}th step, thus exiting the loop !!!!!!")
-                    return f_new, J, dL_du_norm, omega, True
+                    return f_new, J, dL_du, dL_du_norm, omega, True
                 else:
                     print(f"Armijo converged on the {k}th step with final omega = {omega}")
-                    return f_new, J, dL_du_norm, omega, False
+                    return f_new, J, dL_du, dL_du_norm, omega, False
             if omega < kwargs['omega_cutoff']:
                 print(f"Omega went below the omega cutoff on the {k}th step, thus exiting the loop !!!!!!")
-                return f_new, J, dL_du_norm, omega, True
+                return f_new, J, dL_du, dL_du_norm, omega, True
 
             if kwargs['verbose']: print(f"Armijo not satisfied thus omega decreased to = {omega}", f"at step={k}")
             k = k + 1
@@ -94,7 +90,7 @@ def Update_Control_PODG_FOTR_adaptive_TWBT(f, a0_primal, qs_adj, qs_target, V_p,
             if J >= dJ:
                 print(
                     f"Armijo satisfied and the inner loop converged at the {n}th step with final omega = {omega_final}")
-                return f_new_final, J_final, dL_du_norm, omega_final, False
+                return f_new_final, J_final, dL_du, dL_du_norm, omega_final, False
             if kwargs['verbose']: print(f"Armijo satisfied but omega too low! thus omega increased to = {omega}",
                                         f"at inner step={n}")
             n = n + 1
@@ -109,13 +105,13 @@ def Update_Control_PODG_FOTR_adaptive_TWBT(f, a0_primal, qs_adj, qs_target, V_p,
             if J < dJ:  # If Armijo satisfied
                 if omega < kwargs['omega_cutoff']:
                     print(f"Omega went below the omega cutoff on the {k}th step, thus exiting the loop !!!!!!")
-                    return f_new, J, dL_du_norm, omega, True
+                    return f_new, J, dL_du, dL_du_norm, omega, True
                 else:
                     print(f"Armijo converged on the {k}th step with final omega = {omega}")
-                    return f_new, J, dL_du_norm, omega, False
+                    return f_new, J, dL_du, dL_du_norm, omega, False
             if omega < kwargs['omega_cutoff']:
                 print(f"Omega went below the omega cutoff on the {k}th step, thus exiting the loop !!!!!!")
-                return f_new, J, dL_du_norm, omega, True
+                return f_new, J, dL_du, dL_du_norm, omega, True
 
             if kwargs['verbose']: print(f"Armijo not satisfied thus omega decreased to = {omega}", f"at step={k}")
             k = k + 1
@@ -152,7 +148,7 @@ def Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, q
             if J >= dJ:
                 print(
                     f"Armijo satisfied and the inner loop converged at the {n}th step with final omega = {omega_final}")
-                return f_new_final, J_final, dL_du_norm, omega_final, False
+                return f_new_final, J_final, dL_du, dL_du_norm, omega_final, False
             if kwargs['verbose']: print(f"Armijo satisfied but omega too low! thus omega increased to = {omega}",
                                         f"at inner step={n}")
             n = n + 1
@@ -168,13 +164,28 @@ def Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, q
             if J < dJ:  # If Armijo satisfied
                 if omega < kwargs['omega_cutoff']:
                     print(f"Omega went below the omega cutoff on the {k}th step, thus exiting the loop !!!!!!")
-                    return f_new, J, dL_du_norm, omega, True
+                    return f_new, J, dL_du, dL_du_norm, omega, True
                 else:
                     print(f"Armijo converged on the {k}th step with final omega = {omega}")
-                    return f_new, J, dL_du_norm, omega, False
+                    return f_new, J, dL_du, dL_du_norm, omega, False
             if omega < kwargs['omega_cutoff']:
                 print(f"Omega went below the omega cutoff on the {k}th step, thus exiting the loop !!!!!!")
-                return f_new, J, dL_du_norm, omega, True
+                return f_new, J, dL_du, dL_du_norm, omega, True
 
             if kwargs['verbose']: print(f"Armijo not satisfied thus omega decreased to = {omega}", f"at step={k}")
             k = k + 1
+
+
+def Update_Control_BB(fOld, fNew, dL_du_Old, qs_adj, mask, itr, **kwargs):  # Barzilai Borwein
+
+    dL_du_New = Calc_Grad(mask, fNew, qs_adj, kwargs['lamda'])
+    dL_du_norm_square = L2norm_ROM(dL_du_New, kwargs['dt'])
+    dL_du_norm = np.sqrt(dL_du_norm_square)
+    alpha = BarzilaiBorwein(itr, kwargs['dt'], fNew, fOld, dL_du_New, dL_du_Old)
+    omega = 1 / alpha
+
+    print(f"Step Size: {omega}")
+
+    f_bb_new = fNew - omega * dL_du_New
+
+    return f_bb_new, dL_du_New, dL_du_norm

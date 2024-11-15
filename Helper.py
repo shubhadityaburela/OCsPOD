@@ -9,6 +9,19 @@ import sys
 
 
 @njit
+def BarzilaiBorwein(itr, dt, fNew, fOld, gNew, gOld):
+    # Computes the step size according to Barzilai-Borwein method
+    SY = L2inner_prod(fNew - fOld, gNew - gOld, dt)
+
+    if itr % 2 == 0:  # Even number of iterations
+        SS = L2inner_prod(fNew - fOld, fNew - fOld, dt)
+        return SY / SS
+    else:  # Odd number of iterations
+        YY = L2inner_prod(gNew - gOld, gNew - gOld, dt)
+        return YY / SY
+
+
+@njit
 def RHS_PODG_FOTR_solve(Ar_p, a, psir_p, f):
     Ar_p_cont = np.ascontiguousarray(Ar_p)
     a_cont = np.ascontiguousarray(a)
@@ -18,7 +31,7 @@ def RHS_PODG_FOTR_solve(Ar_p, a, psir_p, f):
     return Ar_p_cont @ a_cont + psir_p_cont @ f_cont
 
 
-@njit(parallel=True)
+@njit
 def L2norm_FOM(qq, dx, dt):
     # Directly modify the input array if allowed
     q = qq.copy()  # Copy only if you need to keep qq unchanged
@@ -28,20 +41,12 @@ def L2norm_FOM(qq, dx, dt):
     q[:, -1] /= np.sqrt(2.0)
 
     # Calculate the squared L2 norm
-
-    # # Instead of reshaping, iterate through the elements
-    # norm = 0.0
-    # rows, cols = q.shape
-    # for i in prange(rows):
-    #     for j in range(cols):
-    #         norm += q[i, j] ** 2
-
     norm = np.sum(q ** 2)
 
     return norm * dx * dt
 
 
-@njit(parallel=True)
+@njit
 def L2norm_ROM(qq, dt):
     # Directly modify the input array if allowed
     q = qq.copy()  # Copy only if you need to keep qq unchanged
@@ -51,35 +56,26 @@ def L2norm_ROM(qq, dt):
     q[:, -1] /= np.sqrt(2.0)
 
     # Calculate the squared L2 norm
-
-    # # Instead of reshaping, iterate through the elements
-    # norm = 0.0
-    # rows, cols = q.shape
-    # for i in prange(rows):
-    #     for j in range(cols):
-    #         norm += q[i, j] ** 2
-
     norm = np.sum(q ** 2)
 
     return norm * dt
 
 
-
-def L2inner_prod(qq, dt):
+@njit
+def L2inner_prod(qq1, qq2, dt):
     # Directly modify the input array if allowed
-    q = qq.copy()  # Copy only if you need to keep qq unchanged
+    q1 = qq1.copy()  # Copy only if you need to keep uu unchanged
+    q2 = qq2.copy()
 
     # Scale the first and last column
-    q[:, 0] /= 2.0
-    q[:, -1] /= 2.0
+    q1[:, 0] /= np.sqrt(2.0)
+    q1[:, -1] /= np.sqrt(2.0)
 
-    norm = 0.0
-    rows, cols = q.shape
-    for i in prange(rows):
-        for j in range(cols):
-            norm += q[i, j]
+    q2[:, 0] /= np.sqrt(2.0)
+    q2[:, -1] /= np.sqrt(2.0)
 
-    return norm * dt
+    prod = np.sum(q1 * q2)
+    return prod * dt
 
 
 # Other Helper functions
