@@ -131,6 +131,29 @@ def findIntervals(delta_s, delta):
     return intIds, weights
 
 
+@njit(parallel=True)
+def get_approx_state_sPODG(V, fNew, as_, intIds, weights, Nx, Nt):
+    q = np.zeros((Nx, Nt))
+    for i in prange(fNew.shape[1]):
+        V_idx = intIds[i]
+        V_delta = weights[i] * V[V_idx] + (1 - weights[i]) * V[V_idx + 1]
+        q[:, i] = V_delta @ as_[:, i]
+
+    return q
+
+
+def compute_residual(D, A_p, Vd_p, psi, as_res, as_dot_res, f, intIds, weights, t_monitor, Nx, Nt):
+    residual = np.zeros((Nx, len(t_monitor)))
+    for itr, i in enumerate(t_monitor):
+        V_idx = intIds[i]
+        V_weights = weights[i]
+        V_d = V_weights * Vd_p[V_idx] + (1 - V_weights) * Vd_p[V_idx + 1]
+        residual[:, itr] = ((D @ V_d) * as_dot_res[-1, i - 1]) @ as_res[:, i] + \
+                           V_d @ as_dot_res[:-1, i - 1] - A_p @ V_d @ as_res[:, i] - psi @ f[:, i]
+
+    return residual
+
+
 ######################################### FOTR sPOD functions #########################################
 
 def LHS_offline_primal_FOTR(V_delta, W_delta, modes):
@@ -166,6 +189,20 @@ def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
     return np.ascontiguousarray(C_mat)
 
 
+def Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint, CTC, num_samples, modes_a, modes_p,
+                                Nx):
+    Tar_mat_1 = np.zeros((2, num_samples, modes_a, modes_p))
+    Tar_mat_2 = np.zeros((2, num_samples, modes_a, Nx))
+
+    for i in range(num_samples):
+        Tar_mat_1[0, i, ...] = V_delta_adjoint[i].T @ CTC @ V_delta_primal[i]
+        Tar_mat_1[1, i, ...] = W_delta_adjoint[i].T @ CTC @ V_delta_primal[i]
+        Tar_mat_2[0, i, ...] = V_delta_adjoint[i].T @ CTC
+        Tar_mat_2[1, i, ...] = W_delta_adjoint[i].T @ CTC
+
+    return np.ascontiguousarray(Tar_mat_1), np.ascontiguousarray(Tar_mat_2)
+
+
 @njit
 def Matrices_online_primal_FOTR(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
     M = np.empty((modes + 1, modes + 1), dtype=LHS_matrix[0].dtype)
@@ -189,6 +226,34 @@ def Matrices_online_primal_FOTR(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
                                                      (1 - weight) * C[1, intervalIdx + 1]) @ f)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A), intervalIdx, weight
+
+
+@njit
+def Matrices_online_adjoint_FOTR(LHS_matrix, RHS_matrix, Tar_matrix1, Tar_matrix2,
+                                 qs_target, as_adj, as_, modes_a, modes_p, intervalIdx, weight):
+    M = np.empty((modes_a + 1, modes_a + 1), dtype=LHS_matrix[0].dtype)
+    A = np.empty(modes_a + 1)
+    as_adj_ = as_adj[:-1]  # Take the modes from the adjoint solution
+    as_p = as_[:-1]
+
+    Da = as_adj_.reshape(-1, 1)
+
+    M[:modes_a, :modes_a] = LHS_matrix[0]
+    M[:modes_a, modes_a:] = LHS_matrix[1] @ Da
+    M[modes_a:, :modes_a] = M[:modes_a, modes_a:].T
+    M[modes_a:, modes_a:] = Da.T @ (LHS_matrix[2] @ Da)
+
+    A[:modes_a] = RHS_matrix[0] @ as_adj_ + np.add(weight * Tar_matrix1[0, intervalIdx],
+                                                   (1 - weight) * Tar_matrix1[0, intervalIdx + 1]) @ as_p - \
+                  np.add(weight * Tar_matrix2[0, intervalIdx],
+                         (1 - weight) * Tar_matrix2[0, intervalIdx + 1]) @ qs_target
+
+    A[modes_a:] = Da.T @ (RHS_matrix[1] @ as_adj_ + np.add(weight * Tar_matrix1[1, intervalIdx],
+                                                           (1 - weight) * Tar_matrix1[1, intervalIdx + 1]) @ as_p -
+                          np.add(weight * Tar_matrix2[1, intervalIdx],
+                                 (1 - weight) * Tar_matrix2[1, intervalIdx + 1]) @ qs_target)
+
+    return np.ascontiguousarray(M), np.ascontiguousarray(A)
 
 
 @njit

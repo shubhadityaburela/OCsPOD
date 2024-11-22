@@ -8,7 +8,7 @@ from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
 from Grads import Calc_Grad
 from Helper import ControlSelectionMatrix_advection, compute_red_basis
-from Update import Update_Control_PODG_FOTR_adaptive_TWBT, \
+from Update import Update_Control_PODG_FOTR_FA_TWBT, \
     Update_Control_TWBT
 from advection import advection
 from Plots import PlotFlow
@@ -206,9 +206,9 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_PODG_FOTR_adaptive_TWBT(f, a_p, qs_adj, qs_target, V_p, Ar_p,
-                                                                                  psir_p, psi, J, omega,
-                                                                                  wf=wf, **kwargs)
+    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_PODG_FOTR_FA_TWBT(f, a_p, qs_adj, qs_target, V_p, Ar_p,
+                                                                            psir_p, psi, J, omega,
+                                                                            wf=wf, **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
 
@@ -276,29 +276,23 @@ print("Total time elapsed = %1.3f" % (end - start))
 # Save the convergence lists
 np.save(impath + 'J_opt_list.npy', J_opt_list)
 np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
-np.save(impath + 'err_list.npy', err_list)
-np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
+# np.save(impath + 'err_list.npy', err_list)
+# np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs_opt_full)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
-np.save(impath + 'f_opt_low.npy', f)
+# np.save(impath + 'f_opt_low.npy', f)
 
 # %%
-# Load the results
-qs_org = np.load(impath + 'qs_org.npy')
-qs_opt = np.load(impath + 'qs_opt.npy')
-qs_adj_opt = np.load(impath + 'qs_adj_opt.npy')
-f_opt = np.load(impath + 'f_opt.npy')
-
 # Plot the results
 pf = PlotFlow(wf.X, wf.Y, wf.t)
-pf.plot1D(qs_org, name="qs_org", immpath=immpath)
-pf.plot1D(qs_target, name="qs_target", immpath=immpath)
-pf.plot1D(qs_opt, name="qs_opt", immpath=immpath)
-pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=immpath)
+# pf.plot1D(qs_org, name="qs_org", immpath=immpath)
+# pf.plot1D(qs_target, name="qs_target", immpath=immpath)
+pf.plot1D(qs_opt_full, name="qs_opt", immpath=immpath)
+pf.plot1D(qs_adj, name="qs_adj_opt", immpath=immpath)
 pf.plot1D(f_opt, name="f_opt", immpath=immpath)
 
 pf.plot1D_ROM_converg(J_opt_list,

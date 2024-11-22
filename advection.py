@@ -4,7 +4,7 @@ import scipy
 
 from Helper import RHS_PODG_FOTR_solve, is_contiguous
 from Helper_sPODG import *
-from rk4 import rk4, rk4_adj, rk4_rpr, exp_eul, exp_eul_adj
+from rk4 import rk4, rk4_adj, rk4_rpr, exp_eul, exp_eul_adj, rk4_radj, rk4_rpr_dot
 from numba import njit
 
 
@@ -122,7 +122,8 @@ class advection:
         qs[:, 0] = q
 
         for n in range(1, self.Nt):
-            qs[:, n] = rk4(self.RHS_primal_target, qs[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, Mat, self.v_x_target[n - 1],
+            qs[:, n] = rk4(self.RHS_primal_target, qs[:, n - 1], f0[:, n - 1], f0[:, n], self.dt, Mat,
+                           self.v_x_target[n - 1],
                            self.v_y_target[n - 1])
 
         return qs
@@ -161,7 +162,6 @@ class advection:
 
         return a
 
-    @line_profiler.profile
     def mat_primal_sPODG_FOTR(self, T_delta, V_p, A_p, psi, D, samples, modes):
 
         # Construct V_delta and W_delta matrix
@@ -178,7 +178,6 @@ class advection:
 
         return V_delta_primal, W_delta_primal, LHS_matrix, RHS_matrix, C_matrix
 
-    @line_profiler.profile
     def RHS_primal_sPODG_FOTR(self, a, f, lhs, rhs, c, ds, modes):
 
         # Prepare the online primal matrices
@@ -188,7 +187,6 @@ class advection:
         X = solve_lin_system(M, A)
 
         return X, intervalIdx, weight
-
 
     def TI_primal_sPODG_FOTR(self, lhs, rhs, c, a, f0, delta_s, modes):
         # Time loop
@@ -207,6 +205,72 @@ class advection:
 
         return as_, IntIds, weights
 
+    def TI_primal_sPODG_FOTR_dot(self, lhs, rhs, c, a, f0, delta_s, modes):
+        # Time loop
+        as_ = np.zeros((a.shape[0], self.Nt), order="F")
+        as_dot = np.zeros((a.shape[0], self.Nt - 1), order="F")
+        f0 = np.asfortranarray(f0)
+        IntIds = np.zeros(self.Nt, dtype=np.int32)
+        weights = np.zeros(self.Nt)
+
+        as_[:, 0] = a
+
+        for n in range(1, self.Nt):
+            as_[:, n], IntIds[n - 1], weights[n - 1], as_dot[:, n - 1] = rk4_rpr_dot(self.RHS_primal_sPODG_FOTR,
+                                                                                     as_[:, n - 1],
+                                                                                     f0[:, n - 1],
+                                                                                     f0[:, n], self.dt, lhs, rhs, c,
+                                                                                     delta_s, modes)
+
+        IntIds[-1], weights[-1] = findIntervalAndGiveInterpolationWeight_1D(delta_s[2], -as_[-1, -1])
+
+        return as_, IntIds, weights, as_dot
+
+    def IC_adjoint_sPODG_FOTR(self, Nm_a, z):
+        a = np.concatenate((np.zeros(Nm_a), np.asarray([z])))
+        return a
+
+    def mat_adjoint_sPODG_FOTR(self, T_delta, V_a, A_a, D, V_delta_primal, CTC, samples, modes_a, modes_p):
+
+        # Construct V_delta and W_delta matrix
+        V_delta_adjoint, W_delta_adjoint = make_V_W_delta(V_a, T_delta, D, samples, self.Nxi, modes_a)
+
+        # Construct LHS matrix
+        LHS_matrix = LHS_offline_primal_FOTR(V_delta_adjoint, W_delta_adjoint, modes_a)
+
+        # Construct RHS matrix
+        RHS_matrix = RHS_offline_primal_FOTR(V_delta_adjoint, W_delta_adjoint, A_a, modes_a)
+
+        # Construct the control matrix
+        Tar_matrix_1, Tar_matrix_2 = Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint,
+                                                                 CTC, samples, modes_a, modes_p, self.Nxi)
+
+        return V_delta_adjoint, W_delta_adjoint, LHS_matrix, RHS_matrix, Tar_matrix_1, Tar_matrix_2
+
+    def RHS_adjoint_sPODG_FOTR(self, as_adj, as_, qs_target, lhs, rhs, tar1, tar2, modes_a, modes_p, intId, weight):
+
+        # Prepare the online adjoint matrices
+        M, A = Matrices_online_adjoint_FOTR(lhs, rhs, tar1, tar2, qs_target, as_adj, as_,
+                                            modes_a, modes_p, intId, weight)
+
+        # Solve the linear system of equations
+        if np.linalg.cond(M, p='fro') == np.inf:
+            return solve_lin_system(M.T.dot(M) + 1e-14 * np.identity(M.shape[1]), M.T.dot(-A))
+        else:
+            return solve_lin_system(M, -A)
+
+    def TI_adjoint_sPODG_FOTR(self, lhs, rhs, tar1, tar2, a_a, as_, qs_target,
+                              modes_a, modes_p, intIds, weights):
+        # Time loop
+        as_adj = np.zeros((modes_a + 1, self.Nt), order="F")
+        as_ = np.asfortranarray(as_)
+        as_adj[:, -1] = a_a
+
+        for n in range(1, self.Nt):
+            as_adj[:, -(n + 1)] = rk4_radj(self.RHS_adjoint_sPODG_FOTR, as_adj[:, -n], as_[:, -n], as_[:, -(n + 1)],
+                                           qs_target[:, -n], qs_target[:, -(n + 1)], -self.dt, lhs, rhs, tar1, tar2,
+                                           modes_a, modes_p, intIds[-n], weights[-n])
+        return as_adj
 
     ######################################### FRTO sPOD (New Cost)  #############################################
     def IC_primal_sPODG_FRTO(self, q0, V):
@@ -216,7 +280,6 @@ class advection:
         a = np.concatenate((a, np.asarray([z])))
 
         return a
-
 
     def mat_primal_sPODG_FRTO(self, T_delta, V_p, A_p, psi, D, samples, modes):
 
@@ -234,7 +297,6 @@ class advection:
 
         return V_delta_primal, W_delta_primal, LHS_matrix, RHS_matrix, C_matrix
 
-
     def RHS_primal_sPODG_FRTO(self, a, f, lhs, rhs, c, ds, modes):
 
         # Prepare the online primal matrices
@@ -244,7 +306,6 @@ class advection:
         X = solve_lin_system(M, A)
 
         return X, intervalIdx, weight
-
 
     def TI_primal_sPODG_FRTO(self, lhs, rhs, c, a, f0, delta_s, modes):
         # Time loop
@@ -262,7 +323,6 @@ class advection:
         IntIds[-1], weights[-1] = findIntervalAndGiveInterpolationWeight_1D(delta_s[2], -as_[-1, -1])
 
         return as_, IntIds, weights
-
 
     def IC_adjoint_sPODG_FRTO(self, modes):
         z = 0

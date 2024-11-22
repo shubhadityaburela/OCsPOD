@@ -36,5 +36,5 @@ def Calc_Cost_sPODG(V, as_, qs_target, f, intIds, weights, dx, dt, lamda):
 
     cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda / 2) * (L2norm_ROM(f, dt))
 
-    return cost
+    return cost, q
 

@@ -88,7 +88,7 @@ def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, ga
     psi = np.zeros((wf.Nxi, n_c - trim_first_n), order="F")
     if Gaussian:
         for i in range(n_c - trim_first_n):
-            psi[:, i] = func(wf.X - wf.Lxi/n_c - (trim_first_n + i) * wf.Lxi/n_c, sigma=gaussian_mask_sigma)
+            psi[:, i] = func(wf.X - wf.Lxi/n_c - (trim_first_n + i) * wf.Lxi/n_c, sigma=gaussian_mask_sigma)  # Could also divide the middle quantity by 2 for similar non-overlapping gaussians
     else:
         control_index = np.array_split(np.arange(start_controlling_from, wf.Nxi), n_c)
         for i in range(n_c - trim_first_n):
@@ -99,7 +99,7 @@ def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, ga
     # import matplotlib
     # matplotlib.use('TkAgg')
     # for i in range(n_c - trim_first_n):
-    #     plt.plot(psi[:, i])
+    #     plt.plot(wf.X, psi[:, i])
     # plt.show()
     # exit()
 

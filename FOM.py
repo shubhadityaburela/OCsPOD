@@ -215,23 +215,16 @@ np.save(impath + 'running_time.npy', running_time)
 np.save(impath + 'qs_opt.npy', qs_opt)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
-np.save(impath + 'f_opt_low.npy', f)
+# np.save(impath + 'f_opt_low.npy', f)
 
 
 #%%
-# Load the results
-qs_org = np.load(impath + 'qs_org.npy')
-qs_opt = np.load(impath + 'qs_opt.npy')
-qs_adj_opt = np.load(impath + 'qs_adj_opt.npy')
-f_opt = np.load(impath + 'f_opt.npy')
-
-
 # Plot the results
 pf = PlotFlow(wf.X, wf.Y, wf.t)
 
 pf.plot1D(qs_org, name="qs_org", immpath=immpath)
 pf.plot1D(qs_target, name="qs_target", immpath=immpath)
 pf.plot1D(qs_opt, name="qs_opt", immpath=immpath)
-pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=immpath)
+pf.plot1D(qs_adj, name="qs_adj_opt", immpath=immpath)
 pf.plot1D(f_opt, name="f_opt", immpath=immpath)
 pf.plot1D_FOM_converg(J_opt_list, immpath=immpath)

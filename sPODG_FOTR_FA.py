@@ -6,7 +6,7 @@ This file is the version with FOM adjoint. It can handle both the scenarios.
 import matplotlib.pyplot as plt
 
 from Coefficient_Matrix import CoefficientMatrix
-from Update import Update_Control_sPODG_FOTR_adaptive_TWBT
+from Update import Update_Control_sPODG_FOTR_FA_TWBT
 from advection import advection
 from Plots import PlotFlow
 from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift, is_contiguous
@@ -67,8 +67,8 @@ else:
     print("No 'modes' or 'tol' argument provided. Please specify one.")
     exit()
 
-impath = "./data_final/sPODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots_final/sPODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
+impath = "./data/sPODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
+immpath = "./plots/sPODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 Nxi = 3200
@@ -123,10 +123,8 @@ CTC = C.T @ C
 
 # %% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
-np.save(impath + 'qs_org.npy', qs_org)
 
 qs_target = wf.TI_primal_target(wf.IC_primal(), Mat, np.zeros((wf.Nxi * wf.Neta, wf.Nt)))
-np.save(impath + 'qs_target.npy', qs_target)
 
 # Initial conditions for both primal and adjoint are defined here as they only need to defined once.
 q0 = wf.IC_primal()
@@ -156,7 +154,7 @@ kwargs = {
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
     'opt_iter': 100000,  # Total iterations
-    'shift_sample': wf.Nxi,  # Number of samples for shift interpolation
+    'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
@@ -213,7 +211,6 @@ for opt_step in range(kwargs['opt_iter']):
     err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
     print(f"Relative error for shifted primal: {err}, with Nm: {Nm}")
 
-
     err_list.append(err)
     trunc_modes_list.append(Nm)
 
@@ -234,8 +231,8 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     # Compute the interpolation weight and the interval in which the shift lies corresponding to which we compute the
     # V_delta and W_delta matrices
-    J = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
-                        kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+    J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
+                           kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 
     '''
     Backward calculation with FOM system
@@ -245,11 +242,11 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_sPODG_FOTR_adaptive_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
-                                                                                   qs_target, delta_s,
-                                                                                   Vd_p,
-                                                                                   psi, J, omega, Nm, wf=wf,
-                                                                                   **kwargs)
+    f, J_opt, _, dL_du_norm, omega, _, stag = Update_Control_sPODG_FOTR_FA_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
+                                                                                qs_target, delta_s,
+                                                                                Vd_p,
+                                                                                psi, J, omega, Nm, wf=wf,
+                                                                                **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
     qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
@@ -330,30 +327,24 @@ print("Total time elapsed = %1.3f" % (end - start))
 # Save the convergence lists
 np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
 np.save(impath + 'J_opt_list.npy', J_opt_list)
-np.save(impath + 'err_list.npy', err_list)
-np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
+# np.save(impath + 'err_list.npy', err_list)
+# np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
-np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
+# np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs_opt_full)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
-np.save(impath + 'f_opt_low.npy', f_last_valid)
+# np.save(impath + 'f_opt_low.npy', f_last_valid)
 
 # %%
-# Load the results
-qs_org = np.load(impath + 'qs_org.npy')
-qs_opt = np.load(impath + 'qs_opt.npy')
-qs_adj_opt = np.load(impath + 'qs_adj_opt.npy')
-f_opt = np.load(impath + 'f_opt.npy')
-
 # Plot the results
 pf = PlotFlow(wf.X, wf.Y, wf.t)
-pf.plot1D(qs_org, name="qs_org", immpath=immpath)
-pf.plot1D(qs_target, name="qs_target", immpath=immpath)
-pf.plot1D(qs_opt, name="qs_opt", immpath=immpath)
-pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=immpath)
+# pf.plot1D(qs_org, name="qs_org", immpath=immpath)
+# pf.plot1D(qs_target, name="qs_target", immpath=immpath)
+pf.plot1D(qs_opt_full, name="qs_opt", immpath=immpath)
+pf.plot1D(qs_adj, name="qs_adj_opt", immpath=immpath)
 pf.plot1D(f_opt, name="f_opt", immpath=immpath)
 pf.plot1D_ROM_converg(J_opt_list,
                       err_list,
