@@ -6,11 +6,11 @@ This file is the version with FOM adjoint. It can handle both the scenarios.
 import matplotlib.pyplot as plt
 
 from Coefficient_Matrix import CoefficientMatrix
-from Update import Update_Control_sPODG_FOTR_FA_TWBT
+from Update import Update_Control_sPODG_FOTR_FA_TWBT, Update_Control_sPODG_FOTR_FA_Arm
 from advection import advection
 from Plots import PlotFlow
-from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift, is_contiguous
-from Helper_sPODG import subsample, findIntervals, get_T, central_FDMatrix
+from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
+from Helper_sPODG import subsample, get_T, central_FDMatrix
 from Costs import Calc_Cost_sPODG, Calc_Cost
 import os
 from time import perf_counter
@@ -18,10 +18,6 @@ import numpy as np
 import time
 import scipy.sparse as sp
 import argparse
-
-import matplotlib
-
-matplotlib.use('TkAgg')
 
 import sys
 
@@ -164,6 +160,11 @@ kwargs = {
     # "FALSE" for mode based.
     'Nm': modes,  # Number of modes for truncation if threshold selected to False.
     'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
+    # Variables for Simple Armijo (one way backtracking)
+    'use_OWBT': True,
+    'omega_init': 1,  # Initial starting value of step size
+    'Armijo_iter': 35,  # Number of Armijo iterations
+    'omega_decr': 2,  # Decrease omega by a factor of 2
 }
 
 # %% ROM Variables
@@ -242,11 +243,19 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    f, J_opt, _, dL_du_norm, omega, _, stag = Update_Control_sPODG_FOTR_FA_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
-                                                                                qs_target, delta_s,
-                                                                                Vd_p,
-                                                                                psi, J, omega, Nm, wf=wf,
-                                                                                **kwargs)
+    if not kwargs['use_OWBT']:
+        f, J_opt, _, dL_du_norm, omega, _, stag = Update_Control_sPODG_FOTR_FA_TWBT(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
+                                                                                    qs_target, delta_s,
+                                                                                    Vd_p,
+                                                                                    psi, J, omega, Nm, wf=wf,
+                                                                                    **kwargs)
+    else:
+        f, J_opt, _, dL_du_norm, _, stag = Update_Control_sPODG_FOTR_FA_Arm(f, lhs_p, rhs_p, c_p, a_p, qs_adj,
+                                                                                    qs_target, delta_s,
+                                                                                    Vd_p,
+                                                                                    psi, J, Nm, wf=wf,
+                                                                                    **kwargs)
+
 
     running_time.append(perf_counter() - time_odeint_s)
     qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
@@ -327,26 +336,23 @@ print("Total time elapsed = %1.3f" % (end - start))
 # Save the convergence lists
 np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
 np.save(impath + 'J_opt_list.npy', J_opt_list)
-# np.save(impath + 'err_list.npy', err_list)
-# np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
+np.save(impath + 'err_list.npy', err_list)
+np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
-# np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
+np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs_opt_full)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
-# np.save(impath + 'f_opt_low.npy', f_last_valid)
+np.save(impath + 'f_opt_low.npy', f_last_valid)
 
 # %%
 # Plot the results
 pf = PlotFlow(wf.X, wf.Y, wf.t)
-# pf.plot1D(qs_org, name="qs_org", immpath=immpath)
-# pf.plot1D(qs_target, name="qs_target", immpath=immpath)
+pf.plot1D(qs_org, name="qs_org", immpath=immpath)
+pf.plot1D(qs_target, name="qs_target", immpath=immpath)
 pf.plot1D(qs_opt_full, name="qs_opt", immpath=immpath)
 pf.plot1D(qs_adj, name="qs_adj_opt", immpath=immpath)
 pf.plot1D(f_opt, name="f_opt", immpath=immpath)
-pf.plot1D_ROM_converg(J_opt_list,
-                      err_list,
-                      trunc_modes_list,
-                      immpath=immpath)
+pf.plot1D_ROM_converg(J_opt_list, immpath=immpath)

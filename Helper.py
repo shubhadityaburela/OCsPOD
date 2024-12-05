@@ -1,11 +1,7 @@
-import line_profiler
 import numpy as np
-from numba import njit, prange
+from numba import njit
 from sklearn.utils.extmath import randomized_svd
-from scipy.optimize import root
-from scipy import integrate
 from scipy import optimize
-import sys
 
 
 @njit
@@ -93,15 +89,6 @@ def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, ga
         control_index = np.array_split(np.arange(start_controlling_from, wf.Nxi), n_c)
         for i in range(n_c - trim_first_n):
             psi[control_index[trim_first_n + i], i] = 1.0
-
-    # print(n_c)
-    # import matplotlib.pyplot as plt
-    # import matplotlib
-    # matplotlib.use('TkAgg')
-    # for i in range(n_c - trim_first_n):
-    #     plt.plot(wf.X, psi[:, i])
-    # plt.show()
-    # exit()
 
     return psi
 

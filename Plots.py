@@ -90,13 +90,11 @@ class PlotFlow:
 
     def plot1D_FOM_converg(self, J, immpath):
 
-        x = np.arange(len(J))
-
         os.makedirs(immpath, exist_ok=True)
 
         fig1 = plt.figure(figsize=(8, 8))
         ax1 = fig1.add_subplot(111, label="1")
-        ax1.semilogy(np.arange(len(J)), J, color="C0", label="Cost functional")
+        ax1.semilogy(np.arange(len(J)), J, color="C0", label=r"$\mathcal{J}$")
         ax1.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
         ax1.set_ylabel(r"$J$", color="C0")
         ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -104,13 +102,13 @@ class PlotFlow:
         ax1.tick_params(axis='y', colors="C0")
         fig1.savefig(immpath + "J", dpi=300, transparent=True)
 
-    def plot1D_ROM_converg(self, J, err, Nm, immpath):
+    def plot1D_ROM_converg(self, J, immpath):
 
         os.makedirs(immpath, exist_ok=True)
 
         fig1 = plt.figure(figsize=(8, 8))
         ax1 = fig1.add_subplot(111, label="1")
-        ax1.semilogy(np.arange(len(J)), J, color="C0", label="Cost functional")
+        ax1.semilogy(np.arange(len(J)), J, color="C0", label=r"$\mathcal{J}$")
         ax1.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
         ax1.set_ylabel(r"$J$", color="C0")
         ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -118,17 +116,3 @@ class PlotFlow:
         ax1.tick_params(axis='y', colors="C0")
         ax1.legend()
         fig1.savefig(immpath + "J", dpi=300, transparent=True)
-
-        fig4 = plt.figure(figsize=(8, 8))
-        ax4 = fig4.add_subplot(111, label="5")
-        ax4.semilogy(np.arange(len(err)), err)
-        ax4.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
-        ax4.set_ylabel(r"relative recon. err", color="C0")
-        fig4.savefig(immpath + "Offline_error", dpi=300, transparent=True)
-
-        fig5 = plt.figure(figsize=(8, 8))
-        ax5 = fig5.add_subplot(111, label="6")
-        ax5.scatter(np.arange(len(Nm)), Nm)
-        ax5.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
-        ax5.set_ylabel(r"$Nm$", color="C0")
-        fig5.savefig(immpath + "Truncated modes", dpi=300, transparent=True)

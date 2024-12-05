@@ -1,48 +1,33 @@
 import numpy as np
+from numba import njit
 
-
-def Q11(M1):
-    return M1
-
-
-def Q12(N, D):
-    return D.transpose() @ N.transpose()
-
-
-def Q21(N, D):
-    return N @ D
-
-
-def Q22(M2, D):
-    return D.transpose() @ (M2 @ D)
-
-
-def B11(N, A1, z_dot, r):
+@njit
+def E11(N, A1, z_dot, r):
     return A1 - N @ D_dash(z_dot, r)
 
-
-def B12(M2, N, A2, D, WTB, a_dot, z_dot, a_s, u, r):
-    mat1 = dDT_dt(a_dot) @ N.transpose()
-    mat3 = DT_dash(N.transpose() @ a_dot)
+@njit
+def E12(M2, N, A2, D, WTB, a_dot, z_dot, a_s, u, r):
+    mat1 = dDT_dt(a_dot) @ N.T
+    mat3 = DT_dash(N.T @ a_dot)
     mat4 = DT_dash(M2 @ (D @ z_dot))
-    mat5 = D.transpose() @ (M2 @ D_dash(z_dot, r))
+    mat5 = D.T @ (M2 @ D_dash(z_dot, r))
     mat6 = DT_dash(A2 @ a_s)
-    mat7 = D.transpose() @ A2
+    mat7 = D.T @ A2
     mat8 = DT_dash(WTB @ u)
 
     return mat1 - mat3 - mat4 - mat5 + mat6 + mat7 + mat8
 
-
-def B21(Dfd, N, VTdashB, a_dot, u):
+@njit
+def E21(N, VTdashB, a_dot, u):
     mat2 = N @ dD_dt(a_dot)
-    mat6 = VTdashB @ u
+    mat6 = VTdashB @ u[:, None]
     return mat2 + mat6
 
-
-def B22(Dfd, M2, D, WTdashB, a_dot, u):
+@njit
+def E22(M2, D, WTdashB, a_dot, u):
     mat1 = dDT_dt(a_dot) @ (M2 @ D)
-    mat3 = D.transpose() @ (M2 @ dD_dt(a_dot))
-    mat7 = D.transpose() @ (WTdashB @ u)
+    mat3 = D.T @ (M2 @ dD_dt(a_dot))
+    mat7 = D.T @ (WTdashB @ u[:, None])
 
     return mat1 + mat3 + mat7
 
@@ -55,30 +40,15 @@ def C2(Dfd, V, qs_target, T, a_s):
     return np.atleast_1d((a_s.transpose() @ T) @ a_s - ((a_s.transpose() @ V_dash(Dfd, V).transpose()) @ qs_target))
 
 
-def Z11(M1):
-    return M1
-
-
-def Z12(N, D):
-    return D.transpose() @ N.transpose()
-
-
-def Z21(N, D):
-    return N @ D
-
-
-def Z22(M2, D):
-    return D.transpose() @ (M2 @ D)
-
-
-#################
+################################################################################
+@njit
 def D_dash(z, r):
     arr = np.repeat(z, r)
     return np.diag(arr)
 
-
+@njit
 def DT_dash(arr):
-    return np.atleast_2d(arr).T
+    return arr[None, :]
 
 
 def dv_dt(Dfd, V, dz_dt):
@@ -96,13 +66,13 @@ def dw_dt(Dfd, W, dz_dt):
 def dwT_dt(Dfd, W, dz_dt):
     return (Dfd @ W).transpose() * dz_dt
 
-
+@njit
 def dD_dt(a_dot):
-    return np.atleast_2d(a_dot)
+    return a_dot[:, None]
 
-
+@njit
 def dDT_dt(a_dot):
-    return dD_dt(a_dot).transpose()
+    return a_dot[None, :]
 
 
 def dN_dt(Dfd, V, W, dz_dt):

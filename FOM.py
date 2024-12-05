@@ -1,7 +1,7 @@
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
 from Helper import ControlSelectionMatrix_advection
-from Update import Update_Control_TWBT
+from Update import Update_Control_TWBT, Update_Control_Arm
 from advection import advection
 from Plots import PlotFlow
 import numpy as np
@@ -23,8 +23,8 @@ Nxi = 3200
 Neta = 1
 Nt = 3360
 
-impath = "./data_final/FOM/problem=" + str(problem) + "/"  # for data
-immpath = "./plots_final/FOM/problem=" + str(problem) + "/"  # for plots
+impath = "./data/FOM/problem=" + str(problem) + "/"  # for data
+immpath = "./plots/FOM/problem=" + str(problem) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 # Wildfire solver initialization along with grid initialization
@@ -109,7 +109,12 @@ kwargs = {
     'opt_iter': 100000,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
-    'omega_cutoff': 1e-10  # Below this cutoff the Armijo and Backtracking should exit the update loop
+    'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
+    # Variables for Simple Armijo (one way backtracking)
+    'use_OWBT': True,
+    'omega_init': 1,  # Initial starting value of step size
+    'Armijo_iter': 35,  # Number of Armijo iterations
+    'omega_decr': 2,  # Decrease omega by a factor of 2
 }
 
 # For two-way backtracking line search
@@ -141,7 +146,10 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
+    if not kwargs['use_OWBT']:
+        f, J_opt, _, dL_du_norm, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
+    else:
+        f, J_opt, _, dL_du_norm, stag = Update_Control_Arm(f, q0, qs_adj, qs_target, psi, A_p, J, wf=wf, **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
 
@@ -215,7 +223,7 @@ np.save(impath + 'running_time.npy', running_time)
 np.save(impath + 'qs_opt.npy', qs_opt)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
-# np.save(impath + 'f_opt_low.npy', f)
+np.save(impath + 'f_opt_low.npy', f)
 
 
 #%%

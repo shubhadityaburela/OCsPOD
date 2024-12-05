@@ -6,13 +6,10 @@ This file is the version with FOM adjoint. It can handle both the scenarios.
 
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
-from Grads import Calc_Grad
 from Helper import ControlSelectionMatrix_advection, compute_red_basis
-from Update import Update_Control_PODG_FOTR_FA_TWBT, \
-    Update_Control_TWBT
+from Update import Update_Control_PODG_FOTR_FA_TWBT, Update_Control_PODG_FOTR_FA_Arm
 from advection import advection
 from Plots import PlotFlow
-import sys
 import numpy as np
 import os
 from time import perf_counter
@@ -59,8 +56,8 @@ else:
     print("No 'modes' or 'tol' argument provided. Please specify one.")
     exit()
 
-impath = "./data_final/PODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots_final/PODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
+impath = "./data/PODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
+immpath = "./plots/PODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 Nxi = 3200
@@ -153,6 +150,11 @@ kwargs = {
     # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
     'Nm': modes,  # Number of modes for truncation if threshold selected to False.
+    # Variables for Simple Armijo (one way backtracking)
+    'use_OWBT': True,
+    'omega_init': 1,  # Initial starting value of step size
+    'Armijo_iter': 35,  # Number of Armijo iterations
+    'omega_decr': 2,  # Decrease omega by a factor of 2
 }
 
 # For two-way backtracking line search
@@ -206,9 +208,15 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_PODG_FOTR_FA_TWBT(f, a_p, qs_adj, qs_target, V_p, Ar_p,
-                                                                            psir_p, psi, J, omega,
-                                                                            wf=wf, **kwargs)
+    if not kwargs['use_OWBT']:
+        f, J_opt, _, dL_du_norm, omega, stag = Update_Control_PODG_FOTR_FA_TWBT(f, a_p, qs_adj, qs_target, V_p, Ar_p,
+                                                                                psir_p, psi, J, omega,
+                                                                                wf=wf, **kwargs)
+    else:
+        f, J_opt, _, dL_du_norm, stag = Update_Control_PODG_FOTR_FA_Arm(f, a_p, qs_adj, qs_target, V_p, Ar_p,
+                                                                                psir_p, psi, J,
+                                                                                wf=wf, **kwargs)
+
 
     running_time.append(perf_counter() - time_odeint_s)
 
@@ -276,26 +284,22 @@ print("Total time elapsed = %1.3f" % (end - start))
 # Save the convergence lists
 np.save(impath + 'J_opt_list.npy', J_opt_list)
 np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
-# np.save(impath + 'err_list.npy', err_list)
-# np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
+np.save(impath + 'err_list.npy', err_list)
+np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs_opt_full)
 np.save(impath + 'qs_adj_opt.npy', qs_adj)
 np.save(impath + 'f_opt.npy', f_opt)
-# np.save(impath + 'f_opt_low.npy', f)
+np.save(impath + 'f_opt_low.npy', f)
 
 # %%
 # Plot the results
 pf = PlotFlow(wf.X, wf.Y, wf.t)
-# pf.plot1D(qs_org, name="qs_org", immpath=immpath)
-# pf.plot1D(qs_target, name="qs_target", immpath=immpath)
+pf.plot1D(qs_org, name="qs_org", immpath=immpath)
+pf.plot1D(qs_target, name="qs_target", immpath=immpath)
 pf.plot1D(qs_opt_full, name="qs_opt", immpath=immpath)
 pf.plot1D(qs_adj, name="qs_adj_opt", immpath=immpath)
 pf.plot1D(f_opt, name="f_opt", immpath=immpath)
-
-pf.plot1D_ROM_converg(J_opt_list,
-                      err_list,
-                      trunc_modes_list,
-                      immpath=immpath)
+pf.plot1D_ROM_converg(J_opt_list, immpath=immpath)

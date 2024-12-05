@@ -1,5 +1,5 @@
-
 from Helper import *
+from numba import njit, prange
 
 
 @njit
@@ -37,4 +37,15 @@ def Calc_Cost_sPODG(V, as_, qs_target, f, intIds, weights, dx, dt, lamda):
     cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda / 2) * (L2norm_ROM(f, dt))
 
     return cost, q
+
+
+@njit
+def Calc_Cost_sPODG_FRTO_NC(as_, as_target, f, dt, lamda):
+
+    a_res = as_[:-1] - as_target[:-1]
+    z_res = as_[-1:] - as_target[-1:]
+
+    cost = 1 / 2 * (L2norm_ROM(a_res, dt)) + 1 / 2 * (L2norm_ROM(z_res, dt)) + (lamda / 2) * (L2norm_ROM(f, dt))
+
+    return cost
 

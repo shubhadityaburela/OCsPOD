@@ -1,10 +1,8 @@
-import line_profiler
-import numpy as np
 from scipy import sparse
 import sys
 import opt_einsum as oe
 
-from Helper import is_contiguous
+from Helper_sPODG_FRTO import *
 
 sys.path.append('./sPOD/lib/')
 
@@ -16,7 +14,6 @@ from numba import njit, prange
 
 @njit
 def binary_search_interval(xPoints, xStar):
-    # Perform a binary search to find the interval index
     left, right = 0, len(xPoints) - 1
     while left <= right:
         mid = (left + right) // 2
@@ -26,7 +23,6 @@ def binary_search_interval(xPoints, xStar):
             left = mid + 1
         else:
             right = mid - 1
-    # Clamp to valid interval if xStar is out of bounds
     return max(0, min(left - 1, len(xPoints) - 2))
 
 
@@ -97,20 +93,9 @@ def make_V_W_delta(U, T_delta, D, num_sample, Nx, modes):
 
 @njit
 def findIntervalAndGiveInterpolationWeight_1D(xPoints, xStar):
-    # # Find the interval index using the optimized binary search
-    # intervalIdx = binary_search_interval(xPoints, xStar)
-    #
-    # # Calculate interpolation weight
-    # x1, x2 = xPoints[intervalIdx], xPoints[intervalIdx + 1]
-    # alpha = (x2 - xStar) / (x2 - x1)
 
-    # Use binary search to find the interval index
     intervalIdx = np.searchsorted(xPoints, xStar) - 1
-
-    # Ensure intervalIdx is within valid range
     intervalIdx = max(0, min(intervalIdx, len(xPoints) - 2))
-
-    # Compute interpolation weight alpha
     x1, x2 = xPoints[intervalIdx], xPoints[intervalIdx + 1]
     alpha = (x2 - xStar) / (x2 - x1)
 
@@ -176,10 +161,6 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
 
 @njit(parallel=True)
 def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
-    # # Nice alternative and is equally faster
-    # VW_delta = np.stack((V_delta, W_delta), axis=0)
-    # C_mat = oe.contract("zabc,bd->zacd", VW_delta, psi)
-
     C_mat = np.zeros((2, samples, modes, psi.shape[1]), dtype=V_delta.dtype)
 
     for i in prange(samples):
@@ -262,6 +243,18 @@ def solve_lin_system(M, A):
 
 
 ######################################### FRTO sPOD functions #########################################
+def make_V_W_U_delta(U, T_delta, D, num_sample, Nx, modes):
+    V_delta = np.zeros((num_sample, Nx, modes))
+    W_delta = np.zeros((num_sample, Nx, modes))
+    U_delta = np.zeros((num_sample, Nx, modes))
+    for it in range(num_sample):
+        V_delta[it] = T_delta[it] @ U
+        W_delta[it] = D @ V_delta[it]
+        U_delta[it] = D @ W_delta[it]
+
+    return np.ascontiguousarray(V_delta), np.ascontiguousarray(W_delta), np.ascontiguousarray(U_delta)
+
+
 def LHS_offline_primal_FRTO(V_delta, W_delta, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
     LHS_mat = np.zeros((3, modes, modes))
@@ -281,16 +274,14 @@ def RHS_offline_primal_FRTO(V_delta, W_delta, A, modes):
 
 
 @njit(parallel=True)
-def Control_offline_primal_FRTO(V_delta, W_delta, psi, samples, modes):
-    # # Nice alternative and is equally faster
-    # VW_delta = np.stack((V_delta, W_delta), axis=0)
-    # C_mat = oe.contract("zabc,bd->zacd", VW_delta, psi)
+def Control_offline_primal_FRTO(V_delta, W_delta, U_delta, psi, samples, modes):
 
-    C_mat = np.zeros((2, samples, modes, psi.shape[1]), dtype=V_delta.dtype)
+    C_mat = np.zeros((3, samples, modes, psi.shape[1]), dtype=V_delta.dtype)
 
     for i in prange(samples):
         C_mat[0, i, :, :] = V_delta[i].T @ psi
         C_mat[1, i, :, :] = W_delta[i].T @ psi
+        C_mat[2, i, :, :] = U_delta[i].T @ psi
 
     return np.ascontiguousarray(C_mat)
 
@@ -318,3 +309,38 @@ def Matrices_online_primal_FRTO(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
                                                      (1 - weight) * C[1, intervalIdx + 1]) @ f)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A), intervalIdx, weight
+
+
+@njit
+def Matrices_online_adjoint_FRTO_NC(M1, M2, N, A1, A2, C, f, as_adj, as_, as_target, a_dot, modes, intId, weight):
+    M = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
+    A = np.empty(modes + 1)
+
+    as_a = as_adj[:-1]  # Take the modes from the adjoint solution
+    z_a = as_adj[-1:]  # Take the shifts from the adjoint solution
+    as_p = as_[:-1]  # Take the modes from the primal solution
+    z_p = as_[-1:]  # Take the shifts from the primal solution
+    as_dot = a_dot[:-1]  # Take the modes derivative from the primal
+    z_dot = a_dot[-1:]   # Take the shift derivative from the primal
+    as_tar = as_target[:-1]  # Target modes
+    z_tar = as_target[-1:]  # Target shifts
+
+    Da = as_p.reshape(-1, 1)
+
+    # Assemble the mass matrix M
+    M[:modes, :modes] = M1.T
+    M[:modes, modes:] = N @ Da
+    M[modes:, :modes] = M[:modes, modes:].T
+    M[modes:, modes:] = Da.T @ (M2.T @ Da)
+
+    WTB = np.add(weight * C[1, intId], (1 - weight) * C[1, intId + 1])   # WTB and VTdashB are exactly the same quantity
+    WTdashB = np.add(weight * C[2, intId], (1 - weight) * C[2, intId + 1])
+
+    # Assemble the RHS
+    A[:modes] = (E11(N, A1, z_dot, modes).T @ as_a + E12(M2, N, A2, Da, WTB, as_dot, z_dot, as_p, f, modes).T @ z_a
+                 + (as_p - as_tar))
+    A[modes:] = E21(N, WTB, as_dot, f).T @ as_a + E22(M2, Da, WTdashB, as_dot, f).T @ z_a + (z_p - z_tar)
+
+
+    return np.ascontiguousarray(M), np.ascontiguousarray(A)
+
