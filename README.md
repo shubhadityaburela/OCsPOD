@@ -1,10 +1,44 @@
-## Optimal control with POD-Galerkin and sPOD-Galerkin methods
+# "Optimal control for a class of linear transport dominated systems via the shifted proper orthogonal decomposition".
 
-This repo contains the source code for investigating the optimal control problems with reduced order models like the POD_Galerkin and the sPOD-Galerkin methods. There are 5 script files present in the source code that could be run to reproduce the results and play around with the code. These script files are: 
-* `FOM.py` solves the optimal control problem by considering the Full Order Model (FOM).
-* `PODG_FOTR.py` solves the optimal control problem by considering the POD-Galerkin method under the FOTR framework.
-* `PODG_FRTO.py` solves the optimal control problem by considering the POD-Galerkin method under the FRTO framework.
-* `sPODG_FOTR.py` solves the optimal control problem by considering the sPOD-Galerkin method under the FOTR framework.
-* `sPODG_FRTO.py` solves the optimal control problem by considering the sPOD-Galerkin method under the FRTO framework.
+## Prerequisites
 
-Each of these script files is commented and streamlined for understandability. The reader can play around with the parameters listed in `kwargs` dictionary mentioned in each of the script files. 
+Before running the scripts, please ensure that you have the necessary packages installed. You need to install the Conda package manager and use the provided environment files to create a Conda virtual environment.
+
+## Setting up the Environment
+
+After installing Conda:
+
+For Mac users:
+
+```bash
+conda env create -f env_with_accel_Mac.yml
+conda activate env_with_accel
+```
+
+For other OS:
+
+```bash
+conda env create -f env_with_accel_others.yml
+conda activate env_with_accel
+```
+
+
+## Running the Scripts
+
+This repository includes three script files that need to be executed to reproduce the results. The script files are:
+
+1. `run_FOM.sh`  
+   Usage: `./run_FOM.sh arg`  
+   - The value of `arg` can be `1`, `2`, or `3`, corresponding to the three examples shown in the paper.  
+   - This script runs the tests for the Full-Order Model (FOM) for all example problems.
+
+2. `run_PODG.sh`  
+   Usage: `./run_PODG.sh arg1 arg2`  
+   - `arg1`: Same as for FOM  
+   - `arg2`: Can be either `modes` for mode-based study or `tol` for tolerance-based study.  
+   - This script runs the tests for the POD-Galerkin model.
+
+3. `run_sPODG.sh`  
+   Usage: `./run_sPODG.sh arg1 arg2`  
+   - The arguments are the same as those in the POD-Galerkin case.  
+   - This script runs the tests for the sPOD-Galerkin model.
