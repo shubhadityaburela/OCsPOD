@@ -1,4 +1,4 @@
-# "Optimal control for a class of linear transport dominated systems via the shifted proper orthogonal decomposition".
+# "Optimal control with sPOD".
 
 ## Prerequisites
 
@@ -42,3 +42,6 @@ This repository includes three script files that need to be executed to reproduc
    Usage: `./run_sPODG.sh arg1 arg2`  
    - The arguments are the same as those in the POD-Galerkin case.  
    - This script runs the tests for the sPOD-Galerkin model.
+  
+
+Note: This code is under constant development. For the last standard version, please refer to [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14355727.svg)](https://doi.org/10.5281/zenodo.14355727) 
