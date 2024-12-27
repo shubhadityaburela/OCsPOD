@@ -44,4 +44,4 @@ This repository includes three script files that need to be executed to reproduc
    - This script runs the tests for the sPOD-Galerkin model.
   
 
-Note: This code is under constant development. For the last standard version, please refer to [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14355727.svg)](https://doi.org/10.5281/zenodo.14355727) 
+Note: This code is under constant development. For the last standard version, please refer to [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14355727.svg)](https://doi.org/10.5281/zenodo.14355726) 
