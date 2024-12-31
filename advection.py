@@ -267,7 +267,7 @@ class advection:
                                            modes_a, modes_p, intIds[-n], weights[-n])
         return as_adj
 
-    ############################################ FRTO sPOD (New Cost)  #############################################
+    ############################################## FRTO sPOD ################################################
     def IC_primal_sPODG_FRTO(self, q0, V):
         z = 0
         a = V.transpose() @ q0
@@ -276,7 +276,7 @@ class advection:
 
         return a
 
-    def mat_primal_sPODG_FRTO(self, T_delta, V_p, A_p, psi, D, samples, modes):
+    def mat_primal_sPODG_FRTO(self, T_delta, V_p, A_p, psi, D, CTC, samples, modes):
 
         # Construct V_delta and W_delta matrix
         V_delta_primal, W_delta_primal, U_delta_primal = make_V_W_U_delta(V_p, T_delta, D, samples, self.Nxi, modes)
@@ -290,7 +290,11 @@ class advection:
         # Construct the control matrix
         C_matrix = Control_offline_primal_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, psi, samples, modes)
 
-        return V_delta_primal, W_delta_primal, U_delta_primal, LHS_matrix, RHS_matrix, C_matrix
+        # Construct the target matrix (this will be used in the online adjoint equation)
+        Tar_matrix = Target_offline_adjoint_FRTO(V_delta_primal, CTC, samples, modes, self.Nxi)
+
+        return V_delta_primal, W_delta_primal, U_delta_primal, LHS_matrix, RHS_matrix, C_matrix, Tar_matrix
+
 
     def RHS_primal_sPODG_FRTO(self, a, f, lhs, rhs, c, ds, modes):
 
@@ -332,17 +336,19 @@ class advection:
 
         return a
 
-    def RHS_adjoint_sPODG_FRTO(self, a, f, a_, a_target, a_dot, M1, M2, N, A1, A2, C, modes, intId, weight):
+    def RHS_adjoint_sPODG_FRTO(self, a, f, a_, qs_target, a_dot, M1, M2, N, A1, A2, C, tarGa, Wdp, CTC, modes, intId, weight):
 
         # Prepare the online primal matrices
-        M, A = Matrices_online_adjoint_FRTO_NC(M1, M2, N, A1, A2, C, f, a, a_, a_target, a_dot, modes, intId, weight)
+        CTC_qs_tar = CTC @ qs_target
+        M, A = Matrices_online_adjoint_FRTO(M1, M2, N, A1, A2, C, tarGa, Wdp, CTC_qs_tar, f, a, a_, qs_target, a_dot,
+                                            modes, intId, weight)
 
         # Solve the linear system of equations
         X = solve_lin_system(M, -A)
 
         return X
 
-    def TI_adjoint_sPODG_FRTO(self, at_adj, f0, a_, a_target, a_dot, lhsp, rhsp, C, modes, intIds, weights):
+    def TI_adjoint_sPODG_FRTO(self, at_adj, f0, a_, qs_target, a_dot, Wdp, lhsp, rhsp, C, tarGa, CTC, modes, intIds, weights):
         # Time loop
         as_adj = np.zeros((at_adj.shape[0], self.Nt), order="F")
         as_adj[:, -1] = at_adj
@@ -355,6 +361,52 @@ class advection:
 
         for n in range(1, self.Nt):
             as_adj[:, -(n + 1)] = rk4_radj_(self.RHS_adjoint_sPODG_FRTO, as_adj[:, -n], f0[:, -n], f0[:, -(n + 1)],
+                                            a_[:, -n], a_[:, -(n + 1)], qs_target[:, -n], qs_target[:, -(n + 1)],
+                                            a_dot[..., -n], - self.dt, M1, M2, N, A1, A2, C, tarGa, Wdp, CTC, modes,
+                                            intIds[-n], weights[-n])
+
+        return as_adj
+
+    ############################################ FRTO sPOD (new cost) ##############################################
+    def mat_primal_sPODG_FRTO_NC(self, T_delta, V_p, A_p, psi, D, samples, modes):
+
+        # Construct V_delta and W_delta matrix
+        V_delta_primal, W_delta_primal, U_delta_primal = make_V_W_U_delta(V_p, T_delta, D, samples, self.Nxi, modes)
+
+        # Construct LHS matrix
+        LHS_matrix = LHS_offline_primal_FRTO(V_delta_primal, W_delta_primal, modes)
+
+        # Construct RHS matrix
+        RHS_matrix = RHS_offline_primal_FRTO(V_delta_primal, W_delta_primal, A_p, modes)
+
+        # Construct the control matrix
+        C_matrix = Control_offline_primal_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, psi, samples, modes)
+
+        return V_delta_primal, W_delta_primal, U_delta_primal, LHS_matrix, RHS_matrix, C_matrix
+
+    def RHS_adjoint_sPODG_FRTO_NC(self, a, f, a_, a_target, a_dot, M1, M2, N, A1, A2, C, modes, intId, weight):
+
+        # Prepare the online primal matrices
+        M, A = Matrices_online_adjoint_FRTO_NC(M1, M2, N, A1, A2, C, f, a, a_, a_target, a_dot, modes, intId, weight)
+
+        # Solve the linear system of equations
+        X = solve_lin_system(M, -A)
+
+        return X
+
+    def TI_adjoint_sPODG_FRTO_NC(self, at_adj, f0, a_, a_target, a_dot, lhsp, rhsp, C, modes, intIds, weights):
+        # Time loop
+        as_adj = np.zeros((at_adj.shape[0], self.Nt), order="F")
+        as_adj[:, -1] = at_adj
+
+        M1 = lhsp[0]
+        N = lhsp[1]
+        M2 = lhsp[2]
+        A1 = rhsp[0]
+        A2 = rhsp[1]
+
+        for n in range(1, self.Nt):
+            as_adj[:, -(n + 1)] = rk4_radj_(self.RHS_adjoint_sPODG_FRTO_NC, as_adj[:, -n], f0[:, -n], f0[:, -(n + 1)],
                                             a_[:, -n], a_[:, -(n + 1)], a_target[:, -n], a_target[:, -(n + 1)],
                                             a_dot[..., -n], - self.dt, M1, M2, N, A1, A2, C, modes,
                                             intIds[-n], weights[-n])

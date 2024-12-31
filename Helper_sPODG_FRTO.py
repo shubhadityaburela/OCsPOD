@@ -1,9 +1,11 @@
 import numpy as np
 from numba import njit
 
+
 @njit
 def E11(N, A1, z_dot, r):
     return A1 - N @ D_dash(z_dot, r)
+
 
 @njit
 def E12(M2, N, A2, D, WTB, a_dot, z_dot, a_s, u, r):
@@ -17,11 +19,13 @@ def E12(M2, N, A2, D, WTB, a_dot, z_dot, a_s, u, r):
 
     return mat1 - mat3 - mat4 - mat5 + mat6 + mat7 + mat8
 
+
 @njit
 def E21(N, VTdashB, a_dot, u):
     mat2 = N @ dD_dt(a_dot)
     mat6 = VTdashB @ u[:, None]
     return mat2 + mat6
+
 
 @njit
 def E22(M2, D, WTdashB, a_dot, u):
@@ -32,12 +36,15 @@ def E22(M2, D, WTdashB, a_dot, u):
     return mat1 + mat3 + mat7
 
 
-def C1(V, qs_target, a_s):
-    return a_s - V.transpose() @ qs_target
+@njit
+def C1(VTCTCV, VTCTC, as_p, qs_tar):
+    return VTCTCV @ as_p - VTCTC @ qs_tar
 
 
-def C2(Dfd, V, qs_target, T, a_s):
-    return np.atleast_1d((a_s.transpose() @ T) @ a_s - ((a_s.transpose() @ V_dash(Dfd, V).transpose()) @ qs_target))
+@njit
+def C2(VTCTC_T, CTC_qs_tar, W, as_p):
+    aa = (W @ as_p)[None, :]
+    return aa @ VTCTC_T @ as_p - aa @ CTC_qs_tar
 
 
 ################################################################################

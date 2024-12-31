@@ -114,8 +114,8 @@ def calc_shift(qs, qs_0, X, t):
     for i in range(Nt):
         qs_frame = qs[:, i]
         # Minimize the objective function with respect to c
-        result = optimize.minimize(objective, np.asarray([initial_guess_c]), args=(X, qs_0, qs_frame,))
-
+        result = optimize.minimize(objective, np.asarray([initial_guess_c]), args=(X, qs_0, qs_frame,),
+                                   method="Nelder-mead")
         # Extract the optimal value of c
         optimal_c[:, i] = -result.x[0]
         initial_guess_c = result.x[0]
