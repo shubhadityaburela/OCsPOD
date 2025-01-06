@@ -1,11 +1,12 @@
 """
-This file is the version with Lagrange interpolation. It can handle both the scenarios.
+This file is the version with Lagrange interpolation but with Barzilai Borwein step size control.
+It can handle both the scenarios.
 1. Fixed tolerance
 2. Fixed modes
 """
 
 from Coefficient_Matrix import CoefficientMatrix
-from Update import Update_Control_sPODG_FRTO_TWBT
+from Update import Update_Control_sPODG_FRTO_TWBT, Update_Control_sPODG_FRTO_BB
 from advection import advection
 from Plots import PlotFlow
 from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
@@ -66,9 +67,9 @@ impath = "./data/sPODG/FRTO/Lagr/problem=" + str(problem) + "/" + TYPE + "=" + s
 immpath = "./plots/sPODG/FRTO/Lagr/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
-Nxi = 3200
+Nxi = 1600
 Neta = 1
-Nt = 3360
+Nt = 1680
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
 # cfl = 8 / 6                         # cfl = 8 / 6                                   # cfl = 8 / 6
@@ -181,6 +182,7 @@ omega = 1
 
 stag = False
 stag_cntr = 0
+err = 0
 
 start = time.time()
 time_odeint_s = perf_counter()  # save running time
@@ -195,10 +197,10 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     qs = wf.TI_primal(q0, f, A_p, psi)
 
-    if stag:
-        z = calc_shift(qs, q0, wf.X, wf.t)
-        _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
-        shift_refine_cntr_list.append(opt_step)
+    # if err > 1e-2:
+    #     z = calc_shift(qs, q0, wf.X, wf.t)
+    #     _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
+    #     shift_refine_cntr_list.append(opt_step)
 
     qs_s = T.reverse(qs)
 
@@ -231,6 +233,7 @@ for opt_step in range(kwargs['opt_iter']):
     # V_delta and W_delta matrices
     J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
                            kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+    J_opt_list.append(J)
 
     '''
     Backward calculation with reduced adjoint system
@@ -241,23 +244,35 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_adj,
-                                                                          as_, qs_target, delta_s, J, omega,
-                                                                          Nm, intIds, weights, wf=wf,
-                                                                          **kwargs)
+    if opt_step == 0:
+        # First step with a line search
+        fNew, J_opt, dL_du_Old, dL_du_norm, omega, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p,
+                                                                                         a_p, as_adj,
+                                                                                         as_, qs_target, delta_s, J,
+                                                                                         omega,
+                                                                                         Nm, intIds, weights, wf=wf,
+                                                                                         **kwargs)
+    else:
+        # Rest of all the steps with Barzilai Borwein
+        fNew, dL_du_Old, dL_du_norm = Update_Control_sPODG_FRTO_BB(fOld, fNew, dL_du_Old, as_adj, as_, c_p,
+                                                                   opt_step, intIds, weights, **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
+
+    # Saving previous controls for Barzilai Borwein step
+    fOld = np.copy(f)
+    f = np.copy(fNew)
+
     qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
     JJ = Calc_Cost(qs_opt_full, qs_target, f,
                    kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 
     J_opt_FOM_list.append(JJ)
-    J_opt_list.append(J_opt)
     dL_du_norm_list.append(dL_du_norm)
     dL_du_norm_ratio_list.append(dL_du_norm / dL_du_norm_list[0])
 
     print(
-        f"J_opt : {J_opt}, ||dL_du|| = {dL_du_norm}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
+        f"J_opt : {J}, J_FOM : {JJ}, ||dL_du|| = {dL_du_norm}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
     )
 
     # Convergence criteria
@@ -265,7 +280,7 @@ for opt_step in range(kwargs['opt_iter']):
         print("\n\n-------------------------------")
         print(
             f"WARNING... maximal number of steps reached, "
-            f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
+            f"J_opt : {J}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
         )
         f_last_valid = np.copy(f)
         break
@@ -273,7 +288,7 @@ for opt_step in range(kwargs['opt_iter']):
         print("\n\n-------------------------------")
         print(
             f"Optimization converged with, "
-            f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
+            f"J_opt : {J}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
         )
         f_last_valid = np.copy(f)
         break
@@ -282,30 +297,14 @@ for opt_step in range(kwargs['opt_iter']):
             if stag:
                 print("\n-------------------------------")
                 print(
-                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the shifts at itr: {opt_step}")
-                stag_cntr = stag_cntr + 1
+                    f"Armijo Stagnated !!!!!! due to the step length being too low !!!!!!!!!!!!!!!!!!!!")
                 f_last_valid = np.copy(f)
-            else:
-                stag_cntr = 0
         else:
             dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
             if abs(dJ) == 0:
                 print(f"WARNING: dJ has turned close to 0...")
                 f_last_valid = np.copy(f)
                 break
-            if stag:
-                stag_cntr = stag_cntr + 1
-                if stag_cntr >= 2:
-                    print(
-                        f"Armijo Stagnated !!!!!! even after 2 consecutive shift updates thus exiting at itr: {opt_step} with "
-                        f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                    break
-                print("\n-------------------------------")
-                print(
-                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the shifts at itr: {opt_step}")
-                f_last_valid = np.copy(f)
-            else:
-                stag_cntr = 0
 
 # Compute the final state and adjoint state
 qs_opt_full = wf.TI_primal(q0, f_last_valid, A_p, psi)

@@ -75,7 +75,7 @@ Neta = 1
 Nt = 3360
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
-# cfl = 2 / 6                         # cfl = 2 / 6                                   # cfl = 2 / 6
+# cfl = 8 / 6                         # cfl = 8 / 6                                   # cfl = 8 / 6
 # tilt_from = 3 * Nt // 4             # tilt_from = 3 * Nt // 4                       # tilt_from = 9 * Nt / 10
 # v_x = 0.5                           # v_x = 0.55                                    # v_x = 0.6
 # v_x_t = 1.0                         # v_x_t = 1.0                                   # v_x_t = 1.3

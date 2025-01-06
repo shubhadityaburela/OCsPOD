@@ -9,15 +9,16 @@ def E11(N, A1, z_dot, r):
 
 @njit
 def E12(M2, N, A2, D, WTB, a_dot, z_dot, a_s, u, r):
-    mat1 = dDT_dt(a_dot) @ N.T
-    mat3 = DT_dash(N.T @ a_dot)
-    mat4 = DT_dash(M2 @ (D @ z_dot))
-    mat5 = D.T @ (M2 @ D_dash(z_dot, r))
-    mat6 = DT_dash(A2 @ a_s)
-    mat7 = D.T @ A2
-    mat8 = DT_dash(WTB @ u)
 
-    return mat1 - mat3 - mat4 - mat5 + mat6 + mat7 + mat8
+    mat1_comp = (a_dot[None, :] @ N.T).reshape(-1)
+    mat3_comp = N.T @ a_dot
+    mat4_comp = M2 @ (D @ z_dot)
+    mat6_comp = A2 @ a_s
+    mat8_comp = WTB @ u
+
+    mat5_comp = M2 @ D_dash(z_dot, r)
+
+    return DT_dash(mat1_comp - mat3_comp - mat4_comp + mat6_comp + mat8_comp) + D.T @ (- mat5_comp + A2)
 
 
 @njit
@@ -30,10 +31,10 @@ def E21(N, VTdashB, a_dot, u):
 @njit
 def E22(M2, D, WTdashB, a_dot, u):
     mat1 = dDT_dt(a_dot) @ (M2 @ D)
-    mat3 = D.T @ (M2 @ dD_dt(a_dot))
-    mat7 = D.T @ (WTdashB @ u[:, None])
+    mat3_comp = M2 @ dD_dt(a_dot)
+    mat7_comp = WTdashB @ u[:, None]
 
-    return mat1 + mat3 + mat7
+    return mat1 + D.T @ (mat3_comp + mat7_comp)
 
 
 @njit
@@ -42,9 +43,8 @@ def C1(VTCTCV, VTCTC, as_p, qs_tar):
 
 
 @njit
-def C2(VTCTC_T, CTC_qs_tar, W, as_p):
-    aa = (W @ as_p)[None, :]
-    return aa @ VTCTC_T @ as_p - aa @ CTC_qs_tar
+def C2(WTCTCV, WTCTC, as_p, qs_tar):
+    return as_p[None, :] @ (WTCTCV @ as_p - WTCTC @ qs_tar)
 
 
 ################################################################################

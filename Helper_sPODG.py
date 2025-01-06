@@ -284,12 +284,15 @@ def Control_offline_primal_FRTO(V_delta, W_delta, U_delta, psi, samples, modes):
     return np.ascontiguousarray(C_mat)
 
 
-def Target_offline_adjoint_FRTO(V_delta_primal, CTC, num_samples, modes, Nx):
-    Tar_mat = np.zeros((num_samples, modes, Nx + modes))
+@njit(parallel=True)
+def Target_offline_adjoint_FRTO(V_delta_primal, W_delta_primal, CTC_arr, num_samples, modes, Nx):
+    Tar_mat = np.zeros((num_samples, 2 * modes, Nx + modes), dtype=V_delta_primal.dtype)
 
-    for i in range(num_samples):
-        Tar_mat[i, :modes, :modes] = V_delta_primal[i].T @ CTC @ V_delta_primal[i]
-        Tar_mat[i, :modes, modes:] = V_delta_primal[i].T @ CTC
+    for i in prange(num_samples):
+        Tar_mat[i, :modes, modes:] = V_delta_primal[i].T * CTC_arr
+        Tar_mat[i, :modes, :modes] = Tar_mat[i, :modes, modes:] @ V_delta_primal[i]
+        Tar_mat[i, modes:, :modes] = W_delta_primal[i].T @ Tar_mat[i, :modes, modes:].T
+        Tar_mat[i, modes:, modes:] = W_delta_primal[i].T * CTC_arr
 
     return np.ascontiguousarray(Tar_mat)
 
@@ -320,7 +323,7 @@ def Matrices_online_primal_FRTO(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
 
 
 @njit
-def Matrices_online_adjoint_FRTO(M1, M2, N, A1, A2, C, tarGa, Wdp, CTC_qs_tar, f, as_adj, as_, qs_tar, a_dot, modes, intId, weight):
+def Matrices_online_adjoint_FRTO(M1, M2, N, A1, A2, C, tarGa, f, as_adj, as_, qs_tar, a_dot, modes, intId, weight):
     M = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
     A = np.empty(modes + 1)
 
@@ -344,13 +347,14 @@ def Matrices_online_adjoint_FRTO(M1, M2, N, A1, A2, C, tarGa, Wdp, CTC_qs_tar, f
 
     VTCTCV = np.add(weight * tarGa[intId, :modes, :modes], (1 - weight) * tarGa[intId + 1, :modes, :modes])
     VTCTC = np.add(weight * tarGa[intId, :modes, modes:], (1 - weight) * tarGa[intId + 1, :modes, modes:])
-    W = np.add(weight * Wdp[intId], (1 - weight) * Wdp[intId + 1])
+    WTCTCV = np.add(weight * tarGa[intId, modes:, :modes], (1 - weight) * tarGa[intId + 1, modes:, :modes])
+    WTCTC = np.add(weight * tarGa[intId, modes:, modes:], (1 - weight) * tarGa[intId + 1, modes:, modes:])
 
     # Assemble the RHS
     A[:modes] = E11(N, A1, z_dot, modes).T @ as_a + E12(M2, N, A2, Da, WTB, as_dot, z_dot, as_p, f, modes).T @ z_a \
                 + C1(VTCTCV, VTCTC, as_p, qs_tar)
-    A[modes:] = E21(N, WTB, as_dot, f).T @ as_a + E22(M2, Da, WTdashB, as_dot, f).T @ z_a + C2(VTCTC.T, CTC_qs_tar,
-                                                                                               W, as_p)
+    A[modes:] = E21(N, WTB, as_dot, f).T @ as_a + E22(M2, Da, WTdashB, as_dot, f).T @ z_a + C2(WTCTCV, WTCTC,
+                                                                                               as_p, qs_tar)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A)
 
