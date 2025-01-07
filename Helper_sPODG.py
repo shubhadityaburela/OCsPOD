@@ -1,7 +1,10 @@
+from matplotlib import pyplot as plt
 from scipy import sparse
 import sys
 import opt_einsum as oe
 
+from Cubic_spline import construct_spline_coeffs_multiple, shift_matrix_precomputed_coeffs_multiple, shifted_U, \
+    first_derivative_shifted_U, second_derivative_shifted_U
 from Helper_sPODG_FRTO import *
 
 sys.path.append('./sPOD/lib/')
@@ -250,6 +253,39 @@ def make_V_W_U_delta(U, T_delta, D, num_sample, Nx, modes):
         V_delta[it] = T_delta[it] @ U
         W_delta[it] = D @ V_delta[it]
         U_delta[it] = D @ W_delta[it]
+
+    return np.ascontiguousarray(V_delta), np.ascontiguousarray(W_delta), np.ascontiguousarray(U_delta)
+
+
+def make_V_W_U_delta_CubSpl(U, delta_s, A1, D1, D2, R, num_sample, Nx, dx, modes):
+    V_delta = np.zeros((num_sample, Nx, modes))
+    W_delta = np.zeros((num_sample, Nx, modes))
+    U_delta = np.zeros((num_sample, Nx, modes))
+    b, c, d = construct_spline_coeffs_multiple(U, A1, D1, D2, R, dx)
+    for it in range(num_sample):
+        V_delta[it] = shifted_U(U, delta_s[2, it], b, c, d, Nx, dx)
+        W_delta[it] = - first_derivative_shifted_U(delta_s[2, it], b, c, d, Nx, dx)
+        U_delta[it] = second_derivative_shifted_U(delta_s[2, it], b, c, d, Nx, dx)
+
+    # V_d_Lagr = np.load('V_d_Lagr.npy')
+    # W_d_Lagr = np.load('W_d_Lagr.npy')
+    # U_d_Lagr = np.load('U_d_Lagr.npy')
+    #
+    # print(np.linalg.norm(U_d_Lagr - U_delta) / np.linalg.norm(U_d_Lagr))
+    #
+    #
+    # plt.plot(U_delta[-1][:, 0], label="Cub")
+    # plt.plot(U_d_Lagr[-1][:, 0], label="Lag")
+    # plt.legend()
+    # # plt.plot(W_delta[100][:, 0])
+    # # plt.plot(W_d_Lagr[100][:, 0])
+    # # plt.plot(V_delta[400][:, 0])
+    # # plt.plot(V_delta[500][:, 0])
+    # # plt.plot(V_delta[600][:, 0])
+    # # plt.plot(W_delta[700][:, 0])
+    # # plt.plot(W_delta[-1][:, 0])
+    # plt.savefig('U.png', bbox_inches='tight')
+    # exit()
 
     return np.ascontiguousarray(V_delta), np.ascontiguousarray(W_delta), np.ascontiguousarray(U_delta)
 

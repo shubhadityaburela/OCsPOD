@@ -1,5 +1,6 @@
 import numpy as np
 from numba import njit
+from scipy.signal import savgol_filter
 from sklearn.utils.extmath import randomized_svd
 from scipy import optimize
 
@@ -84,7 +85,8 @@ def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, ga
     psi = np.zeros((wf.Nxi, n_c - trim_first_n), order="F")
     if Gaussian:
         for i in range(n_c - trim_first_n):
-            psi[:, i] = func(wf.X - wf.Lxi/n_c - (trim_first_n + i) * wf.Lxi/n_c, sigma=gaussian_mask_sigma)  # Could also divide the middle quantity by 2 for similar non-overlapping gaussians
+            psi[:, i] = func(wf.X - wf.Lxi / n_c - (trim_first_n + i) * wf.Lxi / n_c,
+                             sigma=gaussian_mask_sigma)  # Could also divide the middle quantity by 2 for similar non-overlapping gaussians
     else:
         control_index = np.array_split(np.arange(start_controlling_from, wf.Nxi), n_c)
         for i in range(n_c - trim_first_n):
@@ -127,7 +129,8 @@ def compute_red_basis(qs, **kwargs):
     if kwargs['threshold']:
         U, S, VT = np.linalg.svd(qs, full_matrices=False)
         indices = np.where(S / S[0] > kwargs['base_tol'])[0]
-        return U[:, :indices[-1] + 1], U[:, :indices[-1] + 1].dot(np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :]))
+        return U[:, :indices[-1] + 1], U[:, :indices[-1] + 1].dot(
+            np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :]))
     else:
         U, S, VT = randomized_svd(qs, n_components=kwargs['Nm'], random_state=42)
         return U, U @ np.diag(S) @ VT
@@ -135,3 +138,4 @@ def compute_red_basis(qs, **kwargs):
 
 def is_contiguous(array):
     return array.flags['C_CONTIGUOUS'] or array.flags['F_CONTIGUOUS']
+

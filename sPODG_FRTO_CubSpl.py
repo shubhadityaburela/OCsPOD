@@ -1,27 +1,31 @@
 """
-This file is the version with Lagrange interpolation. It can handle both the scenarios.
+This file can handle both the scenarios. (This file is specifically for the cubic spline interpolation version)
 1. Fixed tolerance
 2. Fixed modes
 """
+from time import perf_counter
+import time
+
+import matplotlib
+
+from Update import Update_Control_sPODG_FRTO_TWBT
+from matplotlib import pyplot as plt
 
 from Coefficient_Matrix import CoefficientMatrix
-from Update import Update_Control_sPODG_FRTO_TWBT
-from advection import advection
+from Costs import Calc_Cost, Calc_Cost_sPODG
+from Cubic_spline import *
 from Plots import PlotFlow
-from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
-from Helper_sPODG import subsample, get_T, central_FDMatrix
-from Costs import Calc_Cost_sPODG, Calc_Cost
+from advection import advection
+from Helper import ControlSelectionMatrix_advection, calc_shift, compute_red_basis
+from Helper_sPODG import subsample, central_FDMatrix
 import os
-from time import perf_counter
 import numpy as np
-import time
 import scipy.sparse as sp
 import argparse
 
 import sys
 
 sys.path.append('./sPOD/lib/')
-from sPOD_algo import give_interpolation_error
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
 parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
@@ -62,8 +66,8 @@ else:
     print("No 'modes' or 'tol' argument provided. Please specify one.")
     exit()
 
-impath = "./data/sPODG/FRTO/Lagr/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots/sPODG/FRTO/Lagr/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
+impath = "./data/sPODG/FRTO/CubSpl/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
+immpath = "./plots/sPODG/FRTO/CubSpl/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 Nxi = 3200
@@ -159,7 +163,6 @@ kwargs = {
     # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
     'Nm': modes,  # Number of modes for truncation if threshold selected to False.
-    'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
 }
 
 # %% ROM Variables
@@ -168,13 +171,11 @@ D = central_FDMatrix(order=6, Nx=wf.Nxi, dx=wf.dx)
 # Generate the shift samples
 delta_s = subsample(wf.X, num_sample=kwargs['shift_sample'])
 
-# Extract transformation operators based on sub-sampled delta
-T_delta, _ = get_T(delta_s, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
+# Calculate the initial shift
+delta = calc_shift(qs_org, q0, wf.X, wf.t)
 
-delta_init = calc_shift(qs_org, q0, wf.X, wf.t)
-_, T = get_T(delta_init, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
-
-print(2 * give_interpolation_error(qs_org, T))
+# Calculate the constant spline coefficient matrices (only needed once)
+A1, D1, D2, R = give_spline_coefficient_matrices(kwargs['Nx'])
 
 # For two-way backtracking line search
 omega = 1
@@ -191,33 +192,44 @@ for opt_step in range(kwargs['opt_iter']):
     print("Optimization step: %d" % opt_step)
 
     '''
-    Forward calculation with primal FOM for basis update
+    Forward calculation with primal FOM at intermediate steps for basis computation
     '''
     qs = wf.TI_primal(q0, f, A_p, psi)
 
     if stag:
-        z = calc_shift(qs, q0, wf.X, wf.t)
-        _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
+        delta = calc_shift(qs, q0, wf.X, wf.t)
         shift_refine_cntr_list.append(opt_step)
 
-    qs_s = T.reverse(qs)
+    # Construct the spline coefficients for the qs
+    b, c, d = construct_spline_coeffs_multiple(qs, A1, D1, D2, R, kwargs['dx'])
+    qs_s = shift_matrix_precomputed_coeffs_multiple(qs, delta[0], b, c, d, kwargs['Nx'], kwargs['dx'])
 
-    V, qs_s_POD = compute_red_basis(qs_s, **kwargs)
-    Nm = V.shape[1]
+    V_p, qs_s_POD = compute_red_basis(qs_s, **kwargs)
+    Nm = V_p.shape[1]
     err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
     print(f"Relative error for shifted primal: {err}, with Nm: {Nm}")
 
-    err_list.append(err)
-    trunc_modes_list.append(Nm)
-
     # Initial condition for dynamical simulation
-    a_p = wf.IC_primal_sPODG_FRTO(q0, V)
+    a_p = wf.IC_primal_sPODG_FRTO(q0, V_p)
     a_a = wf.IC_adjoint_sPODG_FRTO(Nm)
 
-    # Construct the primal and adjoint system matrices for the sPOD-Galerkin approach
-    Vd_p, Wd_p, U_dp, lhs_p, rhs_p, c_p, tar_p = wf.mat_primal_sPODG_FRTO(T_delta, V, A_p, psi, D, CTC_arr,
-                                                                          samples=kwargs['shift_sample'],
-                                                                          modes=Nm)
+    # Construct the primal system matrices for the sPOD-Galerkin approach
+    Vd_p, Wd_p, Ud_p, lhs_p, rhs_p, c_p, tar_p = wf.mat_primal_sPODG_FRTO_CubSpl(V_p, A1, D1, D2, R, A_p, psi, CTC_arr,
+                                                                                 delta_s,
+                                                                                 samples=kwargs['shift_sample'],
+                                                                                 modes=Nm)
+    # plt.plot(Vd_p[100][:, 0], label="1")
+    # plt.plot(Vd_p[100][:, 1], label="2")
+    # plt.plot(Vd_p[100][:, 2], label="3")
+    # plt.plot(Vd_p[100][:, 3], label="4")
+    # plt.plot(Vd_p[100][:, 4], label="5")
+    # # plt.plot(Vd_p[100][:, 5], label="6")
+    # # plt.plot(Vd_p[100][:, 6], label="7")
+    # # plt.plot(Vd_p[100][:, 7], label="8")
+    # plt.legend()
+    # plt.savefig('V.png', bbox_inches='tight')
+    # exit()
+
 
     '''
     Forward calculation

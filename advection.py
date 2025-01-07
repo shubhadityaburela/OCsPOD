@@ -1,3 +1,5 @@
+from scipy.signal import savgol_filter
+
 from Helper import RHS_PODG_FOTR_solve
 from Helper_sPODG import *
 from rk4 import rk4, rk4_adj, rk4_rpr, rk4_radj, rk4_rpr_dot, rk4_rpr_, rk4_radj_
@@ -280,6 +282,27 @@ class advection:
 
         # Construct V_delta and W_delta matrix
         V_delta_primal, W_delta_primal, U_delta_primal = make_V_W_U_delta(V_p, T_delta, D, samples, self.Nxi, modes)
+
+        # Construct LHS matrix
+        LHS_matrix = LHS_offline_primal_FRTO(V_delta_primal, W_delta_primal, modes)
+
+        # Construct RHS matrix
+        RHS_matrix = RHS_offline_primal_FRTO(V_delta_primal, W_delta_primal, A_p, modes)
+
+        # Construct the control matrix
+        C_matrix = Control_offline_primal_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, psi, samples, modes)
+
+        # Construct the target matrix (this will be used in the online adjoint equation)
+        Tar_matrix = Target_offline_adjoint_FRTO(V_delta_primal, W_delta_primal, CTC_arr, samples, modes, self.Nxi)
+
+        return V_delta_primal, W_delta_primal, U_delta_primal, LHS_matrix, RHS_matrix, C_matrix, Tar_matrix
+
+
+    def mat_primal_sPODG_FRTO_CubSpl(self, V_p, A1, D1, D2, R, A_p, psi, CTC_arr, delta_s, samples, modes):
+
+        # Construct V_delta and W_delta matrix
+        V_delta_primal, W_delta_primal, U_delta_primal = make_V_W_U_delta_CubSpl(V_p, delta_s, A1, D1, D2, R, samples,
+                                                                                 self.Nxi, self.dx, modes)
 
         # Construct LHS matrix
         LHS_matrix = LHS_offline_primal_FRTO(V_delta_primal, W_delta_primal, modes)
