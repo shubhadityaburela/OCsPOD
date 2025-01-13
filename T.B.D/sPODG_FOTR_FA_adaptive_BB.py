@@ -87,15 +87,20 @@ Nt = 3360
 if problem == 1:  # Thick wave params
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
+    tilt_from = 3 * Nt // 4
 elif problem == 2:  # Sharp wave params (earlier kink):
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
+    tilt_from = 3 * Nt // 4
 elif problem == 3:  # Sharp wave params (later kink):
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
                    tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
+    tilt_from = 9 * Nt // 10
 else:  # Default is problem 2
     wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
+    tilt_from = 3 * Nt // 4
+
 wf.Grid()
 
 # %%
@@ -113,13 +118,6 @@ Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
 # Convection matrix (Needs to be changed if the velocity is time dependent)
 A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
 A_a = A_p.transpose()
-
-# Grid dependent matrix for Adjoint equation correction
-diagonal = np.ones(wf.Nxi) * np.sqrt(wf.dx)
-diagonal[0] /= np.sqrt(2)
-diagonal[-1] /= np.sqrt(2)
-C = sp.diags(diagonal, format='csc')
-CTC = C.T @ C
 
 # %% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
@@ -166,6 +164,10 @@ kwargs = {
     'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
     'epsilon': 1e-1,  # Error measure for basis refinement
 }
+
+#%%
+# prepare the time points at which the residual has to be monitored
+t_monitor = list(range(0, tilt_from, 20)) + list(range(tilt_from, Nt, 5))
 
 # %% ROM Variables
 D = central_FDMatrix(order=6, Nx=wf.Nxi, dx=wf.dx)
@@ -243,7 +245,7 @@ for opt_step in range(kwargs['opt_iter']):
     Backward calculation with adjoint FOM for basis update
     '''
     # Backward FOM solve for basis generation
-    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a, CTC)
+    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a)
 
     '''
      Update Control
@@ -266,7 +268,7 @@ for opt_step in range(kwargs['opt_iter']):
 
     # Compute the residual
     residual = compute_residual(D, A_p, Vd_p, psi, as_res[:-1], as_dot_res, fNew, intIds_res,
-                                weights_res, kwargs['Nx'], kwargs['Nt'])
+                                weights_res, t_monitor, kwargs['Nx'], kwargs['Nt'])
 
     running_time.append(perf_counter() - time_odeint_s)
 

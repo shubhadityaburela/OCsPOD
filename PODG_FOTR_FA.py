@@ -103,13 +103,6 @@ Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
 A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
 A_a = A_p.transpose()
 
-# Grid dependent matrix for Adjoint equation correction
-diagonal = np.ones(wf.Nxi) * np.sqrt(wf.dx)
-diagonal[0] /= np.sqrt(2)
-diagonal[-1] /= np.sqrt(2)
-C = sp.diags(diagonal, format='csc')
-CTC = C.T @ C
-
 # %% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
 
@@ -203,7 +196,7 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     Backward calculation with FOM system
     '''
-    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a, CTC)
+    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a)
 
     '''
      Update Control

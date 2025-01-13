@@ -113,14 +113,6 @@ Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
 A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
 A_a = A_p.transpose()
 
-# Grid dependent matrix for Adjoint equation correction
-diagonal = np.ones(wf.Nxi) * np.sqrt(wf.dx)
-diagonal[0] /= np.sqrt(2)
-diagonal[-1] /= np.sqrt(2)
-C = sp.diags(diagonal, format='csc')
-CTC = C.T @ C
-CTC_arr = CTC.diagonal()
-
 # %% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
 
@@ -153,7 +145,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 5,  # Total iterations
+    'opt_iter': 100,  # Total iterations
     'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
@@ -214,10 +206,10 @@ for opt_step in range(kwargs['opt_iter']):
     a_a = wf.IC_adjoint_sPODG_FRTO(Nm)
 
     # Construct the primal system matrices for the sPOD-Galerkin approach
-    Vd_p, Wd_p, Ud_p, lhs_p, rhs_p, c_p, tar_p = wf.mat_primal_sPODG_FRTO_CubSpl(V_p, A1, D1, D2, R, A_p, psi, CTC_arr,
-                                                                                 delta_s,
-                                                                                 samples=kwargs['shift_sample'],
-                                                                                 modes=Nm)
+    Vd_p, Wd_p, Ud_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FRTO_CubSpl(V_p, A1, D1, D2, R, A_p, psi,
+                                                                          delta_s,
+                                                                          samples=kwargs['shift_sample'],
+                                                                          modes=Nm)
     # plt.plot(Vd_p[100][:, 0], label="1")
     # plt.plot(Vd_p[100][:, 1], label="2")
     # plt.plot(Vd_p[100][:, 2], label="3")
@@ -229,7 +221,6 @@ for opt_step in range(kwargs['opt_iter']):
     # plt.legend()
     # plt.savefig('V.png', bbox_inches='tight')
     # exit()
-
 
     '''
     Forward calculation
@@ -247,7 +238,7 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     Backward calculation with reduced adjoint system
     '''
-    as_adj = wf.TI_adjoint_sPODG_FRTO(a_a, f, as_, qs_target, as_dot, lhs_p, rhs_p, c_p, tar_p,
+    as_adj = wf.TI_adjoint_sPODG_FRTO(a_a, f, as_, qs_target, as_dot, lhs_p, rhs_p, c_p, Vd_p, Wd_p,
                                       Nm, intIds, weights)
 
     '''
@@ -321,7 +312,7 @@ for opt_step in range(kwargs['opt_iter']):
 
 # Compute the final state and adjoint state
 qs_opt_full = wf.TI_primal(q0, f_last_valid, A_p, psi)
-qs_adj = wf.TI_adjoint(q0_adj, qs_opt_full, qs_target, A_a, CTC)
+qs_adj = wf.TI_adjoint(q0_adj, qs_opt_full, qs_target, A_a)
 
 f_opt = psi @ f_last_valid
 

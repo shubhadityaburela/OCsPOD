@@ -59,7 +59,6 @@ def Update_Control_TWBT(f, q0, qs_adj, qs_target, mask, A_p, J_prev, omega_prev,
             k = k + 1
 
 
-
 def Update_Control_Arm(f, q0, qs_adj, qs_target, mask, A_p, J_prev, wf, **kwargs):
     itr = 5
     count = 0
@@ -104,7 +103,6 @@ def Update_Control_Arm(f, q0, qs_adj, qs_target, mask, A_p, J_prev, wf, **kwargs
                         if kwargs['verbose']: print(f"Step size omega = {omega} too large!",
                                                     f"Reducing omega at iter={k + 1}")
                         omega = omega / kwargs['omega_decr']
-
 
 
 def Update_Control_PODG_FOTR_FA_TWBT(f, a0_primal, qs_adj, qs_target, V_p, Ar_p, psir_p, mask, J_prev, omega_prev,
@@ -163,9 +161,8 @@ def Update_Control_PODG_FOTR_FA_TWBT(f, a0_primal, qs_adj, qs_target, V_p, Ar_p,
             k = k + 1
 
 
-
 def Update_Control_PODG_FOTR_FA_Arm(f, a0_primal, qs_adj, qs_target, V_p, Ar_p, psir_p, mask, J_prev,
-                                     wf, **kwargs):
+                                    wf, **kwargs):
     itr = 5
     count = 0
     omega = kwargs['omega_init']
@@ -272,7 +269,7 @@ def Update_Control_sPODG_FOTR_FA_TWBT(f, lhs, rhs, c, a0_primal, qs_adj, qs_targ
 
 
 def Update_Control_sPODG_FOTR_FA_Arm(f, lhs, rhs, c, a0_primal, qs_adj, qs_target, delta_s, Vdp, mask, J_prev,
-                                      modes, wf, **kwargs):
+                                     modes, wf, **kwargs):
     itr = 5
     count = 0
     omega = kwargs['omega_init']
@@ -317,7 +314,6 @@ def Update_Control_sPODG_FOTR_FA_Arm(f, lhs, rhs, c, a0_primal, qs_adj, qs_targe
                         if kwargs['verbose']: print(f"Step size omega = {omega} too large!",
                                                     f"Reducing omega at iter={k + 1}")
                         omega = omega / kwargs['omega_decr']
-
 
 
 def Update_Control_sPODG_FOTR_FA_TWBT_dot(f, lhs, rhs, c, a0_primal, qs_adj, qs_target, delta_s, Vdp, mask, J_prev,
@@ -366,7 +362,8 @@ def Update_Control_sPODG_FOTR_FA_TWBT_dot(f, lhs, rhs, c, a0_primal, qs_adj, qs_
         while True:
             omega = beta * omega
             f_new = f - omega * dL_du
-            as_, intIds_k, weights_k, as_dot = wf.TI_primal_sPODG_FOTR_dot(lhs, rhs, c, a0_primal, f_new, delta_s, modes)
+            as_, intIds_k, weights_k, as_dot = wf.TI_primal_sPODG_FOTR_dot(lhs, rhs, c, a0_primal, f_new, delta_s,
+                                                                           modes)
             J, qq = Calc_Cost_sPODG(Vdp, as_[:-1], qs_target, f_new, intIds_k, weights_k,
                                     kwargs['dx'], kwargs['dt'], kwargs['lamda'])
             dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
@@ -476,9 +473,8 @@ def Update_Control_sPODG_FOTR_RA_BB(fOld, fNew, dL_du_Old, Vd_a, as_adj, mask, i
     return f_bb_new, dL_du_New, dL_du_norm
 
 
-
 def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_adj, as_, qs_target, delta_s, J_prev,
-                                      omega_prev, modes, intIds, weights, wf, **kwargs):
+                                   omega_prev, modes, intIds, weights, wf, **kwargs):
     dL_du = Calc_Grad_sPODG_FRTO(f, c_p, as_adj, as_, intIds, weights, kwargs['lamda'])
     dL_du_norm_square = L2norm_ROM(dL_du, kwargs['dt'])
     dL_du_norm = np.sqrt(dL_du_norm_square)
@@ -489,7 +485,7 @@ def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_adj, as_,
 
     # Checking the Armijo condition
     f_new = f - omega * dL_du
-    as_, _, _, _ = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
+    as_, _, intIds, weights = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
     J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f_new, intIds, weights,
                            kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
@@ -501,9 +497,9 @@ def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_adj, as_,
             J_final = J
             omega = omega / beta
             f_new = f - omega * dL_du
-            as_, _, _, _ = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
-            J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f_new, intIds, weights,
-                                kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+            as_, _, intIds_n, weights_n = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
+            J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f_new, intIds_n, weights_n,
+                                   kwargs['dx'], kwargs['dt'], kwargs['lamda'])
             dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
             if J >= dJ:
                 print(
@@ -517,9 +513,9 @@ def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_adj, as_,
         while True:
             omega = beta * omega
             f_new = f - omega * dL_du
-            as_, _, _, _ = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
-            J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f_new, intIds, weights,
-                                kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+            as_, _, intIds_k, weights_k = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
+            J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f_new, intIds_k, weights_k,
+                                   kwargs['dx'], kwargs['dt'], kwargs['lamda'])
             dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
             if J < dJ:  # If Armijo satisfied
                 if omega < kwargs['omega_cutoff']:
@@ -534,7 +530,6 @@ def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_adj, as_,
 
             if kwargs['verbose']: print(f"Armijo not satisfied thus omega decreased to = {omega}", f"at step={k}")
             k = k + 1
-
 
 
 def Update_Control_sPODG_FRTO_NC_TWBT(f, lhs_p, rhs_p, c_p, a_p, as_adj, as_, as_target, delta_s, J_prev,
@@ -549,7 +544,7 @@ def Update_Control_sPODG_FRTO_NC_TWBT(f, lhs_p, rhs_p, c_p, a_p, as_adj, as_, as
 
     # Checking the Armijo condition
     f_new = f - omega * dL_du
-    as_, _, _, _ = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
+    as_, _, intIds, weights = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
     J = Calc_Cost_sPODG_FRTO_NC(as_, as_target, f_new, kwargs['dt'], kwargs['lamda'])
     dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
     if J < dJ:  # If Armijo satisfied
@@ -560,7 +555,7 @@ def Update_Control_sPODG_FRTO_NC_TWBT(f, lhs_p, rhs_p, c_p, a_p, as_adj, as_, as
             J_final = J
             omega = omega / beta
             f_new = f - omega * dL_du
-            as_, _, _, _ = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
+            as_, _, intIds_n, weights_n = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
             J = Calc_Cost_sPODG_FRTO_NC(as_, as_target, f_new, kwargs['dt'], kwargs['lamda'])
             dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
             if J >= dJ:
@@ -575,7 +570,7 @@ def Update_Control_sPODG_FRTO_NC_TWBT(f, lhs_p, rhs_p, c_p, a_p, as_adj, as_, as
         while True:
             omega = beta * omega
             f_new = f - omega * dL_du
-            as_, _, _, _ = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
+            as_, _, intIds_k, weights_k = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes)
             J = Calc_Cost_sPODG_FRTO_NC(as_, as_target, f_new, kwargs['dt'], kwargs['lamda'])
             dJ = J_prev - kwargs['delta'] * omega * dL_du_norm_square
             if J < dJ:  # If Armijo satisfied
@@ -593,7 +588,8 @@ def Update_Control_sPODG_FRTO_NC_TWBT(f, lhs_p, rhs_p, c_p, a_p, as_adj, as_, as
             k = k + 1
 
 
-def Update_Control_sPODG_FRTO_BB(fOld, fNew, dL_du_Old, as_adj, as_, C, itr, intIds, weights, **kwargs):  # Barzilai Borwein
+def Update_Control_sPODG_FRTO_BB(fOld, fNew, dL_du_Old, as_adj, as_, C, itr, intIds, weights,
+                                 **kwargs):  # Barzilai Borwein
 
     dL_du_New = Calc_Grad_sPODG_FRTO(fNew, C, as_adj, as_, intIds, weights, kwargs['lamda'])
     dL_du_norm_square = L2norm_ROM(dL_du_New, kwargs['dt'])

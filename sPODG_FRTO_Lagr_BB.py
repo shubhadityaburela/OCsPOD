@@ -110,14 +110,6 @@ Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
 A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
 A_a = A_p.transpose()
 
-# Grid dependent matrix for Adjoint equation correction
-diagonal = np.ones(wf.Nxi) * np.sqrt(wf.dx)
-diagonal[0] /= np.sqrt(2)
-diagonal[-1] /= np.sqrt(2)
-C = sp.diags(diagonal, format='csc')
-CTC = C.T @ C
-CTC_arr = CTC.diagonal()
-
 # %% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
 
@@ -161,6 +153,7 @@ kwargs = {
     # "FALSE" for mode based.
     'Nm': modes,  # Number of modes for truncation if threshold selected to False.
     'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
+    'reg_par': 1e-8,  # Regularization parameter for Tikhonov regularization of the adjoint equation
 }
 
 # %% ROM Variables
@@ -217,9 +210,9 @@ for opt_step in range(kwargs['opt_iter']):
     a_a = wf.IC_adjoint_sPODG_FRTO(Nm)
 
     # Construct the primal and adjoint system matrices for the sPOD-Galerkin approach
-    Vd_p, Wd_p, U_dp, lhs_p, rhs_p, c_p, tar_p = wf.mat_primal_sPODG_FRTO(T_delta, V, A_p, psi, D, CTC_arr,
-                                                                          samples=kwargs['shift_sample'],
-                                                                          modes=Nm)
+    Vd_p, Wd_p, U_dp, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FRTO(T_delta, V, A_p, psi, D,
+                                                                   samples=kwargs['shift_sample'],
+                                                                   modes=Nm)
 
     '''
     Forward calculation
@@ -238,8 +231,8 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     Backward calculation with reduced adjoint system
     '''
-    as_adj = wf.TI_adjoint_sPODG_FRTO(a_a, f, as_, qs_target, as_dot, lhs_p, rhs_p, c_p, tar_p,
-                                      Nm, intIds, weights)
+    as_adj = wf.TI_adjoint_sPODG_FRTO(a_a, f, as_, qs_target, as_dot, lhs_p, rhs_p, c_p, Vd_p, Wd_p,
+                                      Nm, intIds, weights, kwargs['reg_par'])
 
     '''
      Update Control
@@ -308,7 +301,7 @@ for opt_step in range(kwargs['opt_iter']):
 
 # Compute the final state and adjoint state
 qs_opt_full = wf.TI_primal(q0, f_last_valid, A_p, psi)
-qs_adj = wf.TI_adjoint(q0_adj, qs_opt_full, qs_target, A_a, CTC)
+qs_adj = wf.TI_adjoint(q0_adj, qs_opt_full, qs_target, A_a)
 
 f_opt = psi @ f_last_valid
 

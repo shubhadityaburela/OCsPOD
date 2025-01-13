@@ -167,18 +167,17 @@ def rk4_radj(RHS: callable,
     return q1
 
 
-
 def rk4_radj_(RHS: callable,
-          q0: np.ndarray,
-          u1: np.ndarray,
-          u2: np.ndarray,
-          a1: np.ndarray,
-          a2: np.ndarray,
-          b1: np.ndarray,
-          b2: np.ndarray,
-          q_dot: np.ndarray,
-          dt,
-          *args):
+              q0: np.ndarray,
+              u1: np.ndarray,
+              u2: np.ndarray,
+              a1: np.ndarray,
+              a2: np.ndarray,
+              b1: np.ndarray,
+              b2: np.ndarray,
+              q_dot: np.ndarray,
+              dt,
+              *args):
     u_mid = (u1 + u2) / 2
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2

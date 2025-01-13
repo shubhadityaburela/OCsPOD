@@ -114,13 +114,6 @@ Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
 A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
 A_a = A_p.transpose()
 
-# Grid dependent matrix for Adjoint equation correction
-diagonal = np.ones(wf.Nxi) * np.sqrt(wf.dx)
-diagonal[0] /= np.sqrt(2)
-diagonal[-1] /= np.sqrt(2)
-C = sp.diags(diagonal, format='csc')
-CTC = C.T @ C
-
 # %% Solve the uncontrolled system
 qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
 
@@ -240,7 +233,7 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     if opt_step == 0 or epsilon > kwargs['epsilon']:
         # Backward FOM solve for basis generation
-        qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a, CTC)
+        qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a)
 
         # Basis generation
         qs_adj_s = T.reverse(qs_adj)
@@ -250,7 +243,7 @@ for opt_step in range(kwargs['opt_iter']):
         print(f"Relative error for shifted adjoint: {err}, with Nm: {Nm_a}")
 
         # Construct the adjoint system matrices
-        Vd_a, Wd_a, lhs_a, rhs_a, tar_a1, tar_a2 = wf.mat_adjoint_sPODG_FOTR(T_delta, V_a, A_a, D, Vd_p, CTC,
+        Vd_a, Wd_a, lhs_a, rhs_a, tar_a1 = wf.mat_adjoint_sPODG_FOTR(T_delta, V_a, A_a, D, Vd_p,
                                                                              samples=kwargs['shift_sample'],
                                                                              modes_a=Nm_a, modes_p=Nm_p)
         # Initial condition for adjoint reduced model
@@ -259,7 +252,7 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     Backward calculation with reduced model
     '''
-    as_adj = wf.TI_adjoint_sPODG_FOTR(lhs_a, rhs_a, tar_a1, tar_a2, a_a, as_, qs_target, Nm_a, Nm_p, intIds, weights)
+    as_adj = wf.TI_adjoint_sPODG_FOTR(lhs_a, rhs_a, tar_a1, Vd_a, Wd_a, a_a, as_, qs_target, Nm_a, Nm_p, intIds, weights)
 
     '''
      Update Control

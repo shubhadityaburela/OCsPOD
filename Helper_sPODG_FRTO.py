@@ -4,7 +4,7 @@ from numba import njit
 
 @njit
 def E11(N, A1, z_dot, r):
-    return A1 - N @ D_dash(z_dot, r)
+    return A1 - N @ np.diag(np.repeat(z_dot, r))
 
 
 @njit
@@ -16,35 +16,35 @@ def E12(M2, N, A2, D, WTB, a_dot, z_dot, a_s, u, r):
     mat6_comp = A2 @ a_s
     mat8_comp = WTB @ u
 
-    mat5_comp = M2 @ D_dash(z_dot, r)
+    mat5_comp = M2 @ np.diag(np.repeat(z_dot, r))
 
-    return DT_dash(mat1_comp - mat3_comp - mat4_comp + mat6_comp + mat8_comp) + D.T @ (- mat5_comp + A2)
+    return (mat1_comp - mat3_comp - mat4_comp + mat6_comp + mat8_comp)[None, :] + D.T @ (- mat5_comp + A2)
 
 
 @njit
 def E21(N, VTdashB, a_dot, u):
-    mat2 = N @ dD_dt(a_dot)
+    mat2 = N @ a_dot[:, None]
     mat6 = VTdashB @ u[:, None]
     return mat2 + mat6
 
 
 @njit
 def E22(M2, D, WTdashB, a_dot, u):
-    mat1 = dDT_dt(a_dot) @ (M2 @ D)
-    mat3_comp = M2 @ dD_dt(a_dot)
+    mat1 = a_dot[None, :] @ (M2 @ D)
+    mat3_comp = M2 @ a_dot[:, None]
     mat7_comp = WTdashB @ u[:, None]
 
     return mat1 + D.T @ (mat3_comp + mat7_comp)
 
 
 @njit
-def C1(VTCTCV, VTCTC, as_p, qs_tar):
-    return VTCTCV @ as_p - VTCTC @ qs_tar
+def C1(M1, VT, as_p, qs_tar, dx):        # We make use of the fact that VTV in the presence of constant dx is just M1
+    return dx * (M1 @ as_p - VT @ qs_tar)
 
 
 @njit
-def C2(WTCTCV, WTCTC, as_p, qs_tar):
-    return as_p[None, :] @ (WTCTCV @ as_p - WTCTC @ qs_tar)
+def C2(N, WT, as_p, qs_tar, dx):   # We make use of the fact that WTV in the presence of constant dx is just NT
+    return dx * as_p[None, :] @ (N.T @ as_p - WT @ qs_tar)
 
 
 ################################################################################
@@ -52,6 +52,7 @@ def C2(WTCTCV, WTCTC, as_p, qs_tar):
 def D_dash(z, r):
     arr = np.repeat(z, r)
     return np.diag(arr)
+
 
 @njit
 def DT_dash(arr):
@@ -73,9 +74,11 @@ def dw_dt(Dfd, W, dz_dt):
 def dwT_dt(Dfd, W, dz_dt):
     return (Dfd @ W).transpose() * dz_dt
 
+
 @njit
 def dD_dt(a_dot):
     return a_dot[:, None]
+
 
 @njit
 def dDT_dt(a_dot):
