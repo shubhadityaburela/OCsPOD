@@ -29,8 +29,7 @@ from sPOD_algo import give_interpolation_error
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
 parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
-parser.add_argument("--modes", type=int, help="Enter the number of modes for modes test")
-parser.add_argument("--tol", type=float, help="Enter the tolerance level for tolerance test")
+parser.add_argument("--lamda", type=float, help="Enter the regularization parameter for the control variable")
 args = parser.parse_args()
 
 problem = args.problem
@@ -38,32 +37,14 @@ print("\n")
 print(f"Solving problem: {args.problem}")
 
 # Check which argument was provided and act accordingly
-if args.modes and args.tol:
-    print(f"Modes test takes precedence.....")
-    print(f"Mode number provided: {args.modes}")
-    TYPE = "modes"
-    modes = args.modes
-    threshold = False
-    tol = None
-    VAL = modes
-elif args.modes:
-    print(f"Modes test.....")
-    print(f"Mode number provided: {args.modes}")
-    TYPE = "modes"
-    modes = args.modes
-    threshold = False
-    tol = None
-    VAL = modes
-elif args.tol is not None:
-    print(f"Tolerance test.....")
-    print(f"Tolerance provided: {args.tol}")
-    TYPE = "tol"
-    tol = args.tol
-    threshold = True
-    modes = None
-    VAL = tol
+if args.lamda:
+    print(f"Regularization parameter provided.....")
+    print(f"lamda: {args.lamda}")
+    TYPE = "lamda"
+    lamda = args.lamda
+    VAL = lamda
 else:
-    print("No 'modes' or 'tol' argument provided. Please specify one.")
+    print("No lamda parameter has been provided. Please specify one.")
     exit()
 
 impath = "./data/sPODG/FRTO/Lagr/NC/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
@@ -140,20 +121,19 @@ kwargs = {
     'Ny': wf.Neta,
     'Nt': wf.Nt,
     'n_c': n_c,
-    'lamda': 0.4,  # Regularization parameter
+    'lamda': lamda,  # Regularization parameter
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100000,  # Total iterations
+    'opt_iter': 1,  # Total iterations
     'shift_sample': wf.Nxi,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
-    'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-    'threshold': threshold,
+    'threshold': False,
     # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': modes,  # Number of modes for truncation if threshold selected to False.
+    'Nm': 1,  # Number of modes for truncation if threshold selected to False.
     'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
 }
 
