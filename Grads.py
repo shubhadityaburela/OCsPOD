@@ -1,10 +1,17 @@
 from numba import njit, prange
 import numpy as np
 
+
 @njit
 def Calc_Grad(mask, f, qs_adj, lamda):
     dL_du = lamda * f + mask.T @ qs_adj
 
+    return dL_du
+
+
+@njit
+def Calc_Grad_PODG(psir_, f, as_adj, lamda):
+    dL_du = lamda * f + psir_.T @ as_adj
     return dL_du
 
 
@@ -17,7 +24,7 @@ def Calc_Grad_sPODG(mask, f, V, as_adj, intIds, weights, lamda):
         V_delta = weights[i] * V[V_idx] + (1 - weights[i]) * V[V_idx + 1]
         qs_adj[:, i] = V_delta @ as_adj[:, i]
 
-    dL_du = lamda * f + mask.transpose() @ qs_adj
+    dL_du = lamda * f + mask.T @ qs_adj
 
     return dL_du
 

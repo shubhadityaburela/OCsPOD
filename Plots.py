@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import os
@@ -14,6 +13,9 @@ plt.rcParams.update({
     "text.usetex": True,
     "font.family": "serif",
     "font.serif": ["Computer Modern"]})
+
+import matplotlib as mpl
+mpl.rcParams.update(mpl.rcParamsDefault)
 
 SMALL_SIZE = 16
 MEDIUM_SIZE = 18
@@ -50,25 +52,18 @@ def save_fig(filepath, figure=None, **kwargs):
 
 
 class PlotFlow:
-    def __init__(self, X, Y, t) -> None:
+    def __init__(self, X, t) -> None:
 
         self.Nx = int(np.size(X))
-        self.Ny = int(np.size(Y))
         self.Nt = int(np.size(t))
 
         self.X = X
-        self.Y = Y
         self.t = t
 
         # Prepare the space-time grid for 1D plots
         self.X_1D_grid, self.t_grid = np.meshgrid(X, t)
         self.X_1D_grid = self.X_1D_grid.T
         self.t_grid = self.t_grid.T
-
-        # Prepare the space grid for 2D plots
-        self.X_2D_grid, self.Y_2D_grid = np.meshgrid(X, Y)
-        self.X_2D_grid = np.transpose(self.X_2D_grid)
-        self.Y_2D_grid = np.transpose(self.Y_2D_grid)
 
     def plot1D(self, Q, name, immpath):
         os.makedirs(immpath, exist_ok=True)

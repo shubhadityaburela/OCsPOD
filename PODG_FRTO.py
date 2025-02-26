@@ -1,31 +1,30 @@
 """
-This file can handle both the scenarios. (This file is specifically for the cubic spline interpolation version)
+It can handle both the scenarios.
 1. Fixed tolerance
 2. Fixed modes
 """
-from time import perf_counter
-import time
-
-import matplotlib
-
-from Update import Update_Control_sPODG_FRTO_TWBT
-from matplotlib import pyplot as plt
+import matplotlib.pyplot as plt
+import scipy.linalg
+from scipy import sparse
+from scipy.sparse import csc_matrix
+from scipy.sparse.linalg import splu
 
 from Coefficient_Matrix import CoefficientMatrix
-from Costs import Calc_Cost, Calc_Cost_sPODG
-from Cubic_spline import *
-from Plots import PlotFlow
+from Costs import Calc_Cost_PODG, Calc_Cost
+from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
+from Helper import ControlSelectionMatrix_advection, compute_red_basis, L2norm_ROM
+from PODG_solver import IC_primal_PODG_FRTO, IC_adjoint_PODG_FRTO, mat_primal_PODG_FRTO, mat_adjoint_PODG_FRTO, \
+    TI_primal_PODG_FRTO, TI_adjoint_PODG_FRTO
+from TI_schemes import DF_start_FOM
+from Update import Update_Control_PODG_FRTO_TWBT
 from grid_params import advection
-from Helper import ControlSelectionMatrix_advection, calc_shift, compute_red_basis
-from Helper_sPODG import subsample, central_FDMatrix
-import os
+from Plots import PlotFlow
 import numpy as np
+import os
+from time import perf_counter
+import time
 import scipy.sparse as sp
 import argparse
-
-import sys
-
-sys.path.append('./sPOD/lib/')
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
 parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
@@ -66,12 +65,11 @@ else:
     print("No 'modes' or 'tol' argument provided. Please specify one.")
     exit()
 
-impath = "./data/sPODG/FRTO/CubSpl/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots/sPODG/FRTO/CubSpl/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
+impath = "./data/FRTO/PODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
+immpath = "./plots/FRTO/PODG/problem=" + str(problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
 Nxi = 3200
-Neta = 1
 Nt = 3360
 # Wildfire solver initialization along with grid initialization
 # Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
@@ -84,16 +82,16 @@ Nt = 3360
 
 
 if problem == 1:  # Thick wave params
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
+    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
 elif problem == 2:  # Sharp wave params (earlier kink):
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
+    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
 elif problem == 3:  # Sharp wave params (later kink):
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
+    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
                    tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 else:  # Default is problem 2
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
+    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
 wf.Grid()
 
@@ -108,21 +106,24 @@ f = np.zeros((n_c, wf.Nt), order="F")  # Initial guess for the control
 
 # %% Assemble the linear operators
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
-                        Neta=wf.Neta, periodicity='Periodic', dx=wf.dx, dy=wf.dy)
+                        Neta=1, periodicity='Periodic', dx=wf.dx, dy=0)
 # Convection matrix (Needs to be changed if the velocity is time dependent)
-A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
+A_p = - wf.v_x[0] * Mat.Grad_Xi_kron
 A_a = A_p.transpose()
 
 # %% Solve the uncontrolled system
-qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
+qs0 = IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance)
+qs_org = TI_primal(qs0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+np.save(impath + 'qs_org.npy', qs_org)
 
-qs_target = wf.TI_primal_target(wf.IC_primal(), Mat, np.zeros((wf.Nxi * wf.Neta, wf.Nt)))
+qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nxi, wf.Nt, wf.dt)
+np.save(impath + 'qs_target.npy', qs_target)
 
 # Initial conditions for both primal and adjoint are defined here as they only need to defined once.
-q0 = wf.IC_primal()
-q0_adj = wf.IC_adjoint()
+q0 = np.ascontiguousarray(IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance))
+q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
 
-# %%
+# %% Optimal control
 dL_du_norm_list = []  # Collecting the gradient over the optimization steps
 J_opt_FOM_list = []  # Collecting the FOM cost over the optimization steps
 running_time = []  # Time calculated for each iteration in a running manner
@@ -130,23 +131,19 @@ J_opt_list = []  # Collecting the optimal cost functional for plotting
 dL_du_norm_ratio_list = []  # Collecting the ratio of gradients for plotting
 err_list = []  # Offline error reached according to the tolerance
 trunc_modes_list = []  # Number of modes needed to reach the offline error
-shift_refine_cntr_list = []  # Collects the iteration number at which the shifts are refined/updated
 
 # List of problem constants
 kwargs = {
     'dx': wf.dx,
-    'dy': wf.dy,
     'dt': wf.dt,
     'Nx': wf.Nxi,
-    'Ny': wf.Neta,
     'Nt': wf.Nt,
     'n_c': n_c,
     'lamda': 1e-3,  # Regularization parameter
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100,  # Total iterations
-    'shift_sample': 800,  # Number of samples for shift interpolation
+    'opt_iter': 10,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
@@ -155,19 +152,49 @@ kwargs = {
     # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
     'Nm': modes,  # Number of modes for truncation if threshold selected to False.
+    'adjoint_scheme': "BDF2",  # Time integration scheme for adjoint equation
 }
 
-# %% ROM Variables
-D = central_FDMatrix(order=6, Nx=wf.Nxi, dx=wf.dx)
+#%%
+# Concatenate the uncontrolled snapshots and the target snapshots for basis computation
+qs = np.concatenate([qs_org, qs_target], axis=1)
 
-# Generate the shift samples
-delta_s = subsample(wf.X, num_sample=kwargs['shift_sample'])
+V, qs_POD = compute_red_basis(qs, **kwargs)
+Nm = V.shape[1]
+err = np.linalg.norm(qs - qs_POD) / np.linalg.norm(qs)
+print(f"Relative error for primal: {err}, with Nm: {Nm}")
 
-# Calculate the initial shift
-delta = calc_shift(qs_org, q0, wf.X, wf.t)
+# Initial condition for dynamical simulation
+a_p = IC_primal_PODG_FRTO(V, q0)
+a_a = IC_adjoint_PODG_FRTO(Nm)
 
-# Calculate the constant spline coefficient matrices (only needed once)
-A1, D1, D2, R = give_spline_coefficient_matrices(kwargs['Nx'])
+# Construct the primal and adjoint system matrices for the POD-Galerkin approach
+Ar_p, psir_p = mat_primal_PODG_FRTO(A_p, V, psi)
+Ar_a, Tarr_a = mat_adjoint_PODG_FRTO(A_a, V, qs_target)
+
+
+#%% Select the LU pre-factors for the inverse of mass matrix for linear solve of adjoint equation
+if kwargs['adjoint_scheme'] == "RK4":
+    M_f = None
+    A_f = Ar_a.copy()
+    LU_M_f = None
+elif kwargs['adjoint_scheme'] == "implicit_midpoint":
+    M_f = np.eye(Nm) + (- kwargs['dt']) / 2 * Ar_a
+    A_f = np.eye(Nm) - (- kwargs['dt']) / 2 * Ar_a
+    LU_M_f = scipy.linalg.lu_factor(M_f)
+elif kwargs['adjoint_scheme'] == "DIRK":
+    M_f = np.eye(Nm) + (- kwargs['dt']) / 4 * Ar_a
+    A_f = Ar_a.copy()
+    LU_M_f = scipy.linalg.lu_factor(M_f)
+elif kwargs['adjoint_scheme'] == "BDF2":
+    M_f = 3.0 * np.eye(Nm) + 2.0 * (- kwargs['dt']) * Ar_a
+    A_f = Ar_a.copy()
+    LU_M_f = scipy.linalg.lu_factor(M_f)
+else:
+    kwargs['adjoint_scheme'] = "RK4"
+    M_f = None
+    A_f = Ar_a.copy()
+    LU_M_f = None
 
 # For two-way backtracking line search
 omega = 1
@@ -184,73 +211,32 @@ for opt_step in range(kwargs['opt_iter']):
     print("Optimization step: %d" % opt_step)
 
     '''
-    Forward calculation with primal FOM at intermediate steps for basis computation
+    Forward calculation with reduced system
     '''
-    qs = wf.TI_primal(q0, f, A_p, psi)
-
-    if stag:
-        delta = calc_shift(qs, q0, wf.X, wf.t)
-        shift_refine_cntr_list.append(opt_step)
-
-    # Construct the spline coefficients for the qs
-    b, c, d = construct_spline_coeffs_multiple(qs, A1, D1, D2, R, kwargs['dx'])
-    qs_s = shift_matrix_precomputed_coeffs_multiple(qs, delta[0], b, c, d, kwargs['Nx'], kwargs['dx'])
-
-    V_p, qs_s_POD = compute_red_basis(qs_s, **kwargs)
-    Nm = V_p.shape[1]
-    err = np.linalg.norm(qs_s - qs_s_POD) / np.linalg.norm(qs_s)
-    print(f"Relative error for shifted primal: {err}, with Nm: {Nm}")
-
-    # Initial condition for dynamical simulation
-    a_p = wf.IC_primal_sPODG_FRTO(q0, V_p)
-    a_a = wf.IC_adjoint_sPODG_FRTO(Nm)
-
-    # Construct the primal system matrices for the sPOD-Galerkin approach
-    Vd_p, Wd_p, Ud_p, lhs_p, rhs_p, c_p = wf.mat_primal_sPODG_FRTO_CubSpl(V_p, A1, D1, D2, R, A_p, psi,
-                                                                          delta_s,
-                                                                          samples=kwargs['shift_sample'],
-                                                                          modes=Nm)
-    # plt.plot(Vd_p[100][:, 0], label="1")
-    # plt.plot(Vd_p[100][:, 1], label="2")
-    # plt.plot(Vd_p[100][:, 2], label="3")
-    # plt.plot(Vd_p[100][:, 3], label="4")
-    # plt.plot(Vd_p[100][:, 4], label="5")
-    # # plt.plot(Vd_p[100][:, 5], label="6")
-    # # plt.plot(Vd_p[100][:, 6], label="7")
-    # # plt.plot(Vd_p[100][:, 7], label="8")
-    # plt.legend()
-    # plt.savefig('V.png', bbox_inches='tight')
-    # exit()
-
-    '''
-    Forward calculation
-    '''
-    as_, as_dot, intIds, weights = wf.TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm)
+    as_ = TI_primal_PODG_FRTO(a_p, f, Ar_p, psir_p, kwargs['Nt'], kwargs['dt'])
 
     '''
     Objective and costs for control
     '''
-    # Compute the interpolation weight and the interval in which the shift lies corresponding to which we compute the
-    # V_delta and W_delta matrices
-    J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
-                           kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+    J = Calc_Cost_PODG(V, as_, qs_target, f,
+                       kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 
     '''
-    Backward calculation with reduced adjoint system
+    Backward calculation with FOM system
     '''
-    as_adj = wf.TI_adjoint_sPODG_FRTO(a_a, f, as_, qs_target, as_dot, lhs_p, rhs_p, c_p, Vd_p, Wd_p,
-                                      Nm, intIds, weights)
+    as_adj = TI_adjoint_PODG_FRTO(a_a, as_, M_f, A_f, LU_M_f, Tarr_a, kwargs['Nx'], kwargs['dx'], kwargs['Nt'],
+                                  kwargs['dt'],
+                                  scheme=kwargs['adjoint_scheme'])
 
     '''
      Update Control
     '''
-    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, as_adj,
-                                                                          as_, qs_target, delta_s, J, omega,
-                                                                          Nm, intIds, weights, wf=wf,
-                                                                          **kwargs)
+    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_PODG_FRTO_TWBT(f, Ar_p, psir_p, V, as_adj, a_p,
+                                                                         qs_target, J, omega, wf=wf,
+                                                                         **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
-    qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
+    qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
     JJ = Calc_Cost(qs_opt_full, qs_target, f,
                    kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 
@@ -260,7 +246,7 @@ for opt_step in range(kwargs['opt_iter']):
     dL_du_norm_ratio_list.append(dL_du_norm / dL_du_norm_list[0])
 
     print(
-        f"J_opt : {J_opt}, ||dL_du|| = {dL_du_norm}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
+        f"J_opt : {J_opt}, J_FOM: {JJ}, ||dL_du|| = {dL_du_norm}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
     )
 
     # Convergence criteria
@@ -268,7 +254,7 @@ for opt_step in range(kwargs['opt_iter']):
         print("\n\n-------------------------------")
         print(
             f"WARNING... maximal number of steps reached, "
-            f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
+            f"J_opt : {J_opt}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
         )
         f_last_valid = np.copy(f)
         break
@@ -276,20 +262,19 @@ for opt_step in range(kwargs['opt_iter']):
         print("\n\n-------------------------------")
         print(
             f"Optimization converged with, "
-            f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
+            f"J_opt : {J_opt}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
         )
         f_last_valid = np.copy(f)
         break
     else:
         if opt_step == 0:
             if stag:
-                print("\n-------------------------------")
+                print("\n\n-------------------------------")
                 print(
-                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the shifts at itr: {opt_step}")
-                stag_cntr = stag_cntr + 1
+                    f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
+                    f"J_opt : {J_opt}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
                 f_last_valid = np.copy(f)
-            else:
-                stag_cntr = 0
+                break
         else:
             dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
             if abs(dJ) == 0:
@@ -297,22 +282,17 @@ for opt_step in range(kwargs['opt_iter']):
                 f_last_valid = np.copy(f)
                 break
             if stag:
-                stag_cntr = stag_cntr + 1
-                if stag_cntr >= 2:
-                    print(
-                        f"Armijo Stagnated !!!!!! even after 2 consecutive shift updates thus exiting at itr: {opt_step} with "
-                        f"J_opt : {J_opt}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                    break
                 print("\n-------------------------------")
                 print(
-                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the shifts at itr: {opt_step}")
+                    f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
+                    f"J_opt : {J_opt}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
                 f_last_valid = np.copy(f)
-            else:
-                stag_cntr = 0
+                break
 
 # Compute the final state and adjoint state
-qs_opt_full = wf.TI_primal(q0, f_last_valid, A_p, psi)
-qs_adj = wf.TI_adjoint(q0_adj, qs_opt_full, qs_target, A_a)
+qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+qs_adj = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt,
+                    scheme="RK4", opt_poly_jacobian=None)
 
 f_opt = psi @ f_last_valid
 
@@ -324,7 +304,6 @@ print(f"J with respect to the optimal control for FOM: {J}")
 end = time.time()
 print("\n")
 print("Total time elapsed = %1.3f" % (end - start))
-# %%
 
 # Save the convergence lists
 np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
@@ -332,7 +311,6 @@ np.save(impath + 'J_opt_list.npy', J_opt_list)
 np.save(impath + 'err_list.npy', err_list)
 np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
-np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
 
 # Save the optimized solution
 np.save(impath + 'qs_opt.npy', qs_opt_full)
@@ -342,7 +320,7 @@ np.save(impath + 'f_opt_low.npy', f_last_valid)
 
 # %%
 # Plot the results
-pf = PlotFlow(wf.X, wf.Y, wf.t)
+pf = PlotFlow(wf.X, wf.t)
 pf.plot1D(qs_org, name="qs_org", immpath=immpath)
 pf.plot1D(qs_target, name="qs_target", immpath=immpath)
 pf.plot1D(qs_opt_full, name="qs_opt", immpath=immpath)

@@ -1,4 +1,5 @@
 import numpy as np
+from matplotlib import pyplot as plt
 from numba import njit
 from scipy.signal import savgol_filter
 from sklearn.utils.extmath import randomized_svd
@@ -17,15 +18,6 @@ def BarzilaiBorwein(itr, dt, fNew, fOld, gNew, gOld):
         YY = L2inner_prod(gNew - gOld, gNew - gOld, dt)
         return YY / SY
 
-
-@njit
-def RHS_PODG_FOTR_solve(Ar_p, a, psir_p, f):
-    Ar_p_cont = np.ascontiguousarray(Ar_p)
-    a_cont = np.ascontiguousarray(a)
-    psir_p_cont = np.ascontiguousarray(psir_p)
-    f_cont = np.ascontiguousarray(f)
-
-    return Ar_p_cont @ a_cont + psir_p_cont @ f_cont
 
 
 @njit
@@ -51,6 +43,21 @@ def L2norm_ROM(qq, dt):
     # Scale the first and last column
     q[:, 0] /= np.sqrt(2.0)
     q[:, -1] /= np.sqrt(2.0)
+
+    # Calculate the squared L2 norm
+    norm = np.sum(q ** 2)
+
+    return norm * dt
+
+
+@njit
+def L2norm_ROM_1D(qq, dt):
+    # Directly modify the input array if allowed
+    q = qq.copy()  # Copy only if you need to keep qq unchanged
+
+    # Scale the first and last column
+    q[0] /= np.sqrt(2.0)
+    q[-1] /= np.sqrt(2.0)
 
     # Calculate the squared L2 norm
     norm = np.sum(q ** 2)
@@ -92,7 +99,7 @@ def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, ga
         for i in range(n_c - trim_first_n):
             psi[control_index[trim_first_n + i], i] = 1.0
 
-    return psi
+    return np.ascontiguousarray(psi)
 
 
 def func(x, sigma):
@@ -129,11 +136,11 @@ def compute_red_basis(qs, **kwargs):
     if kwargs['threshold']:
         U, S, VT = np.linalg.svd(qs, full_matrices=False)
         indices = np.where(S / S[0] > kwargs['base_tol'])[0]
-        return U[:, :indices[-1] + 1], U[:, :indices[-1] + 1].dot(
-            np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :]))
+        return np.ascontiguousarray(U[:, :indices[-1] + 1]), np.ascontiguousarray(U[:, :indices[-1] + 1].dot(
+            np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :])))
     else:
         U, S, VT = randomized_svd(qs, n_components=kwargs['Nm'], random_state=42)
-        return U, U @ np.diag(S) @ VT
+        return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
 
 
 def is_contiguous(array):

@@ -7,7 +7,7 @@ It can handle both the scenarios.
 
 from Coefficient_Matrix import CoefficientMatrix
 from Update import Update_Control_sPODG_FRTO_TWBT, Update_Control_sPODG_FRTO_BB
-from advection import advection
+from grid_params import advection
 from Plots import PlotFlow
 from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
 from Helper_sPODG import subsample, get_T, central_FDMatrix

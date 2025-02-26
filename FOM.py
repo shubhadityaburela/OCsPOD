@@ -1,8 +1,12 @@
+import matplotlib.pyplot as plt
+
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
+from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
 from Helper import ControlSelectionMatrix_advection
-from Update import Update_Control_TWBT, Update_Control_Arm
-from advection import advection
+from TI_schemes import DF_start_FOM
+from Update import Update_Control_TWBT
+from grid_params import advection
 from Plots import PlotFlow
 import numpy as np
 import os
@@ -10,6 +14,10 @@ from time import perf_counter
 import time
 import scipy.sparse as sp
 import argparse
+from scipy import sparse
+from scipy.sparse.linalg import splu
+from scipy.sparse.linalg import inv
+from scipy.sparse import csc_matrix
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
 parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
@@ -19,9 +27,8 @@ problem = args.problem
 print("\n")
 print(f"Solving problem: {args.problem}")
 
-Nxi = 3200
-Neta = 1
-Nt = 3360
+Nxi = 3200 // 2
+Nt = 3360 // 2
 
 impath = "./data/FOM/problem=" + str(problem) + "/"  # for data
 immpath = "./plots/FOM/problem=" + str(problem) + "/"  # for plots
@@ -38,16 +45,16 @@ os.makedirs(impath, exist_ok=True)
 
 
 if problem == 1:    # Thick wave params
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
+    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
 elif problem == 2:    # Sharp wave params (earlier kink):
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
+    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
 elif problem == 3:    # Sharp wave params (later kink):
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
+    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
                    tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
 else:  # Default is problem 2
-    wf = advection(Nxi=Nxi, Neta=Neta, timesteps=Nt, cfl=8 / 6,
+    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
                    tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
 wf.Grid()
 
@@ -63,21 +70,22 @@ f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
 
 #%% Assemble the linear operators
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
-                        Neta=wf.Neta, periodicity='Periodic', dx=wf.dx, dy=wf.dy)
+                        Neta=1, periodicity='Periodic', dx=wf.dx, dy=0)
 # Convection matrix (Needs to be changed if the velocity is time dependent)
-A_p = - (wf.v_x[0] * Mat.Grad_Xi_kron + wf.v_y[0] * Mat.Grad_Eta_kron)
+A_p = - wf.v_x[0] * Mat.Grad_Xi_kron
 A_a = A_p.transpose()
 
 #%% Solve the uncontrolled system
-qs_org = wf.TI_primal(wf.IC_primal(), f, A_p, psi)
+qs0 = IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance)
+qs_org = TI_primal(qs0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
 np.save(impath + 'qs_org.npy', qs_org)
 
-qs_target = wf.TI_primal_target(wf.IC_primal(), Mat, np.zeros((wf.Nxi * wf.Neta, wf.Nt)))
+qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nxi, wf.Nt, wf.dt)
 np.save(impath + 'qs_target.npy', qs_target)
 
 # Initial conditions for both primal and adjoint are defined here as they only need to defined once.
-q0 = wf.IC_primal()
-q0_adj = wf.IC_adjoint()
+q0 = IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance)
+q0_adj = IC_adjoint(wf.X)
 
 #%% Optimal control
 dL_du_norm_list = []  # Collecting the gradient over the optimization steps
@@ -89,27 +97,61 @@ dL_du_norm_ratio_list = []  # Collecting the ratio of gradients for plotting
 # List of problem constants
 kwargs = {
     'dx': wf.dx,
-    'dy': wf.dy,
     'dt': wf.dt,
     'Nx': wf.Nxi,
-    'Ny': wf.Neta,
     'Nt': wf.Nt,
     'n_c': n_c,
     'lamda': 1e-3,  # Regularization parameter
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100000,  # Total iterations
+    'opt_iter': 10,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-    # Variables for Simple Armijo (one way backtracking)
-    'use_OWBT': True,
-    'omega_init': 1,  # Initial starting value of step size
-    'Armijo_iter': 35,  # Number of Armijo iterations
-    'omega_decr': 2,  # Decrease omega by a factor of 2
+    'adjoint_scheme': "RK4"  # Time integration scheme for adjoint equation
 }
 
+
+#%% Select the LU pre-factors for the inverse of mass matrix for linear solve of adjoint equation
+if kwargs['adjoint_scheme'] == "RK4":
+    M_f = None
+    A_f = A_a.copy()
+    LU_M_f = None
+    Df = None
+elif kwargs['adjoint_scheme'] == "implicit_midpoint":
+    M_f = sparse.eye(kwargs['Nx'], format="csc") + (- kwargs['dt']) / 2 * A_a
+    A_f = sparse.eye(kwargs['Nx'], format="csc") - (- kwargs['dt']) / 2 * A_a
+    LU_M_f = splu(M_f)
+    Df = None
+elif kwargs['adjoint_scheme'] == "DIRK":
+    M_f = sparse.eye(kwargs['Nx'], format="csc") + (- kwargs['dt']) / 4 * A_a
+    A_f = A_a.copy()
+    LU_M_f = splu(M_f)
+    Df = None
+elif kwargs['adjoint_scheme'] == "BDF2":
+    M_f = 3.0 * sparse.eye(kwargs['Nx'], format="csc") + 2.0 * (- kwargs['dt']) * A_a
+    A_f = A_a.copy()
+    LU_M_f = splu(M_f)
+    Df = None
+elif kwargs['adjoint_scheme'] == "BDF3":
+    M_f = 11.0 * sparse.eye(kwargs['Nx'], format="csc") + 6.0 * (- kwargs['dt']) * A_a
+    A_f = A_a.copy()
+    LU_M_f = splu(M_f)
+    Df = csc_matrix(DF_start_FOM(A_a.todense(), kwargs['Nx'], - kwargs['dt']))
+elif kwargs['adjoint_scheme'] == "BDF4":
+    M_f = 25.0 * sparse.eye(kwargs['Nx'], format="csc") + 12.0 * (- kwargs['dt']) * A_a
+    A_f = A_a.copy()
+    LU_M_f = splu(M_f)
+    Df = csc_matrix(DF_start_FOM(A_a.todense(), kwargs['Nx'], - kwargs['dt']).tocsc())
+else:
+    kwargs['adjoint_scheme'] = "RK4"
+    M_f = None
+    A_f = A_a.copy()
+    LU_M_f = None
+    Df = None
+
+#%%
 # For two-way backtracking line search
 omega = 1
 stag = False
@@ -124,7 +166,7 @@ for opt_step in range(kwargs['opt_iter']):
     print("\n-------------------------------")
     print("Optimization step: %d" % opt_step)
 
-    qs = wf.TI_primal(q0, f, A_p, psi)
+    qs = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
 
     '''
     Objective and costs for control
@@ -134,19 +176,17 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     Adjoint calculation
     '''
-    qs_adj = wf.TI_adjoint(q0_adj, qs, qs_target, A_a)
+    qs_adj = TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, wf.Nxi, wf.dx, wf.Nt, wf.dt,
+                        scheme=kwargs['adjoint_scheme'], opt_poly_jacobian=Df)
 
     '''
      Update Control
     '''
-    if not kwargs['use_OWBT']:
-        f, J_opt, _, dL_du_norm, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, wf=wf, **kwargs)
-    else:
-        f, J_opt, _, dL_du_norm, stag = Update_Control_Arm(f, q0, qs_adj, qs_target, psi, A_p, J, wf=wf, **kwargs)
+    f, J_opt, _, dL_du_norm, omega, stag = Update_Control_TWBT(f, q0, qs_adj, qs_target, psi, A_p, J, omega, **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
 
-    qs_opt_full = wf.TI_primal(q0, f, A_p, psi)
+    qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
     JJ = Calc_Cost(qs_opt_full, qs_target, f,
                    kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 
@@ -194,7 +234,7 @@ for opt_step in range(kwargs['opt_iter']):
                 break
 
 # Final state corresponding to the optimal control f
-qs_opt = wf.TI_primal(q0, f, A_p, psi)
+qs_opt = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
 f_opt = psi @ f
 
 
@@ -221,7 +261,7 @@ np.save(impath + 'f_opt_low.npy', f)
 
 #%%
 # Plot the results
-pf = PlotFlow(wf.X, wf.Y, wf.t)
+pf = PlotFlow(wf.X, wf.t)
 
 pf.plot1D(qs_org, name="qs_org", immpath=immpath)
 pf.plot1D(qs_target, name="qs_target", immpath=immpath)
