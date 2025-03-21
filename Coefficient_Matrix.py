@@ -14,6 +14,7 @@ class CoefficientMatrix:
         self.__GradCoefBR = None
         self.__DivCoefUL = None
         self.__DivCoefBR = None
+        self.__LaplaceCoeff = None
 
         # Coefficient Matrices to be used in Solver
         self.Grad_Xi = None
@@ -35,6 +36,7 @@ class CoefficientMatrix:
         if periodicity == "Periodic":
             self.Grad_Xi = self.D1_periodic(self.__GradCoef, self.__Nxi, dx)
             self.Div_Xi = self.D1_periodic(self.__DivCoef, self.__Nxi, dx)
+            self.Laplace = self.D1_periodic(self.__LaplaceCoeff, self.__Nxi, dx ** 2)
             if self.__Neta == 1:
                 self.Grad_Eta = 0
                 self.Div_Eta = 0
@@ -76,7 +78,7 @@ class CoefficientMatrix:
 
         P = P_Xi * P_Eta
 
-        self.Laplace = self.Div_Xi_kron * P * self.Grad_Xi_kron + self.Div_Eta_kron * P * self.Grad_Eta_kron
+        self.Laplace_kron = sparse.kron(sparse.eye(self.__Neta, format="csc"), self.Laplace, format="csc")
         ########################################################
 
     def __StencilSelection(self, orderDerivative):
@@ -114,6 +116,7 @@ class CoefficientMatrix:
         elif orderDerivative == '6thOrder':  # This is a central finite difference stencil
             self.__GradCoef = np.array([-1, 9, -45, 0, 45, -9, 1]) / 60
             self.__DivCoef = np.array([0, 0, 0, 0, 0, 0, 0]) / 60
+            self.__LaplaceCoeff = np.array([2, -27, 270, -490, 270, -27, 2]) / 180
         elif orderDerivative == '7thOrder':
             self.__GradCoef = np.array([3, -28, 126, -420, 105, 252, -42, 4, 0]) / (140 * 3)
             self.__DivCoef = np.array([0, -4, 42, -252, -105, 420, -126, 28, -3]) / (140 * 3)

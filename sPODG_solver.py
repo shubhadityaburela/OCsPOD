@@ -7,7 +7,8 @@ from Helper_sPODG import make_V_W_delta, LHS_offline_primal_FOTR, RHS_offline_pr
     Matrices_online_primal_FOTR, solve_lin_system, findIntervalAndGiveInterpolationWeight_1D, make_V_W_U_delta, \
     LHS_offline_primal_FRTO, RHS_offline_primal_FRTO, Control_offline_primal_FRTO, Matrices_online_primal_FRTO, \
     Matrices_online_adjoint_FRTO_expl, Matrices_online_adjoint_FRTO_impl, Target_offline_adjoint_FOTR, \
-    Matrices_online_adjoint_FOTR_expl, solve_lin_system_Tikh_reg
+    Matrices_online_adjoint_FOTR_expl, solve_lin_system_Tikh_reg, make_V_W_delta_CubSpl
+from Helper_sPODG_FRTO import E11, E12, E21, E22
 from TI_schemes import rk4_sPODG_prim, rk4_sPODG_adj, implicit_midpoint_sPODG_adj, DIRK_sPODG_adj, bdf2_sPODG_adj, \
     rk4_sPODG_adj_
 
@@ -26,9 +27,7 @@ def IC_primal_sPODG_FOTR(q0, V):
     return a
 
 
-def mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples, modes, Nx):
-    # Construct V_delta and W_delta matrix
-    V_delta_primal, W_delta_primal = make_V_W_delta(V_p, T_delta, D, samples, Nx, modes)
+def mat_primal_sPODG_FOTR(V_delta_primal, W_delta_primal, A_p, psi, samples, modes):
 
     # Construct LHS matrix
     LHS_matrix = LHS_offline_primal_FOTR(V_delta_primal, W_delta_primal, modes)
@@ -39,7 +38,7 @@ def mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples, modes, Nx):
     # Construct the control matrix
     C_matrix = Control_offline_primal_FOTR(V_delta_primal, W_delta_primal, psi, samples, modes)
 
-    return V_delta_primal, W_delta_primal, LHS_matrix, RHS_matrix, C_matrix
+    return LHS_matrix, RHS_matrix, C_matrix
 
 
 @njit
@@ -77,9 +76,7 @@ def IC_adjoint_sPODG_FOTR(Nm_a, z):
     return a
 
 
-def mat_adjoint_sPODG_FOTR(T_delta, V_a, A_a, D, V_delta_primal, samples, modes_a, modes_p, Nx):
-    # Construct V_delta and W_delta matrix
-    V_delta_adjoint, W_delta_adjoint = make_V_W_delta(V_a, T_delta, D, samples, Nx, modes_a)
+def mat_adjoint_sPODG_FOTR(V_delta_adjoint, W_delta_adjoint, A_a, V_delta_primal, samples, modes_a, modes_p):
 
     # Construct LHS matrix
     LHS_matrix = LHS_offline_primal_FOTR(V_delta_adjoint, W_delta_adjoint, modes_a)
@@ -91,7 +88,7 @@ def mat_adjoint_sPODG_FOTR(T_delta, V_a, A_a, D, V_delta_primal, samples, modes_
     Tar_matrix = Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint,
                                              samples, modes_a, modes_p)
 
-    return V_delta_adjoint, W_delta_adjoint, LHS_matrix, RHS_matrix, Tar_matrix
+    return LHS_matrix, RHS_matrix, Tar_matrix
 
 
 @njit
@@ -141,9 +138,7 @@ def IC_primal_sPODG_FRTO(q0, V):
     return a
 
 
-def mat_primal_sPODG_FRTO(T_delta, V_p, A_p, psi, D, D2, samples, modes, Nx):
-    # Construct V_delta and W_delta matrix
-    V_delta_primal, W_delta_primal, U_delta_primal = make_V_W_U_delta(V_p, T_delta, D, D2, samples, Nx, modes)
+def mat_primal_sPODG_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, A_p, psi, samples, modes):
 
     # Construct LHS matrix
     LHS_matrix = LHS_offline_primal_FRTO(V_delta_primal, W_delta_primal, modes)
@@ -154,7 +149,7 @@ def mat_primal_sPODG_FRTO(T_delta, V_p, A_p, psi, D, D2, samples, modes, Nx):
     # Construct the control matrix
     C_matrix = Control_offline_primal_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, psi, samples, modes)
 
-    return V_delta_primal, W_delta_primal, U_delta_primal, LHS_matrix, RHS_matrix, C_matrix
+    return LHS_matrix, RHS_matrix, C_matrix
 
 
 @njit
@@ -245,7 +240,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, 
     # M = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
     # A = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
     # as_p = a_[:-1, 0]  # Take the modes from the primal solution
-    # # as_p[1:] = 0.0
+    # as_p[1:] = 0.0
     # z_p = a_[-1, 0]  # Take the shifts from the primal solution
     # as_dot = a_dot[0, :-1, 0]  # Take the modes derivative from the primal
     # as_dot[:] = 0.0
@@ -274,7 +269,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, 
     # print("Eigenvalues:", eigvals)
     # # Check stability based on the real parts of eigenvalues
     # tol = 1e-10
-    # if np.all(np.real(eigvals) < -tol):
+    # if np.all(np.real(eigvals) < 0):
     #     print(
     #         "The system is asymptotically stable (all eigenvalues have negative real parts within tolerance).")
     # elif np.any(np.real(eigvals) > tol):

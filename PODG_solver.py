@@ -3,6 +3,7 @@ import scipy
 from numba import njit
 from scipy import sparse
 
+from Helper_sPODG import Target_offline_adjoint_FOTR_mix, findIntervalAndGiveInterpolationWeight_1D
 from TI_schemes import rk4_PODG_prim, rk4_PODG_adj, implicit_midpoint_PODG_adj, DIRK_PODG_adj, bdf2_PODG_adj, \
     rk4_PODG_adj_, implicit_midpoint_PODG_adj_, DIRK_PODG_adj_, bdf2_PODG_adj_
 
@@ -100,6 +101,42 @@ def TI_adjoint_PODG_FOTR(at_adj, a_, M_f, A_f, LU_M_f, V_aTV_p, Tarr_a, Nt, dt, 
                                                  LU_M_f, V_aTV_p, dx, scheme, n)
 
     return as_adj
+
+
+def RHS_adjoint_PODG_FOTR_impl_mix(a_adj, a_, Tarr_a, ds, A_f, LU_M_F, V_aTVd_p, dx, dt, scheme):
+    as_p = a_[:-1]
+    z_p = a_[-1]
+    intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -z_p)
+    V_aTVd_p_ = np.add(weight * V_aTVd_p[intervalIdx], (1 - weight) * V_aTVd_p[intervalIdx + 1])
+
+    return scipy.linalg.lu_solve((LU_M_F[0], LU_M_F[1]), - A_f @ a_adj - dx * (V_aTVd_p_ @ as_p - Tarr_a))
+
+
+def TI_adjoint_PODG_FOTR_mix(at_adj, a_, M_f, A_f, LU_M_f, V_aTVd_p, Tarr_a, delta_s, Nt, dt, dx, scheme):
+    as_adj = np.zeros((at_adj.shape[0], Nt))
+    as_adj[:, -1] = at_adj
+
+    if scheme == "DIRK":
+        # We have used a tiny dirty argument passing here. To spare ouselves from redefining DIRK_PODG_adj_,
+        # we have instead to sending M_f have passed delta_s in the argument list. This does not make any significant
+        # difference since M_f is anyway never used. So keep this in mind.
+        for n in range(1, Nt):
+            as_adj[:, -(n + 1)] = DIRK_PODG_adj_(RHS_adjoint_PODG_FOTR_impl_mix, as_adj[:, -n], a_[:, -n],
+                                                 a_[:, -(n + 1)],
+                                                 Tarr_a[:, -n], Tarr_a[:, -(n + 1)], - dt, delta_s, A_f, LU_M_f,
+                                                 V_aTVd_p,
+                                                 dx, scheme)
+    else:
+        print("Not implemented")
+        exit()
+    return as_adj
+
+
+def mat_adjoint_PODG_FOTR_mix(A_a, V_a, Vd_p, qs_target, psi, samples, modes_a, modes_p):
+    V_aT = V_a.T
+    V_aTVd_p = Target_offline_adjoint_FOTR_mix(Vd_p, V_aT, samples, modes_a, modes_p)
+
+    return (V_aT @ A_a) @ V_a, V_aTVd_p, V_aT @ qs_target, V_aT @ psi
 
 
 def mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi):

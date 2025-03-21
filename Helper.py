@@ -132,15 +132,20 @@ def calc_shift(qs, qs_0, X, t):
     return optimal_c
 
 
-def compute_red_basis(qs, **kwargs):
+def compute_red_basis(qs, equation="primal", **kwargs):
     if kwargs['threshold']:
         U, S, VT = np.linalg.svd(qs, full_matrices=False)
         indices = np.where(S / S[0] > kwargs['base_tol'])[0]
         return np.ascontiguousarray(U[:, :indices[-1] + 1]), np.ascontiguousarray(U[:, :indices[-1] + 1].dot(
             np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :])))
     else:
-        U, S, VT = randomized_svd(qs, n_components=kwargs['Nm'], random_state=42)
-        return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
+        if equation == "primal":
+            U, S, VT = randomized_svd(qs, n_components=kwargs['Nm_p'], random_state=42)
+            return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
+        else:
+            U, S, VT = randomized_svd(qs, n_components=kwargs['Nm_a'], random_state=42)
+            return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
+
 
 
 def is_contiguous(array):

@@ -169,6 +169,17 @@ def compute_residual(D, A_p, Vd_p, psi, as_res, as_dot_res, f, intIds, weights, 
 
 ######################################### FOTR sPOD functions #########################################
 
+def make_V_W_delta_CubSpl(U, delta_s, A1, D1, D2, R, num_sample, Nx, dx, modes):
+    V_delta = np.zeros((num_sample, Nx, modes))
+    W_delta = np.zeros((num_sample, Nx, modes))
+    b, c, d = construct_spline_coeffs_multiple(U, A1, D1, D2, R, dx)
+    for it in range(num_sample):
+        V_delta[it] = shifted_U(U, delta_s[2, it], b, c, d, Nx, dx)
+        W_delta[it] = - first_derivative_shifted_U(delta_s[2, it], b, c, d, Nx, dx)
+
+    return np.ascontiguousarray(V_delta), np.ascontiguousarray(W_delta)
+
+
 def LHS_offline_primal_FOTR(V_delta, W_delta, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
     LHS_mat = np.zeros((3, modes, modes))
@@ -207,6 +218,17 @@ def Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint
         Tar_mat[1, i, ...] = W_delta_adjoint[i].T @ V_delta_primal[i]
 
     return np.ascontiguousarray(Tar_mat)
+
+
+
+@njit(parallel=True)
+def Target_offline_adjoint_FOTR_mix(V_delta_primal, V_aT, num_samples, modes_a, modes_p):
+    V_aTVd_p_mat = np.zeros((num_samples, modes_a, modes_p), dtype=V_delta_primal.dtype)
+
+    for i in prange(num_samples):
+        V_aTVd_p_mat[i, ...] = V_aT @ V_delta_primal[i]
+
+    return np.ascontiguousarray(V_aTVd_p_mat)
 
 
 @njit

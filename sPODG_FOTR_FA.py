@@ -14,7 +14,7 @@ from Update import Update_Control_sPODG_FOTR_FA_TWBT
 from grid_params import advection
 from Plots import PlotFlow
 from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
-from Helper_sPODG import subsample, get_T, central_FDMatrix
+from Helper_sPODG import subsample, get_T, central_FDMatrix, make_V_W_delta
 from Costs import Calc_Cost_sPODG, Calc_Cost
 import os
 from time import perf_counter
@@ -158,7 +158,7 @@ kwargs = {
     'threshold': threshold,
     # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': modes,  # Number of modes for truncation if threshold selected to False.
+    'Nm_p': modes,  # Number of modes for truncation if threshold selected to False.
     'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
     'adjoint_scheme': "implicit_midpoint",  # Time integration scheme for adjoint equation
 }
@@ -253,8 +253,8 @@ for opt_step in range(kwargs['opt_iter']):
     a_p = IC_primal_sPODG_FOTR(q0, V_p)
 
     # Construct the primal system matrices for the sPOD-Galerkin approach
-    Vd_p, Wd_p, lhs_p, rhs_p, c_p = mat_primal_sPODG_FOTR(T_delta, V_p, A_p, psi, D, samples=kwargs['shift_sample'],
-                                                          modes=Nm, Nx=kwargs['Nx'])
+    Vd_p, Wd_p = make_V_W_delta(V_p, T_delta, D, kwargs['shift_sample'], kwargs['Nx'], Nm)
+    lhs_p, rhs_p, c_p = mat_primal_sPODG_FOTR(Vd_p, Wd_p, A_p, psi, samples=kwargs['shift_sample'], modes=Nm)
 
     '''
     Forward calculation

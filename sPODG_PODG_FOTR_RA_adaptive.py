@@ -5,11 +5,15 @@ This file is the version with FOM adjoint. It can handle both the scenarios.
 """
 from ast import literal_eval
 
+import scipy
+
 from Coefficient_Matrix import CoefficientMatrix
 from Cubic_spline import give_spline_coefficient_matrices, construct_spline_coeffs_multiple, \
     shift_matrix_precomputed_coeffs_multiple
 from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
-from Grads import Calc_Grad_sPODG
+from Grads import Calc_Grad_sPODG, Calc_Grad_PODG
+from PODG_solver import IC_adjoint_PODG_FOTR, mat_adjoint_PODG_FOTR, TI_adjoint_PODG_FOTR, mat_adjoint_PODG_FOTR_mix, \
+    TI_adjoint_PODG_FOTR_mix
 from Update import Update_Control_sPODG_FOTR_RA_TWBT, Update_Control_sPODG_FOTR_RA_BB
 from grid_params import advection
 from Plots import PlotFlow
@@ -55,7 +59,7 @@ print(f"Solving problem: {args.problem}")
 print(f"Choosing BB accelerated convergence: {args.conv_accel}")
 print(f"Using target state for basis computation: {args.target_for_basis}")
 print(f"Interpolation scheme to be used for shift matrix construction: {args.interp_scheme}")
-print(f"Type of basis computation: adaptive")
+print(f"Type of basis computation: adaptive (Primal with sPODG and adjoint with PODG)")
 
 if args.conv_accel is False:
     conv_crit = "TWBT"
@@ -174,7 +178,7 @@ kwargs = {
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
     'opt_iter': 100,  # Total iterations
-    'shift_sample': 800,  # Number of samples for shift interpolation
+    'shift_sample': 1600,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
@@ -186,7 +190,7 @@ kwargs = {
     'Nm_a': modes[1],  # Number of modes for truncation if threshold selected to False.
     'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
     'interp_scheme': interp_scheme,  # Either Lagrange interpolation or Cubic spline
-    'adjoint_scheme': "RK4",  # Time integration scheme for adjoint equation
+    'adjoint_scheme': "DIRK",  # Time integration scheme for adjoint equation
     'include_target_for_basis': target_for_basis,
     # True if we want to include the target state in the basis computation of
     # primal and adjoint
@@ -198,9 +202,9 @@ if kwargs['include_target_for_basis']:
 else:
     tar_for_bas = "no_target"
 
-impath = "./data/sPODG_FOTR_RA_adaptive/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
+impath = "./data/sPODG_PODG_FOTR_RA_adaptive/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
     problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots/sPODG_FOTR_RA_adaptive/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
+immpath = "./plots/sPODG_PODG_FOTR_RA_adaptive/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
     problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
@@ -267,46 +271,56 @@ for opt_step in range(kwargs['opt_iter']):
         Backward calculation with FOM
         '''
         qs_adj = TI_adjoint(q0_adj, qs, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
-        if kwargs['interp_scheme'] == "Lagr":
-            qs_adj_s = T.reverse(qs_adj)
-            if kwargs['include_target_for_basis']:
-                qs_adj_con = np.concatenate([qs_adj_s, qs_target_s], axis=1)  # CHOOSE IF TO INCLUDE qs_target
-            else:
-                qs_adj_con = qs_adj_s.copy()
+        if kwargs['include_target_for_basis']:
+            qs_adj_con = np.concatenate([qs_adj, qs_target], axis=1)  # CHOOSE IF TO INCLUDE qs_target
         else:
-            # Construct the spline coefficients for the qs
-            b, c, d = construct_spline_coeffs_multiple(qs_adj, A1, D1, D2, R, kwargs['dx'])
-            qs_adj_s = shift_matrix_precomputed_coeffs_multiple(qs_adj, z[0], b, c, d, kwargs['Nx'], kwargs['dx'])
-            if kwargs['include_target_for_basis']:
-                qs_adj_con = np.concatenate([qs_adj_s, qs_target_s], axis=1)  # CHOOSE IF TO INCLUDE qs_target
-            else:
-                qs_adj_con = qs_adj_s.copy()
-
-        V_a, qs_s_POD = compute_red_basis(qs_adj_con, equation="adjoint", **kwargs)
+            qs_adj_con = qs_adj.copy()
+        V_a, qs_POD_adj = compute_red_basis(qs_adj_con, equation="adjoint", **kwargs)
         Nm_a = V_a.shape[1]
-        err = np.linalg.norm(qs_adj_con - qs_s_POD) / np.linalg.norm(qs_adj_con)
-        print(f"Relative error for shifted adjoint: {err}, with Nm: {Nm_a}")
+        err = np.linalg.norm(qs_adj_con - qs_POD_adj) / np.linalg.norm(qs_adj_con)
+        print(f"Relative error for adjoint: {err}, with Nm: {Nm_a}")
 
         # Initial condition for dynamical simulation
         a_p = IC_primal_sPODG_FOTR(q0, V_p)
+        a_a = IC_adjoint_PODG_FOTR(Nm_a)
         trunc_modes_list_p.append(Nm_p)
         trunc_modes_list_a.append(Nm_a)
 
         # Construct the primal system matrices for the sPOD-Galerkin approach
         if kwargs['interp_scheme'] == "Lagr":
             Vd_p, Wd_p = make_V_W_delta(V_p, T_delta, D, kwargs['shift_sample'], kwargs['Nx'], Nm_p)
-            Vd_a, Wd_a = make_V_W_delta(V_a, T_delta, D, kwargs['shift_sample'], kwargs['Nx'], Nm_a)
         else:
             Vd_p, Wd_p = make_V_W_delta_CubSpl(V_p, delta_s, A1, D1, D2, R, kwargs['shift_sample'], kwargs['Nx'],
                                                kwargs['dx'],
                                                Nm_p)
-            Vd_a, Wd_a = make_V_W_delta_CubSpl(V_a, delta_s, A1, D1, D2, R, kwargs['shift_sample'], kwargs['Nx'],
-                                               kwargs['dx'],
-                                               Nm_a)
 
         lhs_p, rhs_p, c_p = mat_primal_sPODG_FOTR(Vd_p, Wd_p, A_p, psi, samples=kwargs['shift_sample'], modes=Nm_p)
-        lhs_a, rhs_a, t_a = mat_adjoint_sPODG_FOTR(Vd_a, Wd_a, A_a, Vd_p, samples=kwargs['shift_sample'],
-                                                   modes_a=Nm_a, modes_p=Nm_p)
+        Ar_a, V_aTVd_p, Tarr_a, psir_a = mat_adjoint_PODG_FOTR_mix(A_a, V_a, Vd_p, qs_target, psi,
+                                                                   samples=kwargs['shift_sample'],
+                                                                   modes_a=Nm_a, modes_p=Nm_p)
+
+        if kwargs['adjoint_scheme'] == "RK4":
+            M_f = None
+            A_f = Ar_a.copy()
+            LU_M_f = None
+            Df = None
+        elif kwargs['adjoint_scheme'] == "implicit_midpoint":
+            M_f = np.eye(Nm_a) + (- kwargs['dt']) / 2 * Ar_a
+            A_f = np.eye(Nm_a) - (- kwargs['dt']) / 2 * Ar_a
+            LU_M_f = scipy.linalg.lu_factor(M_f)
+        elif kwargs['adjoint_scheme'] == "DIRK":
+            M_f = np.eye(Nm_a) + (- kwargs['dt']) / 4 * Ar_a
+            A_f = Ar_a.copy()
+            LU_M_f = scipy.linalg.lu_factor(M_f)
+        elif kwargs['adjoint_scheme'] == "BDF2":
+            M_f = 3.0 * np.eye(Nm_a) + 2.0 * (- kwargs['dt']) * Ar_a
+            A_f = Ar_a.copy()
+            LU_M_f = scipy.linalg.lu_factor(M_f)
+        else:
+            kwargs['adjoint_scheme'] = "RK4"
+            M_f = None
+            A_f = Ar_a.copy()
+            LU_M_f = None
 
     '''
     Forward calculation
@@ -320,7 +334,7 @@ for opt_step in range(kwargs['opt_iter']):
     # Compute the interpolation weight and the interval in which the shift lies corresponding to which we compute the
     # V_delta and W_delta matrices
     J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
-                           kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+                                  kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
     JJ = Calc_Cost(qs_opt_full, qs_target, f,
                    kwargs['dx'], kwargs['dt'], kwargs['lamda'])
@@ -330,14 +344,15 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     Backward calculation with reduced system
     '''
-    a_a = IC_adjoint_sPODG_FOTR(Nm_a, as_[-1, -1])
-    as_adj = TI_adjoint_sPODG_FOTR(lhs_a, rhs_a, t_a, Vd_a, Wd_a, a_a, as_, qs_target, Nm_a, Nm_p, delta_s,
-                                   kwargs['dx'], kwargs['Nt'], kwargs['dt'], kwargs['adjoint_scheme'])
+    as_adj = TI_adjoint_PODG_FOTR_mix(a_a, as_, M_f, A_f, LU_M_f, V_aTVd_p, Tarr_a, delta_s,
+                                      kwargs['Nt'], kwargs['dt'],
+                                      kwargs['dx'],
+                                      kwargs['adjoint_scheme'])
 
     '''
      Update Control
     '''
-    dL_du = Calc_Grad_sPODG(psi, f, Vd_a, as_adj[:-1], intIds, weights, kwargs['lamda'])
+    dL_du = Calc_Grad_PODG(psir_a, f, as_adj, kwargs['lamda'])
     dL_du_norm_square = L2norm_ROM(dL_du, kwargs['dt'])
     dL_du_norm = np.sqrt(dL_du_norm_square)
 

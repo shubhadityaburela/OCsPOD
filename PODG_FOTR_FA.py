@@ -149,7 +149,7 @@ kwargs = {
     'threshold': threshold,
     # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm': modes,  # Number of modes for truncation if threshold selected to False.
+    'Nm_p': modes,  # Number of modes for truncation if threshold selected to False.
     'adjoint_scheme': "implicit_midpoint"  # Time integration scheme for adjoint equation
 }
 
