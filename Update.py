@@ -394,15 +394,10 @@ def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, qs_target, d
             k = k + 1
 
 
-def Update_Control_sPODG_FRTO_BB(fOld, fNew, dL_du_Old, dL_du_New, itr, **kwargs):  # Barzilai Borwein
-    alpha = BarzilaiBorwein(itr, kwargs['dt'], fNew, fOld, dL_du_New, dL_du_Old)
-    omega = 1 / alpha
-
-    print(f"Step Size: {omega}")
-
+def Update_Control_sPODG_FRTO_BB(fNew, dL_du_New, omega):  # Barzilai Borwein
     f_bb_new = fNew - omega * dL_du_New
 
-    return f_bb_new, omega
+    return f_bb_new
 
 
 def Update_Control_PODG_FRTO_TWBT(f, Ar_p, psir_p, V, a_p, qs_target, J_prev,
@@ -462,12 +457,17 @@ def Update_Control_PODG_FRTO_TWBT(f, Ar_p, psir_p, V, a_p, qs_target, J_prev,
 
 
 
-def Update_Control_PODG_FRTO_BB(fOld, fNew, dL_du_Old, dL_du_New, itr, **kwargs):  # Barzilai Borwein
+def Update_Control_PODG_FRTO_BB(fNew, dL_du_New, omega):  # Barzilai Borwein
+
+    f_bb_new = fNew - omega * dL_du_New
+
+    return f_bb_new
+
+
+def get_BB_step(fOld, fNew, dL_du_Old, dL_du_New, itr, **kwargs):
     alpha = BarzilaiBorwein(itr, kwargs['dt'], fNew, fOld, dL_du_New, dL_du_Old)
     omega = 1 / alpha
 
     print(f"Step Size: {omega}")
 
-    f_bb_new = fNew - omega * dL_du_New
-
-    return f_bb_new, omega
+    return omega

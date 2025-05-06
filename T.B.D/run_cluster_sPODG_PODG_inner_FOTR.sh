@@ -23,18 +23,20 @@ param_type=$5    # Should be either "modes" or "tol"
 if [ "$param_type" = "tol" ]; then
     tol_value=$6      # Single tolerance value
     script_type=$7    # "adaptive" or "fixed"
+    refine_acc_cost=$8    # For adaptive only: refine_acc_cost value
 else
     mode1=$6          # First mode value
     mode2=$7          # Second mode value
     script_type=$8    # "adaptive" or "fixed"
+    refine_acc_cost=$9    # For adaptive only: refine_acc_cost value
 fi
 
 # Decide which Python script to run based on the script_type parameter
 if [ "$script_type" = "adaptive" ]; then
     if [ "$param_type" = "tol" ]; then
-        python3 sPODG_PODG_FOTR_RA_adaptive.py $problem $conv_accel $target_for_basis $interp_scheme --tol $tol_value
+        python3 sPODG_PODG_FOTR_RA_adaptive.py $problem $conv_accel $target_for_basis $refine_acc_cost $interp_scheme --tol $tol_value
     else
-        python3 sPODG_PODG_FOTR_RA_adaptive.py $problem $conv_accel $target_for_basis $interp_scheme --modes $mode1 $mode2
+        python3 sPODG_PODG_FOTR_RA_adaptive.py $problem $conv_accel $target_for_basis $refine_acc_cost $interp_scheme --modes $mode1 $mode2
     fi
 else
     if [ "$param_type" = "tol" ]; then

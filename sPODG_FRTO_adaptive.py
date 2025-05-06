@@ -12,11 +12,12 @@ from Cubic_spline import give_spline_coefficient_matrices, construct_spline_coef
     shift_matrix_precomputed_coeffs_multiple
 from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
 from Grads import Calc_Grad_sPODG_FRTO
-from Update import Update_Control_sPODG_FRTO_TWBT, Update_Control_sPODG_FRTO_BB
+from Update import Update_Control_sPODG_FRTO_TWBT, Update_Control_sPODG_FRTO_BB, get_BB_step
 from grid_params import advection
 from Plots import PlotFlow
 from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift, L2norm_ROM
-from Helper_sPODG import subsample, get_T, central_FDMatrix, central_FD2Matrix, make_V_W_U_delta, make_V_W_delta_CubSpl
+from Helper_sPODG import subsample, get_T, central_FDMatrix, central_FD2Matrix, make_V_W_U_delta, make_V_W_delta_CubSpl, \
+    get_approx_state_sPODG
 from Costs import Calc_Cost_sPODG, Calc_Cost
 import os
 from time import perf_counter
@@ -35,40 +36,34 @@ from sPOD_algo import give_interpolation_error
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
 parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
-parser.add_argument("conv_accel", type=literal_eval, choices=[True, False],
-                    help="Specify if to use BB as acceleration for the already running TWBT("
+parser.add_argument("primal_adjoint_common_basis", type=literal_eval, choices=[True, False],
+                    help="Specify if you want to "
+                         "include the"
+                         "adjoint for computing "
+                         "the basis ("
                          "True or False)")
-parser.add_argument("target_for_basis", type=literal_eval, choices=[True, False], help="Specify if you want to "
-                                                                                       "include the"
-                                                                                       "target state for computing "
-                                                                                       "the basis ("
-                                                                                       "True or False)")
 parser.add_argument("interp_scheme", type=str, choices=["Lagr", "CubSpl"],
                     help="Specify the Interpolation scheme to use ("
                          "Lagr or CubSpl)")
-parser.add_argument("--modes", type=int, help="Enter the number of modes for modes test")
+parser.add_argument("N_iter", type=int, help="Enter the number of optimization iterations")
+parser.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
+                    help="Specify the directory prefix for proper storage of the files")
+parser.add_argument("--modes", type=int, nargs=1,
+                    help="Enter the modes e.g., --modes 3")
 parser.add_argument("--tol", type=float, help="Enter the tolerance level for tolerance test")
 args = parser.parse_args()
 
 print("\n")
 print(f"Solving problem: {args.problem}")
-print(f"Choosing BB accelerated convergence: {args.conv_accel}")
-print(f"Using target state for basis computation: {args.target_for_basis}")
+print(f"Choosing BB accelerated convergence: True")
+print(f"Using target state for basis computation: False")
+print(f"Using basis refinement according to FOM cost additionally: False")
 print(f"Interpolation scheme to be used for shift matrix construction: {args.interp_scheme}")
 print(f"Type of basis computation: adaptive")
+print(f"Using adjoint state in the basis computation as well: {args.primal_adjoint_common_basis}")
 
 
-if args.conv_accel is False:
-    conv_crit = "TWBT"
-elif args.conv_accel is True:
-    conv_crit = "TWBT+BB"
-    print("\n---------------------")
-    print(f"BB acceleration is only activated once the relative normed gradient has reached low enough value with the TWBT")
-    print("\n---------------------")
-else:
-    conv_crit = "TWBT"  # Default is just TWBT with no acceleration
 problem = args.problem
-target_for_basis = args.target_for_basis
 interp_scheme = args.interp_scheme
 
 # Check which argument was provided and act accordingly
@@ -94,7 +89,7 @@ elif args.tol is not None:
     TYPE = "tol"
     tol = args.tol
     threshold = True
-    modes = None
+    modes = (None, None)
     VAL = tol
 else:
     print("No 'modes' or 'tol' argument provided. Please specify one.")
@@ -139,13 +134,12 @@ f = np.zeros((n_c, wf.Nt), order="F")  # Initial guess for the control
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
                         Neta=1, periodicity='Periodic', dx=wf.dx, dy=0)
 # Convection matrix (Needs to be changed if the velocity is time dependent)
-A_p = - wf.v_x[0] * Mat.Grad_Xi_kron  # + 0.001 * Mat.Laplace_kron
+A_p = - wf.v_x[0] * Mat.Grad_Xi_kron
 A_a = A_p.transpose()
 
 # %% Solve the uncontrolled system
 qs0 = IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance)
 qs_org = TI_primal(qs0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-
 qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nxi, wf.Nt, wf.dt)
 
 # Initial conditions for both primal and adjoint are defined here as they only need to defined once.
@@ -158,9 +152,11 @@ J_opt_FOM_list = []  # Collecting the FOM cost over the optimization steps
 running_time = []  # Time calculated for each iteration in a running manner
 J_opt_list = []  # Collecting the optimal cost functional for plotting
 dL_du_norm_ratio_list = []  # Collecting the ratio of gradients for plotting
+basis_update_idx_list = []  # Optimization steps at which basis is updated
 err_list = []  # Offline error reached according to the tolerance
 trunc_modes_list = []  # Number of modes needed to reach the offline error
-basis_refine_cntr_list = []  # Collects the iteration number at which the basis are refined/updated
+running_online_error_p = []  # Online error for tracking primal approximation
+running_online_error_a = []  # Online error for tracking adjoint approximation
 
 # List of problem constants
 kwargs = {
@@ -173,7 +169,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 1000,  # Total iterations
+    'opt_iter': args.N_iter,  # Total iterations
     'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
@@ -182,26 +178,25 @@ kwargs = {
     'threshold': threshold,
     # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm_p': modes,  # Number of modes for truncation if threshold selected to False.
+    'Nm_p': modes[0],  # Number of modes for truncation if threshold selected to False.
     'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
     'interp_scheme': interp_scheme,  # Either Lagrange interpolation or Cubic spline
-    'adjoint_scheme': "implicit_midpoint",  # Time integration scheme for adjoint equation
-    'include_target_for_basis': target_for_basis,
-    # True if we want to include the target state in the basis computation of
-    # primal and adjoint
+    'adjoint_scheme': "DIRK",  # Time integration scheme for adjoint equation
+    'common_basis': args.primal_adjoint_common_basis,  # True if primal + adjoint in basis else False
 }
 
 # %% Prepare the directory for storing results
-if kwargs['include_target_for_basis']:
-    tar_for_bas = "include_target"
+if kwargs['common_basis']:
+    common_basis = "primal+adjoint_common_basis"
 else:
-    tar_for_bas = "no_target"
+    common_basis = "primal_as_basis"
 
-impath = "./data/sPODG_FRTO_adaptive/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
+impath = args.dir_prefix + "/data/sPODG_FRTO_adaptive/" + common_basis + "/" + interp_scheme + "/" + "problem=" + str(
     problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots/sPODG_FRTO_adaptive/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
+immpath = args.dir_prefix + "/plots/sPODG_FRTO_adaptive/" + common_basis + "/" + interp_scheme + "/" + "problem=" + str(
     problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
+
 
 # %% ROM Variables
 D = central_FDMatrix(order=6, Nx=wf.Nxi, dx=wf.dx)
@@ -233,29 +228,45 @@ for opt_step in range(kwargs['opt_iter']):
     print("Optimization step: %d" % opt_step)
 
     if stag or opt_step == 0:
+        basis_update_idx_list.append(opt_step)
+
         '''
         Forward calculation with FOM
         '''
         qs = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+        qs_adj = TI_adjoint(q0_adj, qs, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+        qs_normalized = qs / np.linalg.norm(qs)
+        qs_adj_normalized = qs_adj / np.linalg.norm(qs_adj)
+
         z = calc_shift(qs, q0, wf.X, wf.t)
         if kwargs['interp_scheme'] == "Lagr":
             _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
-            qs_s = T.reverse(qs)
-            if kwargs['include_target_for_basis']:
-                qs_target_s = T.reverse(qs_target)
-                qs_con = np.concatenate([qs_s, qs_target_s], axis=1)  # CHOOSE IF TO INCLUDE qs_target
+
+            if kwargs['common_basis']:
+                qs_normalized_s = T.reverse(qs_normalized)
+                qs_adj_normalized_s = T.reverse(qs_adj_normalized)
+                qs_con = np.concatenate([qs_normalized_s, qs_adj_normalized_s],
+                                        axis=1)  # CHOOSE IF TO INCLUDE qs_target
             else:
+                qs_s = T.reverse(qs)
                 qs_con = qs_s.copy()
         else:
             # Construct the spline coefficients for the qs
-            b, c, d = construct_spline_coeffs_multiple(qs, A1, D1, D2, R, kwargs['dx'])
-            qs_s = shift_matrix_precomputed_coeffs_multiple(qs, z[0], b, c, d, kwargs['Nx'], kwargs['dx'])
-            if kwargs['include_target_for_basis']:
-                b, c, d = construct_spline_coeffs_multiple(qs_target, A1, D1, D2, R, kwargs['dx'])
-                qs_target_s = shift_matrix_precomputed_coeffs_multiple(qs_target, z[0], b, c, d, kwargs['Nx'],
-                                                                       kwargs['dx'])
-                qs_con = np.concatenate([qs_s, qs_target_s], axis=1)  # CHOOSE IF TO INCLUDE qs_target
+            if kwargs['common_basis']:
+                b, c, d = construct_spline_coeffs_multiple(qs_normalized, A1, D1, D2, R, kwargs['dx'])
+                qs_normalized_s = shift_matrix_precomputed_coeffs_multiple(qs_normalized, z[0], b, c, d, kwargs['Nx'],
+                                                                           kwargs['dx'])
+
+                b, c, d = construct_spline_coeffs_multiple(qs_adj_normalized, A1, D1, D2, R, kwargs['dx'])
+                qs_adj_normalized_s = shift_matrix_precomputed_coeffs_multiple(qs_adj_normalized, z[0], b, c, d,
+                                                                               kwargs['Nx'],
+                                                                               kwargs['dx'])
+
+                qs_con = np.concatenate([qs_normalized_s, qs_adj_normalized_s],
+                                        axis=1)  # CHOOSE IF TO INCLUDE qs_target
             else:
+                b, c, d = construct_spline_coeffs_multiple(qs, A1, D1, D2, R, kwargs['dx'])
+                qs_s = shift_matrix_precomputed_coeffs_multiple(qs, z[0], b, c, d, kwargs['Nx'], kwargs['dx'])
                 qs_con = qs_s.copy()
 
         V, qs_s_POD = compute_red_basis(qs_con, equation="primal", **kwargs)
@@ -264,7 +275,6 @@ for opt_step in range(kwargs['opt_iter']):
         print(f"Relative error for shifted primal: {err}, with Nm: {Nm}")
 
         err_list.append(err)
-        basis_refine_cntr_list.append(opt_step)
         trunc_modes_list.append(Nm)
 
         # Initial condition for dynamical simulation
@@ -292,11 +302,12 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     Objective and costs for control
     '''
-    J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
+    J, qs_approx = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
                            kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    JJ = Calc_Cost(qs_opt_full, qs_target, f,
-                   kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+    running_online_error_p.append(np.linalg.norm(qs_opt_full - qs_approx) / np.linalg.norm(qs_opt_full))
+
+    JJ = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     J_opt_FOM_list.append(JJ)
     J_opt_list.append(J)
 
@@ -306,6 +317,7 @@ for opt_step in range(kwargs['opt_iter']):
     as_adj = TI_adjoint_sPODG_FRTO(a_a, f, as_, qs_target, as_dot, lhs_p, rhs_p, c_p, Vd_p, Wd_p,
                                    Nm, delta_s, Nt=kwargs['Nt'], dt=kwargs['dt'], dx=kwargs['dx'],
                                    scheme=kwargs['adjoint_scheme'])
+
 
     '''
      Update Control
@@ -317,19 +329,11 @@ for opt_step in range(kwargs['opt_iter']):
     dL_du_norm_list.append(dL_du_norm)
     dL_du_norm_ratio_list.append(dL_du_norm / dL_du_norm_list[0])
 
-    if opt_step == 0:
-        print(f"TWBT acting.....")
-        fNew, J_opt, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p,
-                                                                       a_p,
-                                                                       qs_target, delta_s, J,
-                                                                       omega_twbt,
-                                                                       Nm, dL_du, dL_du_norm_square,
-                                                                       **kwargs)
-    else:
-        if conv_crit == "TWBT+BB" and dL_du_norm / dL_du_norm_list[0] < 5e-3:
-            print(f"BB acting.....")
-            fNew, omega = Update_Control_sPODG_FRTO_BB(fOld, fNew, dL_du_Old, dL_du, opt_step, **kwargs)
-        else:
+    if dL_du_norm / dL_du_norm_list[0] < 5e-3:
+        print(f"BB acting.....")
+        omega_bb = get_BB_step(fOld, fNew, dL_du_Old, dL_du, opt_step, **kwargs)
+        if omega_bb < 0:  # Negative BB step not accepted (Thus running Armijo step)
+            print(f"WARNING... BB gave negative step length, thus ignoring that and using TWBT for correct step size")
             print(f"TWBT acting.....")
             fNew, J_opt, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p,
                                                                            a_p,
@@ -337,6 +341,17 @@ for opt_step in range(kwargs['opt_iter']):
                                                                            omega_twbt,
                                                                            Nm, dL_du, dL_du_norm_square,
                                                                            **kwargs)
+        else:
+            fNew = Update_Control_sPODG_FRTO_BB(fNew, dL_du, omega_bb)
+            stag = False
+    else:
+        print(f"TWBT acting.....")
+        fNew, J_opt, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p,
+                                                                       a_p,
+                                                                       qs_target, delta_s, J,
+                                                                       omega_twbt,
+                                                                       Nm, dL_du, dL_du_norm_square,
+                                                                       **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
 
@@ -373,7 +388,7 @@ for opt_step in range(kwargs['opt_iter']):
                 print(
                     f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the basis and shifts at itr: {opt_step}")
                 stag_cntr = stag_cntr + 1
-                f_last_valid = np.copy(f)
+                f = np.copy(fOld)
             else:
                 stag_cntr = 0
         else:
@@ -388,22 +403,23 @@ for opt_step in range(kwargs['opt_iter']):
                     print(
                         f"Armijo Stagnated !!!!!! even after 2 consecutive basis and shift updates thus exiting at itr: {opt_step} with "
                         f"J_ROM : {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
+                    f_last_valid = np.copy(fOld)
                     break
                 print("\n-------------------------------")
                 print(
                     f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the basis and shifts at itr: {opt_step}")
-                f_last_valid = np.copy(f)
+                f = np.copy(fOld)
             else:
                 stag_cntr = 0
-            if conv_crit == "TWBT+BB":
-                if JJ > 1e6:
-                    print("\n\n-------------------------------")
-                    print(
-                        f"Barzilai Borwein acceleration failed!!!!!! J_FOM increased to unrealistic values, thus exiting "
-                        f"at itr: {opt_step} with "
-                        f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                    f_last_valid = np.copy(f)
-                    break
+
+            if JJ > 1e6 or abs(omega_bb) < kwargs['omega_cutoff']:
+                print("\n\n-------------------------------")
+                print(
+                    f"Barzilai Borwein acceleration failed!!!!!! J_FOM increased to unrealistic values or the omega went below cutoff, thus exiting "
+                    f"at itr: {opt_step} with "
+                    f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
+                f_last_valid = np.copy(fOld)
+                break
 
 
 # Compute the final state and adjoint state
@@ -428,12 +444,15 @@ np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
 np.save(impath + 'J_opt_list.npy', J_opt_list)
 np.save(impath + 'running_time.npy', running_time)
 np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
+np.save(impath + 'basis_update_idx_list.npy', basis_update_idx_list)
+np.save(impath + 'running_online_error_p.npy', running_online_error_p)
+np.save(impath + 'running_online_error_a.npy', running_online_error_a)
 
 # Save the optimized solution
-np.save(impath + 'qs_opt.npy', qs_opt_full)
-np.save(impath + 'qs_adj_opt.npy', qs_adj)
-np.save(impath + 'f_opt.npy', f_opt)
-np.save(impath + 'f_opt_low.npy', f_last_valid)
+# np.save(impath + 'qs_opt.npy', qs_opt_full)
+# np.save(impath + 'qs_adj_opt.npy', qs_adj)
+# np.save(impath + 'f_opt.npy', f_opt)
+# np.save(impath + 'f_opt_low.npy', f_last_valid)
 
 # %%
 # Plot the results
@@ -444,3 +463,15 @@ pf.plot1D(qs_opt_full, name="qs_opt", immpath=immpath)
 pf.plot1D(qs_adj, name="qs_adj_opt", immpath=immpath)
 pf.plot1D(f_opt, name="f_opt", immpath=immpath)
 pf.plot1D_ROM_converg(J_opt_list, immpath=immpath)
+
+# fig = plt.figure(figsize=(10, 5))
+# ax1 = fig.add_subplot(121)
+# ax1.pcolormesh(qs_approx.T)
+# ax1.axis('off')
+# ax1.axis('auto')
+# ax2 = fig.add_subplot(122)
+# ax2.pcolormesh(qs_opt_full.T)
+# ax2.axis('off')
+# ax2.axis('auto')
+# plt.show()
+

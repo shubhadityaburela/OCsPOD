@@ -69,7 +69,7 @@ class PlotFlow:
         os.makedirs(immpath, exist_ok=True)
 
         # Plot the snapshot matrix for conserved variables for original model
-        fig = plt.figure(figsize=(5, 5))
+        fig = plt.figure(figsize=(10, 10))
         ax1 = fig.add_subplot(111)
         im1 = ax1.pcolormesh(self.X_1D_grid, self.t_grid, Q, cmap='YlOrRd')
         ax1.axis('off')

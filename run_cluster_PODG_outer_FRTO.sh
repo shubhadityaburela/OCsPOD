@@ -1,19 +1,18 @@
 #!/bin/bash
-
 # Loop over the two script types: "adaptive" and "fixed"
 for script_type in adaptive fixed; do
     for problem in 1 2 3; do
-        for conv_accel in True; do
-            for target_for_basis in False True; do
-                for mode in 5 20 35 50 65 90 120 150 180; do
-                    echo "Submitting job: script_type=$script_type, problem=$problem, convergence_acceleration=$conv_accel, include_target_for_basis=$target_for_basis, type_of_study=modes, value=$mode"
-                    sbatch run_cluster_PODG_inner_FRTO.sh $problem $conv_accel $target_for_basis modes $mode $script_type
-                done
-                # Submit jobs using --tol values
-                for tol in 1e-2 1e-3; do
-                    echo "Submitting job: script_type=$script_type, problem=$problem, convergence_acceleration=$conv_accel, include_target_for_basis=$target_for_basis, type_of_study=tol, value=$tol"
-                    sbatch run_cluster_PODG_inner_FRTO.sh $problem $conv_accel $target_for_basis tol $tol $script_type
-                done
+        for common_basis in True False; do
+            # Define mode values list
+            mode_values=(5 10 20 30 50 70 90 110 130 150)
+            for mode in "${mode_values[@]}"; do
+                echo "Submitting job: script_type=$script_type, problem=$problem, common_basis=$common_basis, type_of_study=modes, value=$mode"
+                sbatch run_cluster_PODG_inner_FRTO.sh $problem $common_basis modes $mode $script_type
+            done
+            # Submit jobs for different tolerances
+            for tol in 1e-2 5e-3 1e-3 5e-4 1e-4 5e-5 1e-5 5e-6 1e-6; do
+                echo "Submitting job: script_type=$script_type, problem=$problem, common_basis=$common_basis, type_of_study=tol, value=$tol"
+                sbatch run_cluster_PODG_inner_FRTO.sh $problem $common_basis tol $tol $script_type
             done
         done
     done

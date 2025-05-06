@@ -1,12 +1,9 @@
 """
-It can handle both the scenarios.
+This file is the version with ROM adjoint. It can handle both the scenarios.
 1. Fixed tolerance
 2. Fixed modes
 """
-from ast import literal_eval
-
-import matplotlib.pyplot as plt
-import scipy.linalg
+import scipy
 
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
@@ -15,48 +12,38 @@ from Grads import Calc_Grad_PODG
 from Helper import ControlSelectionMatrix_advection, compute_red_basis, L2norm_ROM
 from PODG_solver import IC_primal_PODG_FRTO, IC_adjoint_PODG_FRTO, mat_primal_PODG_FRTO, mat_adjoint_PODG_FRTO, \
     TI_primal_PODG_FRTO, TI_adjoint_PODG_FRTO
-from TI_schemes import DF_start_FOM
-from Update import Update_Control_PODG_FRTO_TWBT, Update_Control_PODG_FRTO_BB
+from Update import Update_Control_PODG_FRTO_TWBT, Update_Control_PODG_FRTO_BB, get_BB_step
 from grid_params import advection
 from Plots import PlotFlow
 import numpy as np
 import os
 from time import perf_counter
 import time
-import scipy.sparse as sp
 import argparse
+from ast import literal_eval
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
 parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
-parser.add_argument("conv_accel", type=literal_eval, choices=[True, False],
-                    help="Specify if to use BB as acceleration for the already running TWBT("
-                         "True or False)")
-parser.add_argument("target_for_basis", type=literal_eval, choices=[True, False], help="Specify if you want to "
+parser.add_argument("primal_adjoint_common_basis", type=literal_eval, choices=[True, False], help="Specify if you want to "
                                                                                        "include the"
-                                                                                       "target state for computing "
+                                                                                       "adjoint for computing "
                                                                                        "the basis ("
                                                                                        "True or False)")
-parser.add_argument("--modes", type=int, help="Enter the number of modes for modes test")
+parser.add_argument("N_iter", type=int, help="Enter the number of optimization iterations")
+parser.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
+                    help="Specify the directory prefix for proper storage of the files")
+parser.add_argument("--modes", type=int, nargs=1,
+                    help="Enter the modes e.g., --modes 3")
 parser.add_argument("--tol", type=float, help="Enter the tolerance level for tolerance test")
 args = parser.parse_args()
 
 print("\n")
 print(f"Solving problem: {args.problem}")
-print(f"Choosing BB accelerated convergence: {args.conv_accel}")
-print(f"Using target state for basis computation: {args.target_for_basis}")
+print(f"Using BB accelaration: True")
+print(f"Using target state for basis computation: False")
 print(f"Type of basis computation: fixed")
-
-if args.conv_accel is False:
-    conv_crit = "TWBT"
-elif args.conv_accel is True:
-    conv_crit = "TWBT+BB"
-    print("\n---------------------")
-    print(f"BB acceleration is only activated once the relative normed gradient has reached low enough value with the TWBT")
-    print("\n---------------------")
-else:
-    conv_crit = "TWBT"  # Default is just TWBT with no acceleration
+print(f"Using adjoint state in the basis computation as well: {args.primal_adjoint_common_basis}")
 problem = args.problem
-target_for_basis = args.target_for_basis
 
 # Check which argument was provided and act accordingly
 if args.modes and args.tol:
@@ -81,7 +68,7 @@ elif args.tol is not None:
     TYPE = "tol"
     tol = args.tol
     threshold = True
-    modes = None
+    modes = (None, None)
     VAL = tol
 else:
     print("No 'modes' or 'tol' argument provided. Please specify one.")
@@ -120,7 +107,7 @@ n_c_init = 40  # Number of initial controls
 psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
 # trim_first_n should basically make the psi matrix and the number of controls to be user defined.
 n_c = psi.shape[1]
-f = np.zeros((n_c, wf.Nt), order="F")  # Initial guess for the control
+f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
 
 # %% Assemble the linear operators
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
@@ -139,6 +126,7 @@ qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nxi, wf.Nt
 q0 = np.ascontiguousarray(IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance))
 q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
 
+
 # %% Optimal control
 dL_du_norm_list = []  # Collecting the gradient over the optimization steps
 J_opt_FOM_list = []  # Collecting the FOM cost over the optimization steps
@@ -147,6 +135,8 @@ J_opt_list = []  # Collecting the optimal cost functional for plotting
 dL_du_norm_ratio_list = []  # Collecting the ratio of gradients for plotting
 err_list = []  # Offline error reached according to the tolerance
 trunc_modes_list = []  # Number of modes needed to reach the offline error
+running_online_error_p = []  # Online error for tracking primal approximation
+running_online_error_a = []  # Online error for tracking adjoint approximation
 
 # List of problem constants
 kwargs = {
@@ -159,7 +149,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 100,  # Total iterations
+    'opt_iter': args.N_iter,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
@@ -167,35 +157,39 @@ kwargs = {
     'threshold': threshold,
     # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
     # "FALSE" for mode based.
-    'Nm_p': modes,  # Number of modes for truncation if threshold selected to False.
+    'Nm_p': modes[0],  # Number of modes for truncation if threshold selected to False.
     'adjoint_scheme': "DIRK",  # Time integration scheme for adjoint equation
-    'include_target_for_basis': target_for_basis,
-    # True if we want to include the target state in the basis computation of
-    # primal and adjoint
+    'common_basis': args.primal_adjoint_common_basis,  # True if primal + adjoint in basis else False
 }
 
 # %% Prepare the directory for storing results
-if kwargs['include_target_for_basis']:
-    tar_for_bas = "include_target"
+if kwargs['common_basis']:
+    common_basis = "primal+adjoint_common_basis"
 else:
-    tar_for_bas = "no_target"
+    common_basis = "primal_as_basis"
 
-impath = "./data/PODG_FRTO/" + conv_crit + "/" + tar_for_bas + "/" + "problem=" + str(problem) + "/" + TYPE + "=" + str(
+impath = args.dir_prefix + "/data/PODG_FRTO/" + common_basis + "/" + "problem=" + str(
+    problem) + "/" + TYPE + "=" + str(
     VAL) + "/"  # for data
-immpath = "./plots/PODG_FRTO/" + conv_crit + "/" + tar_for_bas + "/" + "problem=" + str(
+immpath = args.dir_prefix + "/plots/PODG_FRTO/" + common_basis + "/" + "problem=" + str(
     problem) + "/" + TYPE + "=" + str(
     VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
-# %%
-if kwargs['include_target_for_basis']:
-    qs_con = np.concatenate([qs_org, qs_target], axis=1)  # CHOOSE IF TO INCLUDE qs_target
+# %% Basis computation and fixing upfront
+qs = TI_primal(qs0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+qs_adj = TI_adjoint(q0_adj, qs, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+qs_normalized = qs / np.linalg.norm(qs)
+qs_adj_normalized = qs_adj / np.linalg.norm(qs_adj)
+if kwargs['common_basis']:
+    qs_con = np.concatenate([qs_normalized, qs_adj_normalized], axis=1)  # CHOOSE IF TO INCLUDE qs_target
 else:
-    qs_con = qs_org.copy()
+    qs_con = qs.copy()
+
 V, qs_POD = compute_red_basis(qs_con, equation="primal", **kwargs)
 Nm = V.shape[1]
 err = np.linalg.norm(qs_con - qs_POD) / np.linalg.norm(qs_con)
-print(f"Relative error for primal: {err}, with Nm: {Nm}")
+print(f"Relative offline error: {err}, with Nm: {Nm}")
 
 # Initial condition for dynamical simulation
 a_p = IC_primal_PODG_FRTO(V, q0)
@@ -253,9 +247,12 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     Objective and costs for control
     '''
-    J = Calc_Cost_PODG(V, as_, qs_target, f,
-                       kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+    J = Calc_Cost_PODG(V, as_, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+
+    qs_approx = V @ as_
     qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+    running_online_error_p.append(np.linalg.norm(qs_opt_full - qs_approx) / np.linalg.norm(qs_opt_full))
+
     JJ = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     J_opt_FOM_list.append(JJ)
     J_opt_list.append(J)
@@ -267,6 +264,10 @@ for opt_step in range(kwargs['opt_iter']):
                                   kwargs['dt'],
                                   scheme=kwargs['adjoint_scheme'])
 
+    qs_adj_approx = V @ as_adj
+    qs_adj_full = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    running_online_error_a.append(np.linalg.norm(qs_adj_full - qs_adj_approx) / np.linalg.norm(qs_adj_full))
+
     '''
     Update Control
     '''
@@ -277,21 +278,25 @@ for opt_step in range(kwargs['opt_iter']):
     dL_du_norm_list.append(dL_du_norm)
     dL_du_norm_ratio_list.append(dL_du_norm / dL_du_norm_list[0])
 
-    if opt_step == 0:
-        print(f"TWBT acting.....")
-        fNew, J_opt, omega_twbt, stag = Update_Control_PODG_FRTO_TWBT(f, Ar_p, psir_p, V, a_p,
-                                                                      qs_target, J, omega_twbt, dL_du, dL_du_norm_square
-                                                                      ** kwargs)
-    else:
-        if conv_crit == "TWBT+BB" and dL_du_norm / dL_du_norm_list[0] < 5e-3:
-            print(f"BB acting.....")
-            fNew, omega = Update_Control_PODG_FRTO_BB(fOld, fNew, dL_du_Old, dL_du, opt_step, **kwargs)
-        else:
+    if dL_du_norm / dL_du_norm_list[0] < 5e-3:
+        print(f"BB acting.....")
+        omega_bb = get_BB_step(fOld, fNew, dL_du_Old, dL_du, opt_step, **kwargs)
+        if omega_bb < 0:  # Negative BB step not accepted (Thus running Armijo step)
+            print(f"WARNING... BB gave negative step length, thus ignoring that and using TWBT for correct step size")
             print(f"TWBT acting.....")
             fNew, J_opt, omega_twbt, stag = Update_Control_PODG_FRTO_TWBT(f, Ar_p, psir_p, V, a_p,
                                                                           qs_target, J, omega_twbt, dL_du,
-                                                                          dL_du_norm_square
-                                                                          ** kwargs)
+                                                                          dL_du_norm_square,
+                                                                          **kwargs)
+        else:
+            fNew = Update_Control_PODG_FRTO_BB(fNew, dL_du, omega_bb)
+            stag = False
+    else:
+        print(f"TWBT acting.....")
+        fNew, J_opt, omega_twbt, stag = Update_Control_PODG_FRTO_TWBT(f, Ar_p, psir_p, V, a_p,
+                                                                      qs_target, J, omega_twbt, dL_du,
+                                                                      dL_du_norm_square,
+                                                                      **kwargs)
 
     running_time.append(perf_counter() - time_odeint_s)
 
@@ -326,6 +331,7 @@ for opt_step in range(kwargs['opt_iter']):
                 print(
                     f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
                     f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
+                f = np.copy(fOld)
                 break
         else:
             dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
@@ -337,16 +343,16 @@ for opt_step in range(kwargs['opt_iter']):
                 print(
                     f"TWBT Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
                     f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
+                f = np.copy(fOld)
                 break
-            # Convergence criteria for BB
-            if conv_crit == "TWBT+BB":
-                if JJ > 1e6 or abs(omega_bb) < kwargs['omega_cutoff']:
-                    print("\n\n-------------------------------")
-                    print(
-                        f"Barzilai Borwein acceleration failed!!!!!! J_FOM increased to unrealistic values or the omega went below cutoff, thus exiting "
-                        f"at itr: {opt_step} with "
-                        f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                    break
+            if JJ > 1e6 or abs(omega_bb) < kwargs['omega_cutoff']:
+                print("\n\n-------------------------------")
+                print(
+                    f"Barzilai Borwein acceleration failed!!!!!! J_FOM increased to unrealistic values or the omega went below cutoff, thus exiting "
+                    f"at itr: {opt_step} with "
+                    f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
+                f = np.copy(fOld)
+                break
 
 
 qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
@@ -369,12 +375,14 @@ np.save(impath + 'J_opt_list.npy', J_opt_list)
 np.save(impath + 'err_list.npy', err_list)
 np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
+np.save(impath + 'running_online_error_p.npy', running_online_error_p)
+np.save(impath + 'running_online_error_a.npy', running_online_error_a)
 
-# Save the optimized solution
-np.save(impath + 'qs_opt.npy', qs_opt_full)
-np.save(impath + 'qs_adj_opt.npy', qs_adj)
-np.save(impath + 'f_opt.npy', f_opt)
-np.save(impath + 'f_opt_low.npy', f)
+# # Save the optimized solution
+# np.save(impath + 'qs_opt.npy', qs_opt_full)
+# np.save(impath + 'qs_adj_opt.npy', qs_adj)
+# np.save(impath + 'f_opt.npy', f_opt)
+# np.save(impath + 'f_opt_low.npy', f)
 
 # %%
 # Plot the results

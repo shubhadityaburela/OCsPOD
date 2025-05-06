@@ -45,6 +45,9 @@ parser.add_argument("target_for_basis", type=literal_eval, choices=[True, False]
 parser.add_argument("interp_scheme", type=str, choices=["Lagr", "CubSpl"],
                     help="Specify the Interpolation scheme to use ("
                          "Lagr or CubSpl)")
+parser.add_argument("N_iter", type=int, help="Enter the number of optimization iterations")
+parser.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
+                    help="Specify the directory prefix for proper storage of the files")
 parser.add_argument("--modes", type=int, nargs=2,
                     help="Enter the modes for both the primal and adjoint systems e.g., --modes 3 5")
 parser.add_argument("--tol", type=float, help="Enter the tolerance level for tolerance test")
@@ -160,7 +163,8 @@ dL_du_norm_ratio_list = []  # Collecting the ratio of gradients for plotting
 err_list = []  # Offline error reached according to the tolerance
 trunc_modes_list_p = []  # Number of modes needed to reach the offline error
 trunc_modes_list_a = []  # Number of modes needed to reach the offline error
-shift_refine_cntr_list = []  # Collects the iteration number at which the shifts are refined/updated
+running_online_error_p = []  # Online error for tracking primal approximation
+running_online_error_a = []  # Online error for tracking adjoint approximation
 
 # List of problem constants
 kwargs = {
@@ -173,7 +177,7 @@ kwargs = {
     'omega': 1,  # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 200,  # Total iterations
+    'opt_iter': args.N_iter,  # Total iterations
     'shift_sample': 800,  # Number of samples for shift interpolation
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
@@ -198,9 +202,9 @@ if kwargs['include_target_for_basis']:
 else:
     tar_for_bas = "no_target"
 
-impath = "./data/sPODG_FOTR_RA/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
+impath = args.dir_prefix + "/data/sPODG_FOTR_RA/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
     problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = "./plots/sPODG_FOTR_RA/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
+immpath = args.dir_prefix + "/plots/sPODG_FOTR_RA/" + conv_crit + "/" + tar_for_bas + "/" + interp_scheme + "/" + "problem=" + str(
     problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
 os.makedirs(impath, exist_ok=True)
 
@@ -317,9 +321,14 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     # Compute the interpolation weight and the interval in which the shift lies corresponding to which we compute the
     # V_delta and W_delta matrices
-    J, _ = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
+    J, qs_approx = Calc_Cost_sPODG(Vd_p, as_[:-1], qs_target, f, intIds, weights,
                            kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+
+
     qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+    running_online_error_p.append(np.linalg.norm(qs_opt_full - qs_approx) / np.linalg.norm(qs_opt_full))
+
+
     JJ = Calc_Cost(qs_opt_full, qs_target, f,
                    kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     J_opt_FOM_list.append(JJ)
@@ -335,12 +344,18 @@ for opt_step in range(kwargs['opt_iter']):
     '''
      Update Control
     '''
-    dL_du = Calc_Grad_sPODG(psi, f, Vd_a, as_adj[:-1], intIds, weights, kwargs['lamda'])
+    dL_du, qs_adj_approx = Calc_Grad_sPODG(psi, f, Vd_a, as_adj[:-1], intIds, weights, kwargs['lamda'])
     dL_du_norm_square = L2norm_ROM(dL_du, kwargs['dt'])
     dL_du_norm = np.sqrt(dL_du_norm_square)
 
     dL_du_norm_list.append(dL_du_norm)
     dL_du_norm_ratio_list.append(dL_du_norm / dL_du_norm_list[0])
+
+
+
+    qs_adj_full = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    running_online_error_a.append(np.linalg.norm(qs_adj_full - qs_adj_approx) / np.linalg.norm(qs_adj_full))
+
 
     if opt_step == 0:
         print(f"TWBT acting.....")
@@ -400,7 +415,8 @@ for opt_step in range(kwargs['opt_iter']):
                 print("\n-------------------------------")
                 print(
                     f"Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step}")
-                f_last_valid = np.copy(f)
+                f_last_valid = np.copy(fOld)
+                f = np.copy(fOld)
                 break
         else:
             dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
@@ -413,17 +429,17 @@ for opt_step in range(kwargs['opt_iter']):
                 print(
                     f"TWBT Armijo Stagnated !!!!!! due to the step length being too low thus exiting at itr: {opt_step} with "
                     f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                f_last_valid = np.copy(f)
+                f_last_valid = np.copy(fOld)
                 break
             # Convergence criteria for BB
             if conv_crit == "TWBT+BB":
-                if JJ > 1e6 or abs(omega_bb) < kwargs['omega_cutoff']:
+                if JJ > 1e6 or omega_bb < kwargs['omega_cutoff']:
                     print("\n\n-------------------------------")
                     print(
-                        f"Barzilai Borwein acceleration failed!!!!!! J_FOM increased to unrealistic values or the omega went below cutoff, thus exiting "
+                        f"Barzilai Borwein acceleration failed!!!!!! J_FOM increased to unrealistic values or the omega went below cutoff or even negative, thus exiting "
                         f"at itr: {opt_step} with "
                         f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                    f_last_valid = np.copy(f)
+                    f_last_valid = np.copy(fOld)
                     break
 
 # Compute the final state
@@ -445,17 +461,17 @@ print("Total time elapsed = %1.3f" % (end - start))
 # Save the convergence lists
 np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
 np.save(impath + 'J_opt_list.npy', J_opt_list)
-np.save(impath + 'err_list.npy', err_list)
 np.save(impath + 'trunc_modes_list_p.npy', trunc_modes_list_p)
 np.save(impath + 'trunc_modes_list_a.npy', trunc_modes_list_a)
 np.save(impath + 'running_time.npy', running_time)
-np.save(impath + 'shift_refine_cntr_list.npy', shift_refine_cntr_list)
+np.save(impath + 'running_online_error_p.npy', running_online_error_p)
+np.save(impath + 'running_online_error_a.npy', running_online_error_a)
 
 # Save the optimized solution
-np.save(impath + 'qs_opt.npy', qs_opt_full)
-np.save(impath + 'qs_adj_opt.npy', qs_adj)
-np.save(impath + 'f_opt.npy', f_opt)
-np.save(impath + 'f_opt_low.npy', f_last_valid)
+# np.save(impath + 'qs_opt.npy', qs_opt_full)
+# np.save(impath + 'qs_adj_opt.npy', qs_adj)
+# np.save(impath + 'f_opt.npy', f_opt)
+# np.save(impath + 'f_opt_low.npy', f_last_valid)
 
 # %%
 # Plot the results

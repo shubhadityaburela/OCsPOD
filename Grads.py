@@ -26,7 +26,7 @@ def Calc_Grad_sPODG(mask, f, V, as_adj, intIds, weights, lamda):
 
     dL_du = lamda * f + mask.T @ qs_adj
 
-    return dL_du
+    return dL_du, qs_adj
 
 
 @njit(parallel=True)

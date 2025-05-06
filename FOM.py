@@ -27,8 +27,8 @@ problem = args.problem
 print("\n")
 print(f"Solving problem: {args.problem}")
 
-Nxi = 3200 // 2
-Nt = 3360 // 2
+Nxi = 3200
+Nt = 3360
 
 impath = "./data/FOM/problem=" + str(problem) + "/"  # for data
 immpath = "./plots/FOM/problem=" + str(problem) + "/"  # for plots
@@ -67,7 +67,6 @@ psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mas
 n_c = psi.shape[1]
 f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
 
-
 #%% Assemble the linear operators
 Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
                         Neta=1, periodicity='Periodic', dx=wf.dx, dy=0)
@@ -105,7 +104,7 @@ kwargs = {
     'omega': 1,   # initial step size for gradient update
     'delta_conv': 1e-4,  # Convergence criteria
     'delta': 1e-2,  # Armijo constant
-    'opt_iter': 10,  # Total iterations
+    'opt_iter': 200,  # Total iterations
     'beta': 1 / 2,  # Beta factor for two-way backtracking line search
     'verbose': True,  # Print options
     'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop

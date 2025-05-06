@@ -277,12 +277,12 @@ def Matrices_online_adjoint_FOTR_expl(LHS_matrix, RHS_matrix, Tar_matrix, Vda, W
     M[modes_a:, :modes_a] = M[:modes_a, modes_a:].T
     M[modes_a:, modes_a:] = Da.T @ (LHS_matrix[2] @ Da)
 
-    A[:modes_a] = RHS_matrix[0] @ as_adj_ + dx * (np.add(weight * Tar_matrix[0, intervalIdx],
+    A[:modes_a] = - RHS_matrix[0] @ as_adj_ - dx * (np.add(weight * Tar_matrix[0, intervalIdx],
                                                          (1 - weight) * Tar_matrix[0, intervalIdx + 1]) @ as_p -
                                                   np.add(weight * Vda[intervalIdx],
                                                          (1 - weight) * Vda[intervalIdx + 1]).T @ qs_target)
 
-    A[modes_a:] = Da.T @ (RHS_matrix[1] @ as_adj_ + dx * (np.add(weight * Tar_matrix[1, intervalIdx],
+    A[modes_a:] = - Da.T @ (RHS_matrix[1] @ as_adj_ + dx * (np.add(weight * Tar_matrix[1, intervalIdx],
                                                                  (1 - weight) * Tar_matrix[1, intervalIdx + 1]) @ as_p -
                                                           np.add(weight * Wda[intervalIdx],
                                                                  (1 - weight) * Wda[intervalIdx + 1]).T @ qs_target))

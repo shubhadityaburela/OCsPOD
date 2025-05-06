@@ -99,9 +99,9 @@ def RHS_adjoint_sPODG_FOTR_expl(as_adj, as_, qs_target, lhs, rhs, tar, Vda, Wda,
 
     # Solve the linear system of equations
     if np.linalg.cond(M) == np.inf:
-        return solve_lin_system_Tikh_reg(M, -A)
+        return solve_lin_system_Tikh_reg(M, A)
     else:
-        return solve_lin_system(M, -A)
+        return solve_lin_system(M, A)
 
 
 def TI_adjoint_sPODG_FOTR(lhs, rhs, tar, Vda, Wda, a_a, as_, qs_target, modes_a, modes_p, delta_s, dx, Nt, dt, scheme):
