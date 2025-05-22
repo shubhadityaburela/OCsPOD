@@ -20,24 +20,24 @@ param_type=$3    # Should be either "modes" or "tol"
 # Depending on the parameter type, capture the proper values.
 if [ "$param_type" = "tol" ]; then
     tol_value=$4      # Single tolerance value
-    script_type=$5    # "adaptive" or "fixed" or "everytime"
+    script_type=$5    # "adaptive" or "fixed"
 else
     mode=$4          # First mode value
-    script_type=$5    # "adaptive" or "fixed" or "everytime"
+    script_type=$5    # "adaptive" or "fixed"
 fi
 
 # Decide which Python script to run based on the script_type parameter.
 if [ "$script_type" = "adaptive" ]; then
     if [ "$param_type" = "tol" ]; then
-        python3 PODG_FRTO_adaptive.py $problem $common_basis 50000 "/work/burela" --tol $tol_value
+        python3 PODG_FRTO_adaptive.py $problem $common_basis 20000 "/work/burela" --tol $tol_value
     else
-        python3 PODG_FRTO_adaptive.py $problem $common_basis 50000 "/work/burela" --modes $mode
+        python3 PODG_FRTO_adaptive.py $problem $common_basis 20000 "/work/burela" --modes $mode
     fi
 else
     if [ "$param_type" = "tol" ]; then
-        python3 PODG_FRTO.py $problem $common_basis 50000 "/work/burela" --tol $tol_value
+        python3 PODG_FRTO.py $problem $common_basis 20000 "/work/burela" --tol $tol_value
     else
-        python3 PODG_FRTO.py $problem $common_basis 50000 "/work/burela" --modes $mode
+        python3 PODG_FRTO.py $problem $common_basis 20000 "/work/burela" --modes $mode
     fi
 fi
 

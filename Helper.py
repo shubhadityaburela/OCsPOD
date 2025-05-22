@@ -19,7 +19,6 @@ def BarzilaiBorwein(itr, dt, fNew, fOld, gNew, gOld):
         return YY / SY
 
 
-
 @njit
 def L2norm_FOM(qq, dx, dt):
     # Directly modify the input array if allowed
@@ -147,7 +146,20 @@ def compute_red_basis(qs, equation="primal", **kwargs):
             return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
 
 
-
 def is_contiguous(array):
     return array.flags['C_CONTIGUOUS'] or array.flags['F_CONTIGUOUS']
 
+
+@njit
+def L1norm_ROM(qq, dt):
+    # Directly modify the input array if allowed
+    q = qq.copy()  # Copy only if you need to keep qq unchanged
+
+    # Scale the first and last column
+    q[:, 0] /= 2.0
+    q[:, -1] /= 2.0
+
+    # Calculate the absolute L1 norm
+    norm = np.sum(np.abs(q))
+
+    return norm * dt

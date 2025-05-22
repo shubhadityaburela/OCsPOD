@@ -45,7 +45,8 @@ def RHS_adjoint_impl(q_adj, q, q_tar, M_f, A_f, LU_M_f, Nx, dx, dt, scheme):
     elif scheme == "BDF3":
         return LU_M_f.solve(18.0 * q_adj[2] - 9.0 * q_adj[1] + 2.0 * q_adj[0] - 6.0 * dt * dx * (q - q_tar))
     elif scheme == "BDF4":
-        return LU_M_f.solve(48.0 * q_adj[3] - 36.0 * q_adj[2] + 16.0 * q_adj[1] - 3.0 * q_adj[0] - 12.0 * dt * dx * (q - q_tar))
+        return LU_M_f.solve(
+            48.0 * q_adj[3] - 36.0 * q_adj[2] + 16.0 * q_adj[1] - 3.0 * q_adj[0] - 12.0 * dt * dx * (q - q_tar))
 
 
 def TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, Nxi, dx, Nt, dt, scheme, opt_poly_jacobian=None):

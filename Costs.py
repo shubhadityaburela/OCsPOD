@@ -3,22 +3,22 @@ from numba import njit, prange
 
 
 @njit
-def Calc_Cost(q, q_target, f, dx, dt, lamda):
+def Calc_Cost(q, q_target, f, dx, dt, lamda1, lamda2):
     q_res = q - q_target
-    cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda / 2) * (L2norm_ROM(f, dt))
+    cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda2 / 2) * (L2norm_ROM(f, dt)) + lamda1 * (L1norm_ROM(f, dt))
 
     return cost
 
 
 @njit
-def Calc_Cost_PODG(V, as_, qs_target, f, dx, dt, lamda):
+def Calc_Cost_PODG(V, as_, qs_target, f, dx, dt, lamda1, lamda2):
     # Ensure arrays are contiguous
     V = np.ascontiguousarray(V)
     as_ = np.ascontiguousarray(as_)
 
     q_res = V @ as_ - qs_target
 
-    cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda / 2) * (L2norm_ROM(f, dt))
+    cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda2 / 2) * (L2norm_ROM(f, dt)) + lamda1 * (L1norm_ROM(f, dt))
 
     return cost
 
@@ -49,3 +49,20 @@ def Calc_Cost_sPODG_FRTO_NC(as_, as_target, f, dt, lamda):
 
     return cost
 
+
+
+
+@njit
+def Calc_Cost_elastic_net(q, q_target, f, dx, dt, lamda1, lamda2):
+    q_res = q - q_target
+    cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda2 / 2) * (L2norm_ROM(f, dt)) + lamda1 * (L1norm_ROM(f, dt))
+
+    return cost
+
+
+@njit
+def Calc_Cost_smooth(q, q_target, f, dx, dt, lamda2):
+    q_res = q - q_target
+    cost = 1 / 2 * (L2norm_FOM(q_res, dx, dt)) + (lamda2 / 2) * (L2norm_ROM(f, dt))
+
+    return cost

@@ -267,6 +267,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, 
     # # Solve the linear system of equations
     # eigvals, eigvecs = scipy.linalg.eig(-A, M)
     # print("Eigenvalues:", eigvals)
+    # print("Largest positive real part of eigenvalue:", np.max(np.real(eigvals)))
     # # Check stability based on the real parts of eigenvalues
     # tol = 1e-10
     # if np.all(np.real(eigvals) < 0):

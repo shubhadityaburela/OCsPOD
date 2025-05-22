@@ -45,3 +45,23 @@ def Calc_Grad_sPODG_FRTO(f, C, as_adj, as_, intIds, weights, lamda):
     dL_du = lamda * f + as_adj_1 + as_adj_2
 
     return dL_du
+
+
+@njit
+def Calc_Grad_smooth(mask, qs_adj, f, lamda2):
+    dL_du = mask.T @ qs_adj + lamda2 * f
+
+    return dL_du
+
+
+@njit
+def prox_l1(data, reg_param):
+    tmp = np.abs(data) - reg_param
+    tmp = (tmp + np.abs(tmp)) / 2
+    y = np.sign(data) * tmp
+    return y
+
+
+@njit
+def Calc_Grad_mapping(u, psi, qs_adj, omega, lamda1, lamda2):
+    return (1 / omega) * (u - prox_l1(u - omega * Calc_Grad_smooth(psi, qs_adj, u, lamda2), omega * lamda1))

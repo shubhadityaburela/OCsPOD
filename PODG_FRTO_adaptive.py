@@ -46,9 +46,6 @@ args = parser.parse_args()
 
 print("\n")
 print(f"Solving problem: {args.problem}")
-print(f"Using BB acceleration: True")
-print(f"Using target state for basis computation: False")
-print(f"Using basis refinement according to FOM cost additionally: False")
 print(f"Using adjoint state in the basis computation as well: {args.primal_adjoint_common_basis}")
 print(f"Type of basis computation: adaptive")
 
@@ -189,6 +186,14 @@ omega_bb = 1
 stag = False
 stag_cntr = 0
 
+# Best control achieved based on the best FOM cost
+best_control = np.zeros_like(f)
+best_details = {
+    'J': np.inf,
+    'N_iter': None,
+    'Nm': None,
+}
+
 start = time.time()
 time_odeint_s = perf_counter()  # save running time
 # %%
@@ -260,13 +265,23 @@ for opt_step in range(kwargs['opt_iter']):
     '''
     J = Calc_Cost_PODG(V, as_, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 
-    qs_approx = V @ as_
+    # qs_approx = V @ as_
     qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    running_online_error_p.append(np.linalg.norm(qs_opt_full - qs_approx) / np.linalg.norm(qs_opt_full))
+    # running_online_error_p.append(np.linalg.norm(qs_opt_full - qs_approx) / np.linalg.norm(qs_opt_full))
 
     JJ = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
     J_opt_FOM_list.append(JJ)
     J_opt_list.append(J)
+
+
+    '''
+    Keep track of the best FOM cost and the associated control
+    '''
+    if J_opt_FOM_list[opt_step] < best_details['J']:
+        best_details['J'] = J_opt_FOM_list[opt_step]
+        best_control = np.copy(f)
+        best_details['N_iter'] = opt_step
+        best_details['Nm'] = Nm
 
     '''
     Backward calculation with ROM system
@@ -274,9 +289,9 @@ for opt_step in range(kwargs['opt_iter']):
     as_adj = TI_adjoint_PODG_FRTO(a_a, as_, M_f, A_f, LU_M_f, Tarr_a, kwargs['Nx'], kwargs['dx'], kwargs['Nt'],
                                   kwargs['dt'], scheme=kwargs['adjoint_scheme'])
 
-    qs_adj_approx = V @ as_adj
-    qs_adj_full = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
-    running_online_error_a.append(np.linalg.norm(qs_adj_full - qs_adj_approx) / np.linalg.norm(qs_adj_full))
+    # qs_adj_approx = V @ as_adj
+    # qs_adj_full = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    # running_online_error_a.append(np.linalg.norm(qs_adj_full - qs_adj_approx) / np.linalg.norm(qs_adj_full))
 
     '''
     Update Control
@@ -375,13 +390,13 @@ for opt_step in range(kwargs['opt_iter']):
                 f = np.copy(fOld)
                 break
 
-qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
 qs_adj = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt,
                     scheme="RK4", opt_poly_jacobian=None)
-f_opt = psi @ f
+f_opt = psi @ best_control
 
 # Compute the cost with the optimal control
-J = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
+J = Calc_Cost(qs_opt_full, qs_target, best_control, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
 print("\n")
 print(f"J with respect to the optimal control for FOM: {J}")
 
@@ -397,12 +412,13 @@ np.save(impath + 'trunc_modes_list.npy', trunc_modes_list)
 np.save(impath + 'running_time.npy', running_time)
 np.save(impath + 'running_online_error_p.npy', running_online_error_p)
 np.save(impath + 'running_online_error_a.npy', running_online_error_a)
+np.save(impath + 'best_run_details.npy', best_details, allow_pickle=True)
 
 # Save the optimized solution
 # np.save(impath + 'qs_opt.npy', qs_opt_full)
 # np.save(impath + 'qs_adj_opt.npy', qs_adj)
 # np.save(impath + 'f_opt.npy', f_opt)
-# np.save(impath + 'f_opt_low.npy', f)
+# np.save(impath + 'f_opt_low.npy', best_control)
 
 # %%
 # Plot the results

@@ -23,29 +23,22 @@ if [ "$param_type" = "tol" ]; then
     tol_value=$5      # Single tolerance value
     script_type=$6    # "adaptive" or "fixed"
 else
-    mode1=$5         # First mode value
-    mode2=$6          # Second mode value
-    script_type=$7    # "adaptive" or "fixed"
+    mode1=$5         # mode value
+    script_type=$6    # "adaptive" or "fixed"
 fi
 
 # Decide which Python script to run based on the script_type parameter
 if [ "$script_type" = "adaptive" ]; then
     if [ "$param_type" = "tol" ]; then
-        python3 sPODG_FOTR_RA_adaptive.py $problem $common_basis $interp_scheme 20000 "/work/burela" --tol $tol_value
+        python3 sPODG_FRTO_adaptive.py $problem $common_basis $interp_scheme 20000 "/work/burela" --tol $tol_value
     else
-        python3 sPODG_FOTR_RA_adaptive.py $problem $common_basis $interp_scheme 20000 "/work/burela" --modes $mode1 $mode2
-    fi
-elif [ "$script_type" = "everytime" ]; then
-    if [ "$param_type" = "tol" ]; then
-        python3 sPODG_FOTR_RA_everytime.py $problem $common_basis $interp_scheme 20000 "/work/burela" --tol $tol_value
-    else
-        python3 sPODG_FOTR_RA_everytime.py $problem $common_basis $interp_scheme 20000 "/work/burela" --modes $mode1 $mode2
+        python3 sPODG_FRTO_adaptive.py $problem $common_basis $interp_scheme 20000 "/work/burela" --modes $mode
     fi
 else
     if [ "$param_type" = "tol" ]; then
-        python3 sPODG_FOTR_RA.py $problem $common_basis $interp_scheme 20000 "/work/burela" --tol $tol_value
+        python3 sPODG_FRTO.py $problem $common_basis $interp_scheme 20000 "/work/burela" --tol $tol_value
     else
-        python3 sPODG_FOTR_RA.py $problem $common_basis $interp_scheme 20000 "/work/burela" --modes $mode1 $mode2
+        python3 sPODG_FRTO.py $problem $common_basis $interp_scheme 20000 "/work/burela" --modes $mode
     fi
 fi
 
