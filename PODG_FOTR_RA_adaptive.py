@@ -3,444 +3,580 @@ This file is the version with ROM adjoint. It can handle both the scenarios.
 1. Fixed tolerance
 2. Fixed modes
 """
+import os
+import sys
+import time
+import argparse
+import traceback
+
+import numpy as np
 import scipy
-from matplotlib import pyplot as plt
-from scipy import sparse
+from time import perf_counter
+from ast import literal_eval
 
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
 from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
-from Grads import Calc_Grad_PODG
-from Helper import ControlSelectionMatrix_advection, compute_red_basis, L2norm_ROM
-from PODG_solver import IC_primal_PODG_FOTR, mat_primal_PODG_FOTR, TI_primal_PODG_FOTR, IC_adjoint_PODG_FOTR, \
+from Grads import Calc_Grad_PODG_smooth, Calc_Grad_mapping
+from Helper import ControlSelectionMatrix_advection, compute_red_basis, L2norm_ROM, check_weak_divergence
+from PODG_solver import (
+    IC_primal_PODG_FOTR, mat_primal_PODG_FOTR,
+    TI_primal_PODG_FOTR, IC_adjoint_PODG_FOTR,
     mat_adjoint_PODG_FOTR, TI_adjoint_PODG_FOTR
+)
 from Update import Update_Control_PODG_FOTR_RA_TWBT, Update_Control_PODG_FOTR_RA_BB, get_BB_step
 from grid_params import advection
 from Plots import PlotFlow
-import numpy as np
-import os
-from time import perf_counter
-import time
-import argparse
-from ast import literal_eval
-
-parser = argparse.ArgumentParser(description="Input the variables for running the script.")
-parser.add_argument("problem", type=int, choices=[1, 2, 3], help="Specify the problem number (1, 2, or 3)")
-parser.add_argument("primal_adjoint_common_basis", type=literal_eval, choices=[True, False], help="Specify if you want to "
-                                                                                       "include the"
-                                                                                       "adjoint for computing "
-                                                                                       "the basis ("
-                                                                                       "True or False)")
-parser.add_argument("N_iter", type=int, help="Enter the number of optimization iterations")
-parser.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
-                    help="Specify the directory prefix for proper storage of the files")
-parser.add_argument("--modes", type=int, nargs=2,
-                    help="Enter the modes for both the primal and adjoint systems e.g., --modes 3 5")
-parser.add_argument("--tol", type=float, help="Enter the tolerance level for tolerance test")
-args = parser.parse_args()
-
-print("\n")
-print(f"Solving problem: {args.problem}")
-print(f"Type of basis computation: adaptive")
-print(f"Using adjoint state in the basis computation as well: {args.primal_adjoint_common_basis}")
 
 
-problem = args.problem
-
-# Check which argument was provided and act accordingly
-if args.modes and args.tol:
-    print(f"Modes test takes precedence.....")
-    print(f"Mode number provided: {args.modes}")
-    TYPE = "modes"
-    modes = args.modes
-    threshold = False
-    tol = None
-    VAL = modes
-elif args.modes:
-    print(f"Modes test.....")
-    print(f"Mode number provided: {args.modes}")
-    TYPE = "modes"
-    modes = args.modes
-    threshold = False
-    tol = None
-    VAL = modes
-elif args.tol is not None:
-    print(f"Tolerance test.....")
-    print(f"Tolerance provided: {args.tol}")
-    TYPE = "tol"
-    tol = args.tol
-    threshold = True
-    modes = (None, None)
-    VAL = tol
-else:
-    print("No 'modes' or 'tol' argument provided. Please specify one.")
-    exit()
-
-Nxi = 3200
-Nt = 3360
-# Wildfire solver initialization along with grid initialization
-# Thick wave params:                  # Sharp wave params (earlier kink):             # Sharp wave params (later kink):
-# cfl = 8 / 6                         # cfl = 8 / 6                                   # cfl = 8 / 6
-# tilt_from = 3 * Nt // 4             # tilt_from = 3 * Nt // 4                       # tilt_from = 9 * Nt / 10
-# v_x = 0.5                           # v_x = 0.55                                    # v_x = 0.6
-# v_x_t = 1.0                         # v_x_t = 1.0                                   # v_x_t = 1.3
-# variance = 7                        # variance = 0.5                                # variance = 0.5
-# offset = 12                         # offset = 30                                   # offset = 30
+# ───────────────────────────────────────────────────────────────────────
+def parse_arguments():
+    p = argparse.ArgumentParser(description="Input the variables for running the script.")
+    p.add_argument("problem", type=int, choices=[1, 2, 3],
+                   help="Problem number (1, 2, or 3)")
+    p.add_argument("primal_adjoint_common_basis", type=literal_eval, choices=[True, False],
+                   help="Include adjoint in basis computation? (True/False)")
+    p.add_argument("N_iter", type=int, help="Number of optimization iterations")
+    p.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
+                   help="Directory prefix for I/O")
+    p.add_argument("reg", type=float, nargs=2, metavar=("L1", "L2"),
+                   help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
+    p.add_argument("CTC_mask_activate", type=literal_eval, choices=[True, False],
+                   help="Include CTC mask in the system? (True/False)")
+    p.add_argument("--modes", type=int, nargs=2,
+                   help="Modes for primal and adjoint (e.g. --modes 3 5)")
+    p.add_argument("--tol", type=float, help="Tolerance level for fixed‐tol run")
+    return p.parse_args()
 
 
-if problem == 1:  # Thick wave params
-    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
-                   tilt_from=3 * Nt // 4, v_x=0.5, v_x_t=1.0, variance=7, offset=12)
-elif problem == 2:  # Sharp wave params (earlier kink):
-    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
-                   tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
-elif problem == 3:  # Sharp wave params (later kink):
-    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
-                   tilt_from=9 * Nt // 10, v_x=0.6, v_x_t=1.3, variance=0.5, offset=30)
-else:  # Default is problem 2
-    wf = advection(Nxi=Nxi, timesteps=Nt, cfl=8 / 6,
-                   tilt_from=3 * Nt // 4, v_x=0.55, v_x_t=1.0, variance=0.5, offset=30)
-wf.Grid()
-
-# %%
-n_c_init = 40  # Number of initial controls
-
-# Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
-# trim_first_n should basically make the psi matrix and the number of controls to be user defined.
-n_c = psi.shape[1]
-f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
-
-# %% Assemble the linear operators
-Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder, Nxi=wf.Nxi,
-                        Neta=1, periodicity='Periodic', dx=wf.dx, dy=0)
-# Convection matrix (Needs to be changed if the velocity is time dependent)
-A_p = - wf.v_x[0] * Mat.Grad_Xi_kron
-A_a = A_p.transpose()
-
-# %% Solve the uncontrolled system
-qs0 = IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance)
-qs_org = TI_primal(qs0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-
-qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nxi, wf.Nt, wf.dt)
-
-# Initial conditions for both primal and adjoint are defined here as they only need to defined once.
-q0 = np.ascontiguousarray(IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance))
-q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
-
-# %% Optimal control
-dL_du_norm_list = []  # Collecting the gradient over the optimization steps
-J_opt_FOM_list = []  # Collecting the FOM cost over the optimization steps
-running_time = []  # Time calculated for each iteration in a running manner
-J_opt_list = []  # Collecting the optimal cost functional for plotting
-dL_du_norm_ratio_list = []  # Collecting the ratio of gradients for plotting
-basis_update_idx_list = []  # Optimization steps at which basis is updated
-trunc_modes_list_p = []  # Number of modes needed to reach the offline error
-trunc_modes_list_a = []  # Number of modes needed to reach the offline error
-running_online_error_p = []  # Online error for tracking primal approximation
-running_online_error_a = []  # Online error for tracking adjoint approximation
-
-# List of problem constants
-kwargs = {
-    'dx': wf.dx,
-    'dt': wf.dt,
-    'Nx': wf.Nxi,
-    'Nt': wf.Nt,
-    'n_c': n_c,
-    'lamda': 1e-3,  # Regularization parameter
-    'omega': 1,  # initial step size for gradient update
-    'delta_conv': 1e-4,  # Convergence criteria
-    'delta': 1e-2,  # Armijo constant
-    'opt_iter': args.N_iter,  # Total iterations
-    'beta': 1 / 2,  # Beta factor for two-way backtracking line search
-    'verbose': True,  # Print options
-    'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
-    'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-    'threshold': threshold,
-    # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
-    # "FALSE" for mode based.
-    'Nm_p': modes[0],  # Number of modes for truncation if threshold selected to False.
-    'Nm_a': modes[1],  # Number of modes for truncation if threshold selected to False.
-    'adjoint_scheme': "RK4",  # Time integration scheme for adjoint equation
-    'common_basis': args.primal_adjoint_common_basis,  # True if primal + adjoint in basis else False
-}
-
-# %% Prepare the directory for storing results
-if kwargs['common_basis']:
-    common_basis = "primal+adjoint_common_basis"
-else:
-    common_basis = "separate_basis"
-
-impath = args.dir_prefix + "/data/PODG_FOTR_RA_adaptive/" + common_basis + "/" + "problem=" + str(
-    problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for data
-immpath = args.dir_prefix + "/plots/PODG_FOTR_RA_adaptive/" + common_basis + "/" + "problem=" + str(
-    problem) + "/" + TYPE + "=" + str(VAL) + "/"  # for plots
-os.makedirs(impath, exist_ok=True)
-
-# %% For two-way backtracking line search
-omega_twbt = 1
-omega_bb = 1
-
-stag = False
-stag_cntr = 0
-
-
-# Best control achieved based on the best FOM cost
-best_control = np.zeros_like(f)
-best_details = {
-    'J': np.inf,
-    'N_iter': None,
-    'Nm_p': None,
-    'Nm_a': None,
-}
-
-start = time.time()
-time_odeint_s = perf_counter()  # save running time
-# %%
-for opt_step in range(kwargs['opt_iter']):
-
-    print("\n==============================")
-    print("Optimization step: %d" % opt_step)
-
-    if stag or opt_step == 0:
-        basis_update_idx_list.append(opt_step)
-        '''
-        Primal and adjoint matrices computation
-        '''
-        qs = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-        qs_adj = TI_adjoint(q0_adj, qs, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
-        qs_normalized = qs / np.linalg.norm(qs)
-        qs_adj_normalized = qs_adj / np.linalg.norm(qs_adj)
-        if kwargs['common_basis']:
-            qs_con = np.concatenate([qs_normalized, qs_adj_normalized], axis=1)
-        else:
-            qs_con = qs.copy()
-
-        V_p, qs_POD = compute_red_basis(qs_con, equation="primal", **kwargs)
-        Nm_p = V_p.shape[1]
-        err = np.linalg.norm(qs_con - qs_POD) / np.linalg.norm(qs_con)
-        print(f"Relative error for primal: {err}, with Nm: {Nm_p}")
-
-        if kwargs['common_basis']:
-            qs_adj_con = np.concatenate([qs_normalized, qs_adj_normalized], axis=1)
-        else:
-            qs_adj_con = qs_adj.copy()
-        V_a, qs_POD_adj = compute_red_basis(qs_adj_con, equation="adjoint", **kwargs)
-        Nm_a = V_a.shape[1]
-        err = np.linalg.norm(qs_adj_con - qs_POD_adj) / np.linalg.norm(qs_adj_con)
-        print(f"Relative error for adjoint: {err}, with Nm: {Nm_a}")
-
-        # Initial condition for dynamical simulation
-        a_p = IC_primal_PODG_FOTR(V_p, q0)
-        a_a = IC_adjoint_PODG_FOTR(Nm_a)
-        trunc_modes_list_p.append(Nm_p)
-        trunc_modes_list_a.append(Nm_a)
-
-        # Construct the primal and adjoint system matrices for the POD-Galerkin approach
-        Ar_p, psir_p = mat_primal_PODG_FOTR(A_p, V_p, psi)
-        Ar_a, V_aTV_p, Tarr_a, psir_a = mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi)
-
-        if kwargs['adjoint_scheme'] == "RK4":
-            M_f = None
-            A_f = Ar_a.copy()
-            LU_M_f = None
-            Df = None
-        elif kwargs['adjoint_scheme'] == "implicit_midpoint":
-            M_f = np.eye(Nm_a) + (- kwargs['dt']) / 2 * Ar_a
-            A_f = np.eye(Nm_a) - (- kwargs['dt']) / 2 * Ar_a
-            LU_M_f = scipy.linalg.lu_factor(M_f)
-        elif kwargs['adjoint_scheme'] == "DIRK":
-            M_f = np.eye(Nm_a) + (- kwargs['dt']) / 4 * Ar_a
-            A_f = Ar_a.copy()
-            LU_M_f = scipy.linalg.lu_factor(M_f)
-        elif kwargs['adjoint_scheme'] == "BDF2":
-            M_f = 3.0 * np.eye(Nm_a) + 2.0 * (- kwargs['dt']) * Ar_a
-            A_f = Ar_a.copy()
-            LU_M_f = scipy.linalg.lu_factor(M_f)
-        else:
-            kwargs['adjoint_scheme'] = "RK4"
-            M_f = None
-            A_f = Ar_a.copy()
-            LU_M_f = None
-
-    '''
-    Forward calculation with reduced system
-    '''
-    as_ = TI_primal_PODG_FOTR(a_p, f, Ar_p, psir_p, wf.Nt, wf.dt)
-
-    '''
-    Objective and costs for control
-    '''
-    J = Calc_Cost_PODG(V_p, as_, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
-
-    # qs_approx = V_p @ as_
-    qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    # running_online_error_p.append(np.linalg.norm(qs_opt_full - qs_approx) / np.linalg.norm(qs_opt_full))
-
-    JJ = Calc_Cost(qs_opt_full, qs_target, f, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
-    J_opt_FOM_list.append(JJ)
-    J_opt_list.append(J)
-
-
-    '''
-    Keep track of the best FOM cost and the associated control
-    '''
-    if J_opt_FOM_list[opt_step] < best_details['J']:
-        best_details['J'] = J_opt_FOM_list[opt_step]
-        best_control = np.copy(f)
-        best_details['N_iter'] = opt_step
-        best_details['Nm_p'] = Nm_p
-        best_details['Nm_a'] = Nm_a
-
-
-    '''
-    Backward calculation with reduced system
-    '''
-    as_adj = TI_adjoint_PODG_FOTR(a_a, as_, M_f, A_f, LU_M_f, V_aTV_p, Tarr_a, kwargs['Nt'], kwargs['dt'], kwargs['dx'],
-                                  kwargs['adjoint_scheme'])
-
-    # qs_adj_approx = V_a @ as_adj
-    # qs_adj_full = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
-    # running_online_error_a.append(np.linalg.norm(qs_adj_full - qs_adj_approx) / np.linalg.norm(qs_adj_full))
-
-    '''
-    Update Control
-    '''
-    # Compute the gradient
-    dL_du = Calc_Grad_PODG(psir_a, f, as_adj, kwargs['lamda'])
-    dL_du_norm_square = L2norm_ROM(dL_du, kwargs['dt'])
-    dL_du_norm = np.sqrt(dL_du_norm_square)
-
-    dL_du_norm_list.append(dL_du_norm)
-    dL_du_norm_ratio_list.append(dL_du_norm / dL_du_norm_list[0])
-
-    if dL_du_norm / dL_du_norm_list[0] < 5e-3:
-        print(f"BB acting.....")
-        omega_bb = get_BB_step(fOld, fNew, dL_du_Old, dL_du, opt_step, **kwargs)
-        if omega_bb < 0:  # Negative BB step not accepted (Thus running Armijo step)
-            print(f"WARNING... BB gave negative step length, thus ignoring that and using TWBT for correct step size")
-            print(f"TWBT acting.....")
-            fNew, J_opt, omega_twbt, stag = Update_Control_PODG_FOTR_RA_TWBT(f, a_p, qs_target,
-                                                                             V_p, Ar_p,
-                                                                             psir_p, J, omega_twbt, dL_du,
-                                                                             dL_du_norm_square,
-                                                                             **kwargs)
-        else:
-            fNew = Update_Control_PODG_FOTR_RA_BB(fNew, dL_du, omega_bb)
-            stag = False
+def decide_run_type(args):
+    if args.modes and args.tol is not None:
+        print("Modes test takes precedence…")
+        print(f"Modes provided: {args.modes}")
+        TYPE, VAL = "modes", args.modes
+        modes, tol, threshold = args.modes, None, False
+    elif args.modes:
+        print("Modes test…")
+        print(f"Modes provided: {args.modes}")
+        TYPE, VAL = "modes", args.modes
+        modes, tol, threshold = args.modes, None, False
+    elif args.tol is not None:
+        print("Tolerance test…")
+        print(f"Tolerance provided: {args.tol}")
+        TYPE, VAL = "tol", args.tol
+        modes, tol, threshold = (None, None), args.tol, True
     else:
-        print(f"TWBT acting.....")
-        fNew, J_opt, omega_twbt, stag = Update_Control_PODG_FOTR_RA_TWBT(f, a_p, qs_target,
-                                                                         V_p, Ar_p,
-                                                                         psir_p, J, omega_twbt, dL_du,
-                                                                         dL_du_norm_square,
-                                                                         **kwargs)
+        print("ERROR: Must specify either --modes or --tol.")
+        sys.exit(1)
+    return TYPE, VAL, modes, tol, threshold
 
-    running_time.append(perf_counter() - time_odeint_s)
 
-    # Saving previous controls for Barzilai Borwein step
-    fOld = np.copy(f)
-    f = np.copy(fNew)
-    dL_du_Old = np.copy(dL_du)
-
-    print(
-        f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du|| = {dL_du_norm}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
-    )
-
-    # Convergence criteria
-    if opt_step == kwargs['opt_iter'] - 1:
-        print("\n\n-------------------------------")
-        print(
-            f"WARNING... maximal number of steps reached, "
-            f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
-        )
-        break
-    elif dL_du_norm / dL_du_norm_list[0] < kwargs['delta_conv']:
-        print("\n\n-------------------------------")
-        print(
-            f"Optimization converged with, "
-            f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}"
-        )
-        break
+def setup_advection(problem):
+    Nxi, Nt = 3200, 3360
+    if problem == 1:
+        wf = advection(Nxi=Nxi, timesteps=Nt,
+                       cfl=8 / 6, tilt_from=3 * Nt // 4,
+                       v_x=0.5, v_x_t=1.0,
+                       variance=7, offset=12)
+    elif problem == 2:
+        wf = advection(Nxi=Nxi, timesteps=Nt,
+                       cfl=8 / 6, tilt_from=3 * Nt // 4,
+                       v_x=0.55, v_x_t=1.0,
+                       variance=0.5, offset=30)
     else:
-        if opt_step == 0:
-            if stag:
+        wf = advection(Nxi=Nxi, timesteps=Nt,
+                       cfl=8 / 6, tilt_from=9 * Nt // 10,
+                       v_x=0.6, v_x_t=1.3,
+                       variance=0.5, offset=30)
+    wf.Grid()
+    return wf
+
+
+def build_dirs(prefix, common_basis, reg_tuple, CTC_mask, problem, TYPE, VAL):
+    cb_str = "primal+adjoint_common_basis" if common_basis else "separate_basis"
+    reg_str = f"L1={reg_tuple[0]}_L2={reg_tuple[1]}"
+    data_dir = os.path.join(prefix, "data/PODG_FOTR_RA_adaptive", cb_str, reg_str, f"CTC_mask={CTC_mask}",
+                            f"problem={problem}", f"{TYPE}={VAL}")
+    plot_dir = os.path.join(prefix, "plots/PODG_FOTR_RA_adaptive", cb_str, reg_str, f"CTC_mask={CTC_mask}",
+                            f"problem={problem}", f"{TYPE}={VAL}")
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(plot_dir, exist_ok=True)
+    return data_dir, plot_dir
+
+
+def save_all(data_dir, **arrays):
+    """
+    Save all arrays/lists in `arrays` dict to data_dir
+    """
+    for name, arr in arrays.items():
+        path = os.path.join(data_dir, f"{name}.npy")
+        np.save(path, np.array(arr, dtype=object))
+    print(f"→ Saved {len(arrays)} arrays.")
+
+
+def write_checkpoint(data_dir, opt_step,
+                     f, best_control, best_details,
+                     J_opt_list, J_opt_FOM_list,
+                     dL_du_norm_list, running_time,
+                     trunc_modes_list_p, trunc_modes_list_a,
+                     basis_update_idx_list):
+    """
+    Overwrite checkpoint files. All variables are written with fixed names,
+    so each iteration replaces the previous checkpoint.
+    """
+    ckpt_dir = os.path.join(data_dir, "checkpoint")
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    # Controls
+    np.save(os.path.join(ckpt_dir, "f.npy"), f)
+    np.save(os.path.join(ckpt_dir, "best_control.npy"), best_control)
+
+    # Best-details
+    np.save(os.path.join(ckpt_dir, "best_details.npy"),
+            best_details, allow_pickle=True)
+
+    # Histories
+    np.save(os.path.join(ckpt_dir, "iter.npy"), opt_step)
+    np.save(os.path.join(ckpt_dir, "J_opt_list.npy"), np.array(J_opt_list))
+    np.save(os.path.join(ckpt_dir, "J_opt_FOM_list.npy"), np.array(J_opt_FOM_list))
+    np.save(os.path.join(ckpt_dir, "dL_du_norm_list.npy"), np.array(dL_du_norm_list))
+    np.save(os.path.join(ckpt_dir, "running_time.npy"), np.array(running_time))
+    np.save(os.path.join(ckpt_dir, "trunc_modes_p.npy"), np.array(trunc_modes_list_p))
+    np.save(os.path.join(ckpt_dir, "trunc_modes_a.npy"), np.array(trunc_modes_list_a))
+    np.save(os.path.join(ckpt_dir, "basis_update_idx_list.npy"), np.array(basis_update_idx_list))
+
+    print(f"Checkpoint overwritten → {ckpt_dir}")
+
+
+def C_matrix(Nx, CTC_end_index, apply_CTC_mask=False):
+    C = np.ones(Nx)
+    if apply_CTC_mask:
+        C[:CTC_end_index] = 0
+        return C == 1
+    else:
+        return C == 1
+
+
+# ───────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    args = parse_arguments()
+
+    print(f"\nSolving problem: {args.problem}")
+    print("Type of basis computation: adaptive")
+    print(f"Using adjoint in basis: {args.primal_adjoint_common_basis}")
+    print(f"L1, L2 regularization = {tuple(args.reg)}")
+    print(f"Using CTC mask pseudo hyperreduction: {args.CTC_mask_activate}")
+
+
+    # Determine run type
+    TYPE, VAL, modes, tol, threshold = decide_run_type(args)
+
+    # Unpack regularization parameters
+    L1_reg, L2_reg = args.reg
+
+    # Set up WF and control matrix
+    wf = setup_advection(args.problem)
+    if L1_reg != 0 and L2_reg == 0:  # Purely L1
+        n_c_init = wf.Nxi
+        psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+        adjust = 1.0
+    else:  # Mix type
+        n_c_init = 40
+        psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
+        adjust = wf.dx
+    n_c = psi.shape[1]
+    f = np.zeros((n_c, wf.Nt))  # initial control guess
+
+    # Build coefficient matrices
+    Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder,
+                            Nxi=wf.Nxi, Neta=1,
+                            periodicity='Periodic',
+                            dx=wf.dx, dy=0)
+    A_p = - wf.v_x[0] * Mat.Grad_Xi_kron
+    A_a = A_p.transpose()
+
+    # Solve uncontrolled FOM once
+    qs0 = IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance)
+    qs_org = TI_primal(qs0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nxi, wf.Nt, wf.dt)
+    q0 = np.ascontiguousarray(qs0)
+    q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
+
+    # Calculate the CTC matrix/array  (CTC and C are exactly the same)
+    C = C_matrix(wf.Nxi, wf.CTC_end_index, apply_CTC_mask=args.CTC_mask_activate)
+
+    # Prepare directories
+    data_dir, plot_dir = build_dirs(args.dir_prefix,
+                                    args.primal_adjoint_common_basis,
+                                    args.reg, args.CTC_mask_activate,
+                                    args.problem, TYPE, VAL)
+
+    # List of problem constants
+    kwargs = {
+        'dx': wf.dx,
+        'dt': wf.dt,
+        'Nx': wf.Nxi,
+        'Nt': wf.Nt,
+        'n_c': n_c,
+        'lamda_l1': L1_reg,
+        'lamda_l2': L2_reg,
+        'delta_conv': 1e-4,  # Convergence criteria
+        'delta': 1 / 2,  # Armijo constant.  USE 1.01 with L1_reg=0 for getting the older results
+        'opt_iter': args.N_iter,  # Total iterations
+        'beta': 1 / 2,  # Beta factor for two-way backtracking line search
+        'verbose': True,  # Print options
+        'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
+        'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
+        'threshold': threshold,
+        # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
+        # "FALSE" for mode based.
+        'Nm_p': modes[0],  # Number of modes for truncation if threshold selected to False.
+        'Nm_a': modes[1],  # Number of modes for truncation if threshold selected to False.
+        'adjoint_scheme': "RK4",  # Time integration scheme for adjoint equation
+        'common_basis': args.primal_adjoint_common_basis,  # True if primal + adjoint in basis else False
+    }
+
+    # Collector lists
+    dL_du_norm_list = []
+    J_opt_FOM_list = []
+    J_opt_list = []
+    running_time = []
+    trunc_modes_list_p = []
+    trunc_modes_list_a = []
+    basis_update_idx_list = []
+    best_control = np.zeros_like(f)
+    best_details = {'J': np.inf, 'N_iter': None, 'Nm_p': None, 'Nm_a': None}
+    f_last_valid = None
+
+    start_total = time.time()
+    t0 = perf_counter()
+
+    omega_twbt = 1.0
+    omega_bb = 1.0
+    omega = 1.0
+    stag = False
+    stag_cntr = 0
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Main “optimize‐step” loop wrapped in try/except/finally
+    # ─────────────────────────────────────────────────────────────────────
+    try:
+        for opt_step in range(kwargs['opt_iter']):
+            print(f"\n==============================")
+            print(f"Optimization step: {opt_step}")
+
+            if stag or opt_step == 0:
+                basis_update_idx_list.append(opt_step)
+
+                # ───── Forward FOM: compute FOM state qs ─────
+                qs_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                qs_adj_full = TI_adjoint(q0_adj, qs_full, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt,
+                                         scheme="RK4")
+                # Concatenate if common_basis, else keep separately
+                qs_norm = qs_full / np.linalg.norm(qs_full)
+                qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
+                if kwargs['common_basis']:
+                    snap_cat_p = np.concatenate([qs_norm, qs_adj_norm], axis=1)
+                    snap_cat_a = snap_cat_p.copy()
+                else:
+                    snap_cat_p = qs_full.copy()
+                    snap_cat_a = qs_adj_full.copy()
+
+                # Compute reduced bases
+                V_p, qsPOD_p = compute_red_basis(snap_cat_p, equation="primal", **kwargs)
+                Nm_p = V_p.shape[1]
+                err_p = np.linalg.norm(snap_cat_p - qsPOD_p) / np.linalg.norm(snap_cat_p)
+                print(f"Primal basis: Nm_p={Nm_p}, err={err_p:.3e}")
+
+                V_a, qsPOD_a = compute_red_basis(snap_cat_a, equation="adjoint", **kwargs)
+                Nm_a = V_a.shape[1]
+                err_a = np.linalg.norm(snap_cat_a - qsPOD_a) / np.linalg.norm(snap_cat_a)
+                print(f"Adjoint basis: Nm_a={Nm_a}, err={err_a:.3e}")
+
+                # Initial conditions for ROM
+                a_p = IC_primal_PODG_FOTR(V_p, q0)
+                a_a = IC_adjoint_PODG_FOTR(Nm_a)
+                trunc_modes_list_p.append(Nm_p)
+                trunc_modes_list_a.append(Nm_a)
+
+                # Build ROM system matrices
+                Ar_p, psir_p = mat_primal_PODG_FOTR(A_p, V_p, psi)
+                Ar_a, V_aTV_p, Tarr, psir_a = mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi, C)
+
+                # Select LU factors for adjoint mass‐matrix if needed
+                if kwargs['adjoint_scheme'] == "RK4":
+                    M_f = None
+                    A_f = Ar_a.copy()
+                    LU_M_f = None
+                elif kwargs['adjoint_scheme'] == "implicit_midpoint":
+                    M_f = np.eye(Nm_a) + (- kwargs['dt']) / 2 * Ar_a
+                    A_f = np.eye(Nm_a) - (- kwargs['dt']) / 2 * Ar_a
+                    LU_M_f = scipy.linalg.lu_factor(M_f)
+                elif kwargs['adjoint_scheme'] == "DIRK":
+                    M_f = np.eye(Nm_a) + (- kwargs['dt']) / 4 * Ar_a
+                    A_f = Ar_a.copy()
+                    LU_M_f = scipy.linalg.lu_factor(M_f)
+                elif kwargs['adjoint_scheme'] == "BDF2":
+                    M_f = 3.0 * np.eye(Nm_a) + 2.0 * (- kwargs['dt']) * Ar_a
+                    A_f = Ar_a.copy()
+                    LU_M_f = scipy.linalg.lu_factor(M_f)
+                else:
+                    kwargs['adjoint_scheme'] = "RK4"
+                    M_f = None
+                    A_f = Ar_a.copy()
+                    LU_M_f = None
+
+            # ───── Forward ROM: compute ROM state a_p → as_p ─────
+            as_p = TI_primal_PODG_FOTR(a_p, f, Ar_p, psir_p, wf.Nt, wf.dt)
+
+            # ───── Compute costs ─────
+            J_s, J_ns = Calc_Cost_PODG(V_p, as_p, qs_target, f, C, kwargs['dx'], kwargs['dt'],
+                                       kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+            J_ROM = J_s + J_ns
+
+            qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+            JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f, C, kwargs['dx'], kwargs['dt'],
+                                    kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+            J_FOM = JJ_s + JJ_ns
+
+            J_opt_list.append(J_ROM)
+            J_opt_FOM_list.append(J_FOM)
+
+            # Track best control
+            if J_FOM < best_details['J']:
+                best_details.update({'J': J_FOM, 'N_iter': opt_step, 'Nm_p': Nm_p, 'Nm_a': Nm_a})
+                best_control = f.copy()
+
+            # ───── Backward ROM (adjoint) ─────
+            as_adj = TI_adjoint_PODG_FOTR(a_a, as_p, M_f, A_f, LU_M_f, V_aTV_p, Tarr, kwargs['Nt'], kwargs['dt'],
+                                          kwargs['dx'], kwargs['adjoint_scheme'])
+
+            # ───── Compute the smooth gradient + the generalized gradient mapping ─────
+            dL_du_s = Calc_Grad_PODG_smooth(psir_a, f, as_adj, kwargs['lamda_l2'])
+            dL_du_g = Calc_Grad_mapping(f, dL_du_s, omega, kwargs['lamda_l1'])
+            dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
+
+            dL_du_norm_list.append(dL_du_norm)
+
+            # ───── Step‐size: BB vs. TWBT, including Armijo‐stagnation logic ─────
+            ratio = dL_du_norm / dL_du_norm_list[0]
+            if ratio < 5e-3:
+                print(f"BB acting.....")
+                omega_bb = get_BB_step(fOld, f, dL_du_Old, dL_du_s, opt_step, **kwargs)
+                if omega_bb < 0:
+                    print("WARNING: BB gave negative step size thus resorting to using TWBT")
+                    fNew, omega_twbt, stag = Update_Control_PODG_FOTR_RA_TWBT(f, a_p, qs_target, V_p, Ar_p, psir_p,
+                                                                              J_s, omega_twbt, dL_du_s, C, adjust, **kwargs)
+                    omega = omega_twbt
+                else:
+                    fNew = Update_Control_PODG_FOTR_RA_BB(f, dL_du_s, omega_bb, kwargs['lamda_l1'])
+                    stag = False
+                    omega = omega_bb
+            else:
+                print("TWBT acting…")
+                fNew, omega_twbt, stag = Update_Control_PODG_FOTR_RA_TWBT(f, a_p, qs_target, V_p, Ar_p, psir_p,
+                                                                          J_s, omega_twbt, dL_du_s, C, adjust, **kwargs)
+                omega = omega_twbt
+
+            t1 = perf_counter()
+            running_time.append(t1 - t0)
+            t0 = t1
+
+            # Saving previous controls for Barzilai Borwein step
+            fOld = f.copy()
+            f = fNew.copy()
+            dL_du_Old = dL_du_s.copy()
+
+            print(
+                f"J_ROM: {J_ROM:.3e}, J_FOM: {J_FOM:.3e}, ||dL_du|| = {dL_du_norm:.3e}, ||dL_du||_{opt_step} / "
+                f"||dL_du||_0 = {ratio:.3e}"
+            )
+
+            # Convergence criteria
+            if opt_step == kwargs['opt_iter'] - 1:
                 print("\n\n-------------------------------")
                 print(
-                    f"Armijo Stagnated !!!!!! due to the step length being too low thus refining the basis at itr: {opt_step + 1} with "
-                    f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                f = np.copy(fOld)
-            else:
-                stag_cntr = 0
-        else:
-            dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
-            if abs(dJ) == 0:
-                print(f"WARNING: dJ has turned close to 0...")
+                    f"WARNING... maximal number of steps reached, "
+                    f"J_ROM: {J_ROM:.3e}, J_FOM: {J_FOM:.3e}, ||dL_du|| = {dL_du_norm:.3e}, ||dL_du||_{opt_step} / "
+                    f"||dL_du||_0 = {ratio:.3e}"
+                )
+                f_last_valid = fNew.copy()
+                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
+                                        kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+                J_FOM = JJ_s + JJ_ns
+                if J_FOM < best_details['J']:
+                    best_details.update({'J': J_FOM})
+                    best_control = f_last_valid.copy()
                 break
-            if stag:
-                stag_cntr = stag_cntr + 1
-                if stag_cntr >= 2:
-                    print("\n-------------------------------")
+            elif ratio < kwargs['delta_conv']:
+                print("\n\n-------------------------------")
+                print(
+                    f"Optimization converged with, "
+                    f"J_ROM: {J_ROM:.3e}, J_FOM: {J_FOM:.3e}, ||dL_du|| = {dL_du_norm:.3e}, ||dL_du||_{opt_step} / "
+                    f"||dL_du||_0 = {ratio:.3e}"
+                )
+                f_last_valid = fNew.copy()
+                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
+                                        kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+                J_FOM = JJ_s + JJ_ns
+                if J_FOM < best_details['J']:
+                    best_details.update({'J': J_FOM})
+                    best_control = f_last_valid.copy()
+                break
+            else:
+                if opt_step == 0:
+                    if stag:
+                        print("\n\n-------------------------------")
+                        print(
+                            f"Armijo Stagnated !!!!!! due to the step length being too low thus refining the basis at itr: {opt_step + 1} with "
+                            f"J_ROM: {J_ROM:.3e}, J_FOM: {J_FOM:.3e}, ||dL_du|| = {dL_du_norm:.3e}, ||dL_du||_{opt_step} /"
+                            f"||dL_du||_0 = {ratio:.3e}")
+                        f = best_control.copy()
+                    else:
+                        stag_cntr = 0
+                else:
+                    dJ = (J_opt_list[-1] - J_opt_list[-2]) / J_opt_list[0]
+                    if abs(dJ) == 0:
+                        print(f"WARNING: dJ ~ 0 → stopping"
+                              f"J_ROM: {J_ROM:.3e}, J_FOM: {J_FOM:.3e}, ||dL_du|| = {dL_du_norm:.3e}, ||dL_du||_{opt_step} /"
+                              f"||dL_du||_0 = {ratio:.3e}"
+                              )
+                        f_last_valid = fOld.copy()
+                        break
+                    if stag:
+                        stag_cntr = stag_cntr + 1
+                        if stag_cntr >= 2:
+                            print("\n-------------------------------")
+                            print(
+                                f"TWBT Armijo Stagnated !!!!!! even after 2 consecutive basis updates thus exiting at itr: {opt_step} with "
+                                f"J_ROM: {J_ROM:.3e}, J_FOM: {J_FOM:.3e}, ||dL_du|| = {dL_du_norm:.3e}, ||dL_du||_{opt_step} /"
+                                f"||dL_du||_0 = {ratio:.3e}")
+                            f_last_valid = fOld.copy()
+                            break
+                        print("\n-------------------------------")
+                        print(
+                            f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the basis at itr: {opt_step + 1}")
+                        f = best_control.copy()
+                    else:
+                        stag_cntr = 0
+                    # Convergence criteria for BB
+                    if J_FOM > 1e6 or abs(omega_bb) < kwargs['omega_cutoff']:
+                        print("\n\n-------------------------------")
+                        print(
+                            f"Barzilai Borwein acceleration failed!!!!!! J_FOM increased to unrealistic values or the "
+                            f"omega went below cutoff, thus exiting"
+                            f"at itr: {opt_step} with "
+                            f"J_ROM: {J_ROM:.3e}, J_FOM: {J_FOM:.3e}, ||dL_du|| = {dL_du_norm:.3e}, ||dL_du||_{opt_step} /"
+                            f"||dL_du||_0 = {ratio:.3e}"
+                        )
+                        f_last_valid = fOld.copy()
+                        break
+
+            if opt_step % 100 == 0:
+                write_checkpoint(
+                    data_dir,
+                    opt_step=opt_step,
+                    f=f,
+                    best_control=best_control,
+                    best_details=best_details,
+                    J_opt_list=J_opt_list,
+                    J_opt_FOM_list=J_opt_FOM_list,
+                    dL_du_norm_list=dL_du_norm_list,
+                    running_time=running_time,
+                    trunc_modes_list_p=trunc_modes_list_p,
+                    trunc_modes_list_a=trunc_modes_list_a,
+                    basis_update_idx_list=basis_update_idx_list
+                )
+
+                # Call the helper to check for weak divergence
+                diverging, avg_prev, avg_last = check_weak_divergence(J_opt_FOM_list, window=100, margin=0.0)
+                if diverging:
                     print(
-                        f"TWBT Armijo Stagnated !!!!!! even after 2 consecutive basis updates thus exiting at itr: {opt_step} with "
-                        f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                    f = np.copy(fOld)
+                        "\n*** ROM is no longer accurate thus exiting !!!!: "
+                        f"avg(J_FOM[-100:]) = {avg_last:.3e}  > "
+                        f"avg(J_FOM[-200:-100]) = {avg_prev:.3e} → exiting ***"
+                    )
+
+                    # store last valid control and possibly update best_details
+                    f_last_valid = f.copy()
+                    qs_cand = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                    JJ_s_cand, JJ_ns_cand = Calc_Cost(
+                        qs_cand, qs_target, f_last_valid, C,
+                        kwargs['dx'], kwargs['dt'],
+                        kwargs['lamda_l1'], kwargs['lamda_l2'], adjust
+                    )
+                    J_FOM_cand = JJ_s_cand + JJ_ns_cand
+                    if J_FOM_cand < best_details['J']:
+                        best_details['J'] = J_FOM_cand
+                        best_control = f_last_valid.copy()
                     break
-                print("\n-------------------------------")
-                print(
-                    f"Armijo Stagnated !!!!!! due to the step length being too low thus updating the basis at itr: {opt_step + 1}")
-                f = np.copy(fOld)
-            else:
-                stag_cntr = 0
-            # Convergence criteria for BB
-            if JJ > 1e6 or abs(omega_bb) < kwargs['omega_cutoff']:
-                print("\n\n-------------------------------")
-                print(
-                    f"Barzilai Borwein acceleration failed!!!!!! J_FOM increased to unrealistic values or the omega went below cutoff, thus exiting "
-                    f"at itr: {opt_step} with "
-                    f"J_ROM: {J}, J_FOM: {JJ}, ||dL_du||_{opt_step} / ||dL_du||_0 = {dL_du_norm / dL_du_norm_list[0]}")
-                f = np.copy(fOld)
-                break
 
-# Compute the final state
-qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-qs_adj = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt,
-                    scheme="RK4", opt_poly_jacobian=None)
-f_opt = psi @ best_control
+    except Exception as e:
 
-# Compute the cost with the optimal control
-J = Calc_Cost(qs_opt_full, qs_target, best_control, kwargs['dx'], kwargs['dt'], kwargs['lamda'])
-print("\n")
-print(f"J with respect to the optimal control for FOM: {J}")
+        print("\n*** EXCEPTION: ***")
+        # Print the full traceback to stderr (includes file and line number)
+        traceback.print_exc()
 
-end = time.time()
-print("\n")
-print("Total time elapsed = %1.3f" % (end - start))
+        print("\nSaving data up to crash…")
+        to_save = {
+            "J_opt_list_at_crash": J_opt_list,
+            "J_opt_FOM_list_at_crash": J_opt_FOM_list,
+            "running_time_at_crash": running_time,
+            "dL_du_norm_list_at_crash": dL_du_norm_list,
+            "trunc_modes_list_p_at_crash": trunc_modes_list_p,
+            "trunc_modes_list_a_at_crash": trunc_modes_list_a,
+            "basis_update_idx_list_at_crash": basis_update_idx_list
+        }
+        if f_last_valid is not None:
+            to_save["last_valid_control_at_crash"] = f_last_valid
+        to_save["best_control_at_crash"] = best_control
+        to_save["best_details_at_crash"] = best_details
 
-# %%
-# Save the convergence lists
-np.save(impath + 'J_opt_list.npy', J_opt_list)
-np.save(impath + 'J_opt_FOM_list.npy', J_opt_FOM_list)
-np.save(impath + 'basis_update_idx_list.npy', basis_update_idx_list)
-np.save(impath + 'trunc_modes_list_p.npy', trunc_modes_list_p)
-np.save(impath + 'trunc_modes_list_a.npy', trunc_modes_list_a)
-np.save(impath + 'running_time.npy', running_time)
-np.save(impath + 'running_online_error_p.npy', running_online_error_p)
-np.save(impath + 'running_online_error_a.npy', running_online_error_a)
-np.save(impath + 'best_run_details.npy', best_details, allow_pickle=True)
+        save_all(data_dir, **to_save)
+        sys.exit(1)
 
-# Save the optimized solution
-# np.save(impath + 'qs_opt.npy', qs_opt_full)
-# np.save(impath + 'qs_adj_opt.npy', qs_adj)
-# np.save(impath + 'f_opt.npy', f_opt)
-# np.save(impath + 'f_opt_low.npy', best_control)
+    finally:
+        print("\nFinal save…")
+        to_save_final = {"J_opt_list_final": J_opt_list, "J_opt_FOM_list_final": J_opt_FOM_list,
+                         "running_time_final": running_time, "dL_du_norm_list_final": dL_du_norm_list,
+                         "trunc_modes_list_p_final": trunc_modes_list_p, "trunc_modes_list_a_final": trunc_modes_list_a,
+                         "basis_update_idx_list_final": basis_update_idx_list,
+                         "best_control_final": best_control, "best_details_final": best_details,
+                         "last_valid_control_final": f_last_valid}
 
-# %%
-# Plot the results
-pf = PlotFlow(wf.X, wf.t)
-pf.plot1D(qs_org, name="qs_org", immpath=immpath)
-pf.plot1D(qs_target, name="qs_target", immpath=immpath)
-pf.plot1D(qs_opt_full, name="qs_opt", immpath=immpath)
-pf.plot1D(qs_adj, name="qs_adj_opt", immpath=immpath)
-pf.plot1D(f_opt, name="f_opt", immpath=immpath)
-pf.plot1D_ROM_converg(J_opt_list, immpath=immpath)
+        save_all(data_dir, **to_save_final)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Compute best control based cost
+    qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+    qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    f_opt = psi @ best_control
+    J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
+                              kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+    J_final = J_s_f + J_ns_f
+
+    # Compute last valid control based cost
+    qs_opt_full__ = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+    qs_adj_opt__ = TI_adjoint(q0_adj, qs_opt_full__, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt,
+                              scheme="RK4")
+    f_opt__ = psi @ f_last_valid
+    J_s_f__, J_ns_f__ = Calc_Cost(qs_opt_full__, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
+                                  kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+    J_final__ = J_s_f__ + J_ns_f__
+
+    print(f"\nBest FOM cost: {J_final:.3e}")
+    print(f"\nLast valid FOM cost: {J_final__:.3e}")
+    print(f"\nTotal elapsed time: {time.time() - start_total:.3f}s")
+
+    # # Save convergence lists and final states:
+    # np.save(os.path.join(data_dir, "qs_opt_final.npy"), qs_opt_full)
+    # np.save(os.path.join(data_dir, "qs_adj_opt_final.npy"), qs_adj_opt)
+
+    # Plot results
+    pf = PlotFlow(wf.X, wf.t)
+    pf.plot1D(qs_opt_full, name="qs_opt", immpath=plot_dir)
+    pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=plot_dir)
+    pf.plot1D(f_opt, name="f_opt", immpath=plot_dir)
+    pf.plot1D_ROM_converg(J_opt_list, J_opt_FOM_list, name="J", immpath=plot_dir)

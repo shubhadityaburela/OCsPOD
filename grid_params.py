@@ -28,6 +28,9 @@ class advection:
 
         self.v_x_target = self.v_x
         self.v_x_target[tilt_from:] = v_x_t
+        self.tilt_from = tilt_from
+        self.CTC_end_index = None
+
 
         self.variance = variance  # Variance of the gaussian for the initial condition
         self.offset = offset  # Offset from where the wave starts
@@ -39,6 +42,8 @@ class advection:
         dt = self.dx * self.cfl / self.C
         self.t = dt * np.arange(self.Nt)
         self.dt = self.t[1] - self.t[0]
+
+        self.CTC_end_index = np.abs(self.X - self.v_x[0] * self.t[self.tilt_from]).argmin()
 
         print('dt = ', dt)
         print('Final time : ', self.t[-1])

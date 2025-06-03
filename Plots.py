@@ -81,9 +81,10 @@ class PlotFlow:
         fig.supylabel(r"time $t$")
         fig.supxlabel(r"space $x$")
 
-        fig.savefig(immpath + name, dpi=300, transparent=True)
+        out_file = os.path.join(immpath, f"{name}.png")
+        fig.savefig(out_file, dpi=300, transparent=True)
 
-    def plot1D_FOM_converg(self, J, immpath):
+    def plot1D_FOM_converg(self, J, name, immpath):
 
         os.makedirs(immpath, exist_ok=True)
 
@@ -95,19 +96,24 @@ class PlotFlow:
         ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
         ax1.tick_params(axis='x', colors="C0")
         ax1.tick_params(axis='y', colors="C0")
-        fig1.savefig(immpath + "J", dpi=300, transparent=True)
 
-    def plot1D_ROM_converg(self, J, immpath):
+        out_file = os.path.join(immpath, f"{name}.png")
+        fig1.savefig(out_file, dpi=300, transparent=True)
+
+    def plot1D_ROM_converg(self, J_ROM, J_FOM, name, immpath):
 
         os.makedirs(immpath, exist_ok=True)
 
         fig1 = plt.figure(figsize=(8, 8))
         ax1 = fig1.add_subplot(111, label="1")
-        ax1.semilogy(np.arange(len(J)), J, color="C0", label=r"$\mathcal{J}$")
+        ax1.semilogy(np.arange(len(J_ROM)), J_ROM, color="C0", label=r"$\mathcal{J}_\mathrm{ROM}$")
+        ax1.semilogy(np.arange(len(J_FOM)), J_FOM, color="C1", label=r"$\mathcal{J}_\mathrm{FOM}$")
         ax1.set_xlabel(r"$n_{\mathrm{iter}}$", color="C0")
         ax1.set_ylabel(r"$J$", color="C0")
         ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
         ax1.tick_params(axis='x', colors="C0")
         ax1.tick_params(axis='y', colors="C0")
         ax1.legend()
-        fig1.savefig(immpath + "J", dpi=300, transparent=True)
+
+        out_file = os.path.join(immpath, f"{name}.png")
+        fig1.savefig(out_file, dpi=300, transparent=True)

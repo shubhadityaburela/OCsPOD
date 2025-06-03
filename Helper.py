@@ -163,3 +163,43 @@ def L1norm_ROM(qq, dt):
     norm = np.sum(np.abs(q))
 
     return norm * dt
+
+
+@njit
+def L1norm_FOM(qq, dx, dt, adjust):
+    # Directly modify the input array if allowed
+    q = qq.copy()  # Copy only if you need to keep qq unchanged
+
+    # Scale the first and last column
+    q[:, 0] /= 2.0
+    q[:, -1] /= 2.0
+
+    # Calculate the L1 norm
+    norm = np.sum(np.abs(q))
+
+    return norm * dx * dt / adjust
+
+
+def check_weak_divergence(J_opt_FOM_list, window=100, margin=0.0):
+    """
+    Check for “weaker divergence” by comparing the mean of the last `window` entries
+    against the mean of the preceding `window` entries in J_opt_FOM_list.
+
+    Returns (is_diverging, avg_prev, avg_last), where:
+      - is_diverging is True if avg_last > avg_prev * (1 + margin)
+      - avg_prev is the mean of J_opt_FOM_list[-2*window : -window]
+      - avg_last is the mean of J_opt_FOM_list[-window :]
+      - If len(J_opt_FOM_list) < 2*window, returns (False, None, None).
+    """
+    n = len(J_opt_FOM_list)
+    if n < 2 * window:
+        return False, None, None
+
+    prev_window = J_opt_FOM_list[-2*window:-window]
+    last_window = J_opt_FOM_list[-window:]
+
+    avg_prev = sum(prev_window) / window
+    avg_last = sum(last_window) / window
+
+    is_diverging = (avg_last > avg_prev * (1 + margin))
+    return is_diverging, avg_prev, avg_last

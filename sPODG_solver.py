@@ -7,7 +7,7 @@ from Helper_sPODG import make_V_W_delta, LHS_offline_primal_FOTR, RHS_offline_pr
     Matrices_online_primal_FOTR, solve_lin_system, findIntervalAndGiveInterpolationWeight_1D, make_V_W_U_delta, \
     LHS_offline_primal_FRTO, RHS_offline_primal_FRTO, Control_offline_primal_FRTO, Matrices_online_primal_FRTO, \
     Matrices_online_adjoint_FRTO_expl, Matrices_online_adjoint_FRTO_impl, Target_offline_adjoint_FOTR, \
-    Matrices_online_adjoint_FOTR_expl, solve_lin_system_Tikh_reg, make_V_W_delta_CubSpl
+    Matrices_online_adjoint_FOTR_expl, solve_lin_system_Tikh_reg, make_V_W_delta_CubSpl, Target_online_adjoint_FRTO
 from Helper_sPODG_FRTO import E11, E12, E21, E22
 from TI_schemes import rk4_sPODG_prim, rk4_sPODG_adj, implicit_midpoint_sPODG_adj, DIRK_sPODG_adj, bdf2_sPODG_adj, \
     rk4_sPODG_adj_
@@ -76,7 +76,7 @@ def IC_adjoint_sPODG_FOTR(Nm_a, z):
     return a
 
 
-def mat_adjoint_sPODG_FOTR(V_delta_adjoint, W_delta_adjoint, A_a, V_delta_primal, samples, modes_a, modes_p):
+def mat_adjoint_sPODG_FOTR(V_delta_adjoint, W_delta_adjoint, A_a, V_delta_primal, samples, modes_a, modes_p, CTC):
 
     # Construct LHS matrix
     LHS_matrix = LHS_offline_primal_FOTR(V_delta_adjoint, W_delta_adjoint, modes_a)
@@ -86,15 +86,15 @@ def mat_adjoint_sPODG_FOTR(V_delta_adjoint, W_delta_adjoint, A_a, V_delta_primal
 
     # Construct the control matrix
     Tar_matrix = Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint,
-                                             samples, modes_a, modes_p)
+                                             samples, modes_a, modes_p, CTC)
 
     return LHS_matrix, RHS_matrix, Tar_matrix
 
 
 @njit
-def RHS_adjoint_sPODG_FOTR_expl(as_adj, as_, qs_target, lhs, rhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx):
+def RHS_adjoint_sPODG_FOTR_expl(as_adj, as_, qs_target, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx):
     # Prepare the online adjoint matrices
-    M, A = Matrices_online_adjoint_FOTR_expl(lhs, rhs, tar, Vda, Wda, qs_target, as_adj, as_,
+    M, A = Matrices_online_adjoint_FOTR_expl(lhs, rhs, tar, CTC, Vda, Wda, qs_target, as_adj, as_,
                                              modes_a, modes_p, delta_s, dx)
 
     # Solve the linear system of equations
@@ -104,7 +104,7 @@ def RHS_adjoint_sPODG_FOTR_expl(as_adj, as_, qs_target, lhs, rhs, tar, Vda, Wda,
         return solve_lin_system(M, A)
 
 
-def TI_adjoint_sPODG_FOTR(lhs, rhs, tar, Vda, Wda, a_a, as_, qs_target, modes_a, modes_p, delta_s, dx, Nt, dt, scheme):
+def TI_adjoint_sPODG_FOTR(lhs, rhs, tar, CTC, Vda, Wda, a_a, as_, qs_target, modes_a, modes_p, delta_s, dx, Nt, dt, scheme):
     # Time loop
     as_adj = np.zeros((modes_a + 1, Nt), order="F")
     as_ = np.asfortranarray(as_)
@@ -114,8 +114,8 @@ def TI_adjoint_sPODG_FOTR(lhs, rhs, tar, Vda, Wda, a_a, as_, qs_target, modes_a,
         for n in range(1, Nt):
             as_adj[:, -(n + 1)] = rk4_sPODG_adj_(RHS_adjoint_sPODG_FOTR_expl, as_adj[:, -n],
                                                  as_[:, -n], as_[:, -(n + 1)],
-                                                 qs_target[:, -n], qs_target[:, -(n + 1)], - dt, lhs, rhs, tar, Vda,
-                                                 Wda, modes_a, modes_p, delta_s, dx)
+                                                 qs_target[:, -n], qs_target[:, -(n + 1)], - dt, lhs, rhs, tar, CTC,
+                                                 Vda, Wda, modes_a, modes_p, delta_s, dx)
     else:
         print('This is a nonlinear system of equation. It could be very hard and unnecessary to implement implicit'
               'methods for solving such an equation. Thus please choose RK4 as the preferred method......')
@@ -138,7 +138,7 @@ def IC_primal_sPODG_FRTO(q0, V):
     return a
 
 
-def mat_primal_sPODG_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, A_p, psi, samples, modes):
+def mat_primal_sPODG_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, CTC, A_p, psi, samples, modes):
 
     # Construct LHS matrix
     LHS_matrix = LHS_offline_primal_FRTO(V_delta_primal, W_delta_primal, modes)
@@ -149,7 +149,10 @@ def mat_primal_sPODG_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, A_p, p
     # Construct the control matrix
     C_matrix = Control_offline_primal_FRTO(V_delta_primal, W_delta_primal, U_delta_primal, psi, samples, modes)
 
-    return LHS_matrix, RHS_matrix, C_matrix
+    # Construct the online adjoint target matrix
+    Tar_matrix = Target_online_adjoint_FRTO(V_delta_primal, W_delta_primal, CTC, samples, modes)
+
+    return LHS_matrix, RHS_matrix, C_matrix, Tar_matrix
 
 
 @njit
@@ -196,9 +199,9 @@ def IC_adjoint_sPODG_FRTO(modes):
 
 
 @njit
-def RHS_adjoint_sPODG_FRTO_expl(a, f, a_, qs_target, a_dot, M1, M2, N, A1, A2, C, Vdp, Wdp, modes, delta_s, dx):
+def RHS_adjoint_sPODG_FRTO_expl(a, f, a_, qs_target, a_dot, M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp, modes, delta_s, dx):
     # Prepare the online primal matrices
-    M, A = Matrices_online_adjoint_FRTO_expl(M1, M2, N, A1, A2, C, Vdp, Wdp, f, a, a_, qs_target, a_dot,
+    M, A = Matrices_online_adjoint_FRTO_expl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp, f, a, a_, qs_target, a_dot,
                                              modes, delta_s, dx)
     # Solve the linear system of equations
     X = solve_lin_system(M, -A)
@@ -206,10 +209,10 @@ def RHS_adjoint_sPODG_FRTO_expl(a, f, a_, qs_target, a_dot, M1, M2, N, A1, A2, C
     return X
 
 
-def RHS_adjoint_sPODG_FRTO_impl(a, f, a_, qs_target, a_dot, dt, M1, M2, N, A1, A2, C, Vdp, Wdp, modes, delta_s, dx,
+def RHS_adjoint_sPODG_FRTO_impl(a, f, a_, qs_target, a_dot, dt, M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp, modes, delta_s, dx,
                                 scheme):
     # Solve the linear system of equations
-    M, A, T = Matrices_online_adjoint_FRTO_impl(M1, M2, N, A1, A2, C, Vdp, Wdp, f, a, a_, qs_target, a_dot,
+    M, A, T = Matrices_online_adjoint_FRTO_impl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp, f, a, a_, qs_target, a_dot,
                                                 modes, delta_s, dx)
     if scheme == "implicit_midpoint":
         M_f = M + dt / 2 * A
@@ -225,7 +228,7 @@ def RHS_adjoint_sPODG_FRTO_impl(a, f, a_, qs_target, a_dot, dt, M1, M2, N, A1, A
         return solve_lin_system(M_f, A_f)
 
 
-def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, Wdp, modes, delta_s, Nt, dt, dx,
+def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, tara, CTC, Vdp, Wdp, modes, delta_s, Nt, dt, dx,
                           scheme):
     as_adj = np.zeros((at_adj.shape[0], Nt), order="F")
     as_adj[:, -1] = at_adj
@@ -288,7 +291,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, 
                                                 a_[:, -n], a_[:, -(n + 1)], qs_target[:, -n],
                                                 qs_target[:, -(n + 1)],
                                                 a_dot[..., -n], - dt,
-                                                M1, M2, N, A1, A2, C,
+                                                M1, M2, N, A1, A2, C, tara, CTC,
                                                 Vdp, Wdp, modes, delta_s, dx)
 
     if scheme == "implicit_midpoint":
@@ -298,7 +301,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, 
                                                               a_[:, -n], a_[:, -(n + 1)], qs_target[:, -n],
                                                               qs_target[:, -(n + 1)],
                                                               a_dot[..., -n], - dt,
-                                                              M1, M2, N, A1, A2, C,
+                                                              M1, M2, N, A1, A2, C, tara, CTC,
                                                               Vdp, Wdp, modes, delta_s, dx, scheme)
     elif scheme == "DIRK":
         for n in range(1, Nt):
@@ -307,7 +310,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, 
                                                  a_[:, -n], a_[:, -(n + 1)], qs_target[:, -n],
                                                  qs_target[:, -(n + 1)],
                                                  a_dot[..., -n], - dt,
-                                                 M1, M2, N, A1, A2, C,
+                                                 M1, M2, N, A1, A2, C, tara, CTC,
                                                  Vdp, Wdp, modes, delta_s, dx, scheme)
     elif scheme == "BDF2":
         # last 2 steps (x_{n-1}, x_{n-2}) with RK4 (Effectively 2nd order)
@@ -317,7 +320,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, 
                                                 a_[:, -n], a_[:, -(n + 1)], qs_target[:, -n],
                                                 qs_target[:, -(n + 1)],
                                                 a_dot[..., -n], - dt,
-                                                M1, M2, N, A1, A2, C,
+                                                M1, M2, N, A1, A2, C, tara, CTC,
                                                 Vdp, Wdp, modes, delta_s, dx)
         for n in range(2, Nt):
             as_adj[:, -(n + 1)] = bdf2_sPODG_adj(RHS_adjoint_sPODG_FRTO_impl, as_adj,
@@ -325,7 +328,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, Vdp, 
                                                  a_[:, -(n + 1)],
                                                  qs_target[:, -(n + 1)],
                                                  a_dot[..., -(n + 1)], - dt,
-                                                 M1, M2, N, A1, A2, C,
+                                                 M1, M2, N, A1, A2, C, tara, CTC,
                                                  Vdp, Wdp, modes, delta_s, dx, scheme, n)
 
     return as_adj

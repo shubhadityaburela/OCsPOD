@@ -31,25 +31,42 @@ def IC_adjoint(X):
     return q_adj
 
 
-def RHS_adjoint_expl(q_adj, q, q_tar, A, dx):
-    return - A @ q_adj - dx * (q - q_tar)
+def RHS_adjoint_expl(q_adj, q, q_tar, A, CTC, dx):
+    out = -A @ q_adj
+    out[CTC] -= dx * (q - q_tar)[CTC]
+    return out
 
 
-def RHS_adjoint_impl(q_adj, q, q_tar, M_f, A_f, LU_M_f, Nx, dx, dt, scheme):
+def RHS_adjoint_impl(q_adj, q, q_tar, M_f, A_f, LU_M_f, CTC, Nx, dx, dt, scheme):
+    # Precompute the difference once
+    diff = q - q_tar  # shape = (Nx,)
+
+    # Depending on scheme, build the right‐hand side vector `rhs_vec` before solving
     if scheme == "implicit_midpoint":
-        return LU_M_f.solve(A_f @ q_adj - dt * dx * (q - q_tar))
+        vec = A_f @ q_adj
+        vec[CTC] -= dt * dx * diff[CTC]
+        return LU_M_f.solve(vec)
     elif scheme == "DIRK":
-        return LU_M_f.solve(- A_f @ q_adj - dx * (q - q_tar))
+        vec = - (A_f @ q_adj)
+        vec[CTC] -= dx * diff[CTC]
+        return LU_M_f.solve(vec)
     elif scheme == "BDF2":
-        return LU_M_f.solve(4.0 * q_adj[1] - 1.0 * q_adj[0] - 2.0 * dt * dx * (q - q_tar))
+        vec = 4.0 * q_adj[1] - 1.0 * q_adj[0]
+        vec[CTC] -= 2.0 * dt * dx * diff[CTC]
+        return LU_M_f.solve(vec)
     elif scheme == "BDF3":
-        return LU_M_f.solve(18.0 * q_adj[2] - 9.0 * q_adj[1] + 2.0 * q_adj[0] - 6.0 * dt * dx * (q - q_tar))
+        vec = 18.0 * q_adj[2] - 9.0 * q_adj[1] + 2.0 * q_adj[0]
+        vec[CTC] -= 6.0 * dt * dx * diff[CTC]
+        return LU_M_f.solve(vec)
     elif scheme == "BDF4":
-        return LU_M_f.solve(
-            48.0 * q_adj[3] - 36.0 * q_adj[2] + 16.0 * q_adj[1] - 3.0 * q_adj[0] - 12.0 * dt * dx * (q - q_tar))
+        vec = 48.0 * q_adj[3] - 36.0 * q_adj[2] + 16.0 * q_adj[1] - 3.0 * q_adj[0]
+        vec[CTC] -= 12.0 * dt * dx * diff[CTC]
+        return LU_M_f.solve(vec)
+    else:
+        raise ValueError(f"Unknown scheme: {scheme}")
 
 
-def TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, Nxi, dx, Nt, dt, scheme, opt_poly_jacobian=None):
+def TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, CTC, Nxi, dx, Nt, dt, scheme, opt_poly_jacobian=None):
     # Time loop
     qs_adj = np.zeros((Nxi, Nt))
     qs_adj[:, -1] = q0_adj
@@ -57,44 +74,44 @@ def TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, Nxi, dx, Nt, dt, scheme,
     if scheme == "RK4":
         for n in range(1, Nt):
             qs_adj[:, -(n + 1)] = rk4_FOM_adj(RHS_adjoint_expl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
-                                              qs_target[:, -n], qs_target[:, -(n + 1)], - dt, A_f, dx)
+                                              qs_target[:, -n], qs_target[:, -(n + 1)], - dt, A_f, CTC, dx)
     elif scheme == "implicit_midpoint":
         for n in range(1, Nt):
             qs_adj[:, -(n + 1)] = implicit_midpoint_FOM_adj(RHS_adjoint_impl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
                                                             qs_target[:, -n], qs_target[:, -(n + 1)], - dt, M_f, A_f,
-                                                            LU_M_f, Nxi, dx,
+                                                            LU_M_f, CTC, Nxi, dx,
                                                             scheme)
     elif scheme == "DIRK":
         for n in range(1, Nt):
             qs_adj[:, -(n + 1)] = DIRK_FOM_adj(RHS_adjoint_impl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
                                                qs_target[:, -n], qs_target[:, -(n + 1)], - dt, M_f, A_f,
-                                               LU_M_f, Nxi, dx,
+                                               LU_M_f, CTC, Nxi, dx,
                                                scheme)
     elif scheme == "BDF2":
         # last 2 steps (x_{n-1}, x_{n-2}) with RK4 (Effectively 2nd order)
         for n in range(1, 2):
             qs_adj[:, -(n + 1)] = rk4_FOM_adj(RHS_adjoint_expl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
-                                              qs_target[:, -n], qs_target[:, -(n + 1)], - dt, A_f, dx)
+                                              qs_target[:, -n], qs_target[:, -(n + 1)], - dt, A_f, CTC, dx)
         for n in range(2, Nt):
             qs_adj[:, -(n + 1)] = bdf2_FOM_adj(RHS_adjoint_impl, qs_adj, qs[:, -(n + 1)],
                                                qs_target[:, -(n + 1)], - dt, M_f, A_f,
-                                               LU_M_f, Nxi, dx, scheme, n)
+                                               LU_M_f, CTC, Nxi, dx, scheme, n)
     elif scheme == "BDF3":
         # last 4 steps (x_{n-1}, x_{n-2}, x_{n-3}, x_{n-4}) with polynomial interpolation (4th order)
-        qs_adj[:, -4:] = poly_interp_FOM_adj(RHS_adjoint_expl, q0_adj, qs, qs_target, A_f, opt_poly_jacobian, Nxi,
+        qs_adj[:, -4:] = poly_interp_FOM_adj(RHS_adjoint_expl, q0_adj, qs, qs_target, A_f, opt_poly_jacobian, CTC, Nxi,
                                              dx, -dt)
         for n in range(4, Nt):
             qs_adj[:, -(n + 1)] = bdf3_FOM_adj(RHS_adjoint_impl, qs_adj, qs[:, -(n + 1)],
                                                qs_target[:, -(n + 1)], - dt, M_f, A_f,
-                                               LU_M_f, Nxi, dx, scheme, n)
+                                               LU_M_f, CTC, Nxi, dx, scheme, n)
     elif scheme == "BDF4":
         # last 4 steps (x_{n-1}, x_{n-2}, x_{n-3}, x_{n-4}) with polynomial interpolation (4th order)
-        qs_adj[:, -4:] = poly_interp_FOM_adj(RHS_adjoint_expl, q0_adj, qs, qs_target, A_f, opt_poly_jacobian, Nxi,
+        qs_adj[:, -4:] = poly_interp_FOM_adj(RHS_adjoint_expl, q0_adj, qs, qs_target, A_f, opt_poly_jacobian, CTC, Nxi,
                                              dx, -dt)
         for n in range(4, Nt):
             qs_adj[:, -(n + 1)] = bdf4_FOM_adj(RHS_adjoint_impl, qs_adj, qs[:, -(n + 1)],
                                                qs_target[:, -(n + 1)], - dt, M_f, A_f,
-                                               LU_M_f, Nxi, dx, scheme, n)
+                                               LU_M_f, CTC, Nxi, dx, scheme, n)
 
     return qs_adj
 

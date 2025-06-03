@@ -38,13 +38,13 @@ def E22(M2, D, WTdashB, a_dot, u):
 
 
 @njit
-def C1(M1, VT, as_p, qs_tar, dx):        # We make use of the fact that VTV in the presence of constant dx is just M1
-    return dx * (M1 @ as_p - VT @ qs_tar)
+def C1(VTV, as_p, VTqs_tar, dx): # We make use of the fact that VTV in the presence of constant dx and identity CTC is just M1
+    return dx * (VTV @ as_p - VTqs_tar)
 
 
 @njit
-def C2(N, WT, as_p, qs_tar, dx):   # We make use of the fact that WTV in the presence of constant dx is just NT
-    return dx * as_p[None, :] @ (N.T @ as_p - WT @ qs_tar)
+def C2(WTV, as_p, WTqs_tar, dx):   # We make use of the fact that WTV in the presence of constant dx and identity CTC is just NT
+    return dx * as_p[None, :] @ (WTV @ as_p - WTqs_tar)
 
 
 ################################################################################

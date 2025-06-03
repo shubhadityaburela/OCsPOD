@@ -45,14 +45,15 @@ def rk4_FOM_adj(RHS: callable,
                 b2: np.ndarray,
                 dt,
                 A,
+                CTC,
                 dx) -> np.ndarray:
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, a1, b1, A, dx)
-    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, A, dx)
-    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, A, dx)
-    k4 = RHS(q0 + dt * k3, a2, b2, A, dx)
+    k1 = RHS(q0, a1, b1, A, CTC, dx)
+    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, A, CTC, dx)
+    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, A, CTC, dx)
+    k4 = RHS(q0 + dt * k3, a2, b2, A, CTC, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -69,13 +70,14 @@ def implicit_midpoint_FOM_adj(RHS: callable,
                               M,
                               A,
                               LU_M,
+                              CTC,
                               Nx,
                               dx,
                               scheme):
     q_mid = (a1 + a2) / 2
     qt_mid = (b1 + b2) / 2
 
-    q1 = RHS(q0, q_mid, qt_mid, M, A, LU_M, Nx, dx, dt, scheme)
+    q1 = RHS(q0, q_mid, qt_mid, M, A, LU_M, CTC, Nx, dx, dt, scheme)
 
     return q1
 
@@ -90,6 +92,7 @@ def DIRK_FOM_adj(RHS: callable,
                  M,
                  A,
                  LU_M,
+                 CTC,
                  Nx,
                  dx,
                  scheme):
@@ -98,8 +101,8 @@ def DIRK_FOM_adj(RHS: callable,
     b_threefourth = 0.75 * b1 + 0.25 * b2
     b_onefourth = 0.25 * b1 + 0.75 * b2
 
-    k1 = RHS(q0, a_threefourth, b_threefourth, M, A, LU_M, Nx, dx, dt, scheme)
-    k2 = RHS(q0 + dt / 2 * k1, a_onefourth, b_onefourth, M, A, LU_M, Nx, dx, dt, scheme)
+    k1 = RHS(q0, a_threefourth, b_threefourth, M, A, LU_M, CTC, Nx, dx, dt, scheme)
+    k2 = RHS(q0 + dt / 2 * k1, a_onefourth, b_onefourth, M, A, LU_M, CTC, Nx, dx, dt, scheme)
 
     q1 = q0 + dt / 2 * (k1 + k2)
 
@@ -112,6 +115,7 @@ def F_start_FOM(RHS: callable,
                 q: np.ndarray,
                 qt: np.ndarray,
                 A,
+                CTC,
                 Nx,
                 dx,
                 dt):
@@ -131,10 +135,10 @@ def F_start_FOM(RHS: callable,
     pprime_t4 = 3.0 * p0 - 16.0 * p1 + 36.0 * p2 - 48.0 * p3 + 25.0 * p4
 
     return np.hstack((
-        pprime_t1 - 12 * dt * RHS(p1, q[:, -2], qt[:, -2], A, dx),
-        pprime_t2 - 12 * dt * RHS(p2, q[:, -3], qt[:, -3], A, dx),
-        pprime_t3 - 12 * dt * RHS(p3, q[:, -4], qt[:, -4], A, dx),
-        pprime_t4 - 12 * dt * RHS(p4, q[:, -5], qt[:, -5], A, dx)
+        pprime_t1 - 12 * dt * RHS(p1, q[:, -2], qt[:, -2], A, CTC, dx),
+        pprime_t2 - 12 * dt * RHS(p2, q[:, -3], qt[:, -3], A, CTC, dx),
+        pprime_t3 - 12 * dt * RHS(p3, q[:, -4], qt[:, -4], A, CTC, dx),
+        pprime_t4 - 12 * dt * RHS(p4, q[:, -5], qt[:, -5], A, CTC, dx)
     ))
 
 
@@ -184,11 +188,12 @@ def poly_interp_FOM_adj(RHS: callable,
                         qt: np.ndarray,
                         A,
                         Df,
+                        CTC,
                         Nx,
                         dx,
                         dt):
     p1234 = np.hstack((p0, p0, p0, p0))
-    f = F_start_FOM(RHS, p1234, p0, q, qt, A, Nx, dx, dt)
+    f = F_start_FOM(RHS, p1234, p0, q, qt, A, CTC, Nx, dx, dt)
 
     p_update = p1234 - scipy.sparse.linalg.spsolve(Df, f)
 
@@ -207,13 +212,14 @@ def bdf2_FOM_adj(RHS: callable,
                  M,
                  A,
                  LU_M,
+                 CTC,
                  Nx,
                  dx,
                  scheme,
                  n):
     p_past = np.stack([p[:, -(n - 1)], p[:, -n]])
 
-    q1 = RHS(p_past, q, qt, M, A, LU_M, Nx, dx, dt, scheme)
+    q1 = RHS(p_past, q, qt, M, A, LU_M, CTC, Nx, dx, dt, scheme)
 
     return q1
 
@@ -226,13 +232,14 @@ def bdf3_FOM_adj(RHS: callable,
                  M,
                  A,
                  LU_M,
+                 CTC,
                  Nx,
                  dx,
                  scheme,
                  n):
     p_past = np.stack([p[:, -(n - 2)], p[:, -(n - 1)], p[:, -n]])
 
-    q1 = RHS(p_past, q, qt, M, A, LU_M, Nx, dx, dt, scheme)
+    q1 = RHS(p_past, q, qt, M, A, LU_M, CTC, Nx, dx, dt, scheme)
 
     return q1
 
@@ -245,12 +252,13 @@ def bdf4_FOM_adj(RHS: callable,
                  M,
                  A,
                  LU_M,
+                 CTC,
                  Nx,
                  dx,
                  scheme,
                  n):
     p_past = np.stack([p[:, -(n - 3)], p[:, -(n - 2)], p[:, -(n - 1)], p[:, -n]])
-    q1 = RHS(p_past, q, qt, M, A, LU_M, Nx, dx, dt, scheme)
+    q1 = RHS(p_past, q, qt, M, A, LU_M, CTC, Nx, dx, dt, scheme)
 
     return q1
 
@@ -498,19 +506,19 @@ def rk4_sPODG_adj(RHS: callable,
                   b2: np.ndarray,
                   q_dot: np.ndarray,
                   dt,
-                  M1, M2, N, A1, A2, C,
+                  M1, M2, N, A1, A2, C, tara, CTC,
                   Vdp, Wdp, modes, delta_s, dx):
     u_mid = (u1 + u2) / 2
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, u1, a1, b1, q_dot[4], M1, M2, N, A1, A2, C,
+    k1 = RHS(q0, u1, a1, b1, q_dot[4], M1, M2, N, A1, A2, C, tara, CTC,
              Vdp, Wdp, modes, delta_s, dx)
-    k2 = RHS(q0 + dt / 2 * k1, u_mid, a_mid, b_mid, q_dot[2], M1, M2, N, A1, A2, C,
+    k2 = RHS(q0 + dt / 2 * k1, u_mid, a_mid, b_mid, q_dot[2], M1, M2, N, A1, A2, C, tara, CTC,
              Vdp, Wdp, modes, delta_s, dx)
-    k3 = RHS(q0 + dt / 2 * k2, u_mid, a_mid, b_mid, q_dot[2], M1, M2, N, A1, A2, C,
+    k3 = RHS(q0 + dt / 2 * k2, u_mid, a_mid, b_mid, q_dot[2], M1, M2, N, A1, A2, C, tara, CTC,
              Vdp, Wdp, modes, delta_s, dx)
-    k4 = RHS(q0 + dt * k3, u2, a2, b2, q_dot[0], M1, M2, N, A1, A2, C,
+    k4 = RHS(q0 + dt * k3, u2, a2, b2, q_dot[0], M1, M2, N, A1, A2, C, tara, CTC,
              Vdp, Wdp, modes, delta_s, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
@@ -528,13 +536,13 @@ def implicit_midpoint_sPODG_adj(RHS: callable,
                                 b2: np.ndarray,
                                 q_dot: np.ndarray,
                                 dt,
-                                M1, M2, N, A1, A2, C,
+                                M1, M2, N, A1, A2, C, tara, CTC,
                                 Vdp, Wdp, modes, delta_s, dx, scheme):
     u_mid = (u1 + u2) / 2
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    q1 = RHS(q0, u_mid, a_mid, b_mid, q_dot[2], dt, M1, M2, N, A1, A2, C,
+    q1 = RHS(q0, u_mid, a_mid, b_mid, q_dot[2], dt, M1, M2, N, A1, A2, C, tara, CTC,
              Vdp, Wdp, modes, delta_s, dx, scheme)
 
     return q1
@@ -550,7 +558,7 @@ def DIRK_sPODG_adj(RHS: callable,
                    b2: np.ndarray,
                    q_dot: np.ndarray,
                    dt,
-                   M1, M2, N, A1, A2, C,
+                   M1, M2, N, A1, A2, C, tara, CTC,
                    Vdp, Wdp, modes, delta_s, dx, scheme):
     u_threefourth = 0.75 * u1 + 0.25 * u2
     u_onefourth = 0.25 * u1 + 0.75 * u2
@@ -559,9 +567,9 @@ def DIRK_sPODG_adj(RHS: callable,
     b_threefourth = 0.75 * b1 + 0.25 * b2
     b_onefourth = 0.25 * b1 + 0.75 * b2
 
-    k1 = RHS(q0, u_threefourth, a_threefourth, b_threefourth, q_dot[3], dt, M1, M2, N, A1, A2, C,
+    k1 = RHS(q0, u_threefourth, a_threefourth, b_threefourth, q_dot[3], dt, M1, M2, N, A1, A2, C, tara, CTC,
              Vdp, Wdp, modes, delta_s, dx, scheme)
-    k2 = RHS(q0 + dt / 2 * k1, u_onefourth, a_onefourth, b_onefourth, q_dot[1], dt, M1, M2, N, A1, A2, C,
+    k2 = RHS(q0 + dt / 2 * k1, u_onefourth, a_onefourth, b_onefourth, q_dot[1], dt, M1, M2, N, A1, A2, C, tara, CTC,
              Vdp, Wdp, modes, delta_s, dx, scheme)
 
     q1 = q0 + dt / 2 * (k1 + k2)
@@ -576,12 +584,12 @@ def bdf2_sPODG_adj(RHS: callable,
                    qt: np.ndarray,
                    q_dot: np.ndarray,
                    dt,
-                   M1, M2, N, A1, A2, C,
+                   M1, M2, N, A1, A2, C, tara, CTC,
                    Vdp, Wdp, modes, delta_s,
                    dx, scheme, n):
     p_past = np.stack([p[:, -(n - 1)], p[:, -n]])
 
-    q1 = RHS(p_past, u, q, qt, q_dot[4], dt, M1, M2, N, A1, A2, C,
+    q1 = RHS(p_past, u, q, qt, q_dot[4], dt, M1, M2, N, A1, A2, C, tara, CTC,
              Vdp, Wdp, modes, delta_s, dx, scheme)
 
     return q1
@@ -595,17 +603,17 @@ def rk4_sPODG_adj_(RHS: callable,
                    b1: np.ndarray,
                    b2: np.ndarray,
                    dt,
-                   lhs, rhs, tar, Vda, Wda,
+                   lhs, rhs, tar, CTC, Vda, Wda,
                    modes_a, modes_p,
                    delta_s, dx):
 
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, a1, b1, lhs, rhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx)
-    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, lhs, rhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx)
-    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, lhs, rhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx)
-    k4 = RHS(q0 + dt * k3, a2, b2, lhs, rhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx)
+    k1 = RHS(q0, a1, b1, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
+    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
+    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
+    k4 = RHS(q0 + dt * k3, a2, b2, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 

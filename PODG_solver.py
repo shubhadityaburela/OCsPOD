@@ -139,10 +139,10 @@ def mat_adjoint_PODG_FOTR_mix(A_a, V_a, Vd_p, qs_target, psi, samples, modes_a, 
     return (V_aT @ A_a) @ V_a, V_aTVd_p, V_aT @ qs_target, V_aT @ psi
 
 
-def mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi):
+def mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi, CTC):
     V_aT = V_a.T
 
-    return (V_aT @ A_a) @ V_a, V_aT @ V_p, V_aT @ qs_target, V_aT @ psi
+    return (V_aT @ A_a) @ V_a, V_aT[:, CTC] @ V_p[CTC, :], V_aT[:, CTC] @ qs_target[CTC, :], V_aT @ psi
 
 
 #############
@@ -240,5 +240,5 @@ def TI_adjoint_PODG_FRTO(at_adj, as_, M_f, A_f, LU_M_f, Tarr_a, Nx, dx, Nt, dt, 
     return as_adj
 
 
-def mat_adjoint_PODG_FRTO(A_a, V, qs_target):
-    return (V.T @ A_a) @ V, V.T @ qs_target
+def mat_adjoint_PODG_FRTO(A_a, V, qs_target, CTC):
+    return (V.T @ A_a) @ V, V[CTC, :].T @ qs_target[CTC, :]

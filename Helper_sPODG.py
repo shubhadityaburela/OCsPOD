@@ -7,6 +7,7 @@ import opt_einsum as oe
 
 from Cubic_spline import construct_spline_coeffs_multiple, shifted_U, \
     first_derivative_shifted_U, second_derivative_shifted_U
+from Helper import L2norm_FOM
 from Helper_sPODG_FRTO import *
 
 sys.path.append('./sPOD/lib/')
@@ -155,16 +156,19 @@ def get_approx_state_sPODG(V, fNew, as_, intIds, weights, Nx, Nt):
     return q
 
 
-def compute_residual(D, A_p, Vd_p, psi, as_res, as_dot_res, f, intIds, weights, t_monitor, Nx, Nt):
-    residual = np.zeros((Nx, len(t_monitor)))
-    for itr, i in enumerate(t_monitor):
-        V_idx = intIds[i]
-        V_weights = weights[i]
-        V_d = V_weights * Vd_p[V_idx] + (1 - V_weights) * Vd_p[V_idx + 1]
-        residual[:, itr] = ((D @ V_d) * as_dot_res[-1, i - 1]) @ as_res[:, i] + \
-                           V_d @ as_dot_res[:-1, i - 1] - A_p @ V_d @ as_res[:, i] - psi @ f[:, i]
+def compute_residual(A_p, Vd_p, Wd_p, psi, as_res, as_dot_res, f, intIds, weights, Nx, Nt, dx, dt):
+    relative_residual_num = np.zeros((Nx, Nt))
+    relative_residual_den = np.zeros((Nx, Nt))
+    for itr in range(1, Nt):
+        idx = intIds[itr]
+        weight = weights[itr]
+        V_d = weight * Vd_p[idx] + (1 - weight) * Vd_p[idx + 1]
+        W_d = weight * Wd_p[idx] + (1 - weight) * Wd_p[idx + 1]
+        relative_residual_num[:, itr] = (W_d * as_dot_res[0, -1, itr]) @ as_res[:-1, itr] + \
+                           V_d @ as_dot_res[0, :-1, itr] - A_p @ V_d @ as_res[:-1, itr] - psi @ f[:, itr]
+        relative_residual_den[:, itr] = A_p @ V_d @ as_res[:-1, itr] + psi @ f[:, itr]
 
-    return residual
+    return L2norm_FOM(relative_residual_num, dx, dt) / L2norm_FOM(relative_residual_den, dx, dt)
 
 
 ######################################### FOTR sPOD functions #########################################
@@ -210,15 +214,14 @@ def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
 
 
 @njit(parallel=True)
-def Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint, num_samples, modes_a, modes_p):
+def Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint, num_samples, modes_a, modes_p, CTC):
     Tar_mat = np.zeros((2, num_samples, modes_a, modes_p), dtype=V_delta_adjoint.dtype)
 
     for i in prange(num_samples):
-        Tar_mat[0, i, ...] = V_delta_adjoint[i].T @ V_delta_primal[i]
-        Tar_mat[1, i, ...] = W_delta_adjoint[i].T @ V_delta_primal[i]
+        Tar_mat[0, i, ...] = V_delta_adjoint[i][CTC, :].T @ V_delta_primal[i][CTC, :]
+        Tar_mat[1, i, ...] = W_delta_adjoint[i][CTC, :].T @ V_delta_primal[i][CTC, :]
 
     return np.ascontiguousarray(Tar_mat)
-
 
 
 @njit(parallel=True)
@@ -257,7 +260,7 @@ def Matrices_online_primal_FOTR(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
 
 
 @njit
-def Matrices_online_adjoint_FOTR_expl(LHS_matrix, RHS_matrix, Tar_matrix, Vda, Wda,
+def Matrices_online_adjoint_FOTR_expl(LHS_matrix, RHS_matrix, Tar_matrix, CTC, Vda, Wda,
                                       qs_target, as_adj, as_, modes_a, modes_p, ds, dx):
     M = np.empty((modes_a + 1, modes_a + 1), dtype=LHS_matrix[0].dtype)
     A = np.empty(modes_a + 1)
@@ -278,14 +281,15 @@ def Matrices_online_adjoint_FOTR_expl(LHS_matrix, RHS_matrix, Tar_matrix, Vda, W
     M[modes_a:, modes_a:] = Da.T @ (LHS_matrix[2] @ Da)
 
     A[:modes_a] = - RHS_matrix[0] @ as_adj_ - dx * (np.add(weight * Tar_matrix[0, intervalIdx],
-                                                         (1 - weight) * Tar_matrix[0, intervalIdx + 1]) @ as_p -
-                                                  np.add(weight * Vda[intervalIdx],
-                                                         (1 - weight) * Vda[intervalIdx + 1]).T @ qs_target)
+                                                           (1 - weight) * Tar_matrix[0, intervalIdx + 1]) @ as_p -
+                                                    np.add(weight * Vda[intervalIdx],
+                                                           (1 - weight) * Vda[intervalIdx + 1])[CTC, :].T @ qs_target[CTC])
 
     A[modes_a:] = - Da.T @ (RHS_matrix[1] @ as_adj_ + dx * (np.add(weight * Tar_matrix[1, intervalIdx],
-                                                                 (1 - weight) * Tar_matrix[1, intervalIdx + 1]) @ as_p -
-                                                          np.add(weight * Wda[intervalIdx],
-                                                                 (1 - weight) * Wda[intervalIdx + 1]).T @ qs_target))
+                                                                   (1 - weight) * Tar_matrix[
+                                                                       1, intervalIdx + 1]) @ as_p -
+                                                            np.add(weight * Wda[intervalIdx],
+                                                                   (1 - weight) * Wda[intervalIdx + 1])[CTC, :].T @ qs_target[CTC]))
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A)
 
@@ -361,6 +365,17 @@ def Control_offline_primal_FRTO(V_delta, W_delta, U_delta, psi, samples, modes):
     return np.ascontiguousarray(C_mat)
 
 
+@njit(parallel=True)
+def Target_online_adjoint_FRTO(V_delta, W_delta, CTC, samples, modes):
+    Tar_mat = np.zeros((2, samples, modes, modes), dtype=V_delta.dtype)
+
+    for i in prange(samples):
+        Tar_mat[0, i, :, :] = V_delta[i][CTC, :].T @ V_delta[i][CTC, :]
+        Tar_mat[1, i, :, :] = W_delta[i][CTC, :].T @ V_delta[i][CTC, :]
+
+    return np.ascontiguousarray(Tar_mat)
+
+
 @njit
 def Matrices_online_primal_FRTO(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
     M = np.empty((modes + 1, modes + 1), dtype=LHS_matrix[0].dtype)
@@ -387,7 +402,7 @@ def Matrices_online_primal_FRTO(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
 
 
 @njit
-def Matrices_online_adjoint_FRTO_expl(M1, M2, N, A1, A2, C, Vdp, Wdp, f, as_adj, as_, qs_tar, a_dot, modes, ds, dx):
+def Matrices_online_adjoint_FRTO_expl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp, f, as_adj, as_, qs_tar, a_dot, modes, ds, dx):
     M = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
     A = np.empty(modes + 1)
 
@@ -417,16 +432,21 @@ def Matrices_online_adjoint_FRTO_expl(M1, M2, N, A1, A2, C, Vdp, Wdp, f, as_adj,
     VT = np.add(weight * Vdp[intId], (1 - weight) * Vdp[intId + 1]).T
     WT = np.add(weight * Wdp[intId], (1 - weight) * Wdp[intId + 1]).T
 
+    VTV = np.add(weight * tara[0, intId], (1 - weight) * tara[0, intId + 1]).T
+    WTV = np.add(weight * tara[1, intId], (1 - weight) * tara[1, intId + 1]).T
+    VTqs_tar = VT[:, CTC] @ qs_tar[CTC]
+    WTqs_tar = WT[:, CTC] @ qs_tar[CTC]
+
     # Assemble the RHS
     A[:modes] = E11(N, A1, z_dot, modes).T @ as_a + E12(M2, N, A2, Da, WTB, as_dot, z_dot, as_p, f, modes).T @ z_a \
-                + C1(M1, VT, as_p, qs_tar, dx)
-    A[modes:] = E21(N, WTB, as_dot, f).T @ as_a + E22(M2, Da, WTdashB, as_dot, f).T @ z_a + C2(N, WT, as_p, qs_tar, dx)
+                + C1(VTV, as_p, VTqs_tar, dx)
+    A[modes:] = E21(N, WTB, as_dot, f).T @ as_a + E22(M2, Da, WTdashB, as_dot, f).T @ z_a + C2(WTV, as_p, WTqs_tar, dx)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A)
 
 
 @njit
-def Matrices_online_adjoint_FRTO_impl(M1, M2, N, A1, A2, C, Vdp, Wdp, f, as_adj, as_, qs_tar, a_dot, modes, ds,
+def Matrices_online_adjoint_FRTO_impl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp, f, as_adj, as_, qs_tar, a_dot, modes, ds,
                                       dx):
     M = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
     A = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
@@ -450,6 +470,11 @@ def Matrices_online_adjoint_FRTO_impl(M1, M2, N, A1, A2, C, Vdp, Wdp, f, as_adj,
     VT = np.add(weight * Vdp[intId], (1 - weight) * Vdp[intId + 1]).T
     WT = np.add(weight * Wdp[intId], (1 - weight) * Wdp[intId + 1]).T
 
+    VTV = np.add(weight * tara[0, intId], (1 - weight) * tara[0, intId + 1]).T
+    WTV = np.add(weight * tara[1, intId], (1 - weight) * tara[1, intId + 1]).T
+    VTqs_tar = VT[:, CTC] @ qs_tar[CTC]
+    WTqs_tar = WT[:, CTC] @ qs_tar[CTC]
+
     # Assemble the mass matrix M
     M[:modes, :modes] = M1.T
     M[:modes, modes:] = N @ Da
@@ -463,8 +488,8 @@ def Matrices_online_adjoint_FRTO_impl(M1, M2, N, A1, A2, C, Vdp, Wdp, f, as_adj,
     A[modes:, modes:] = E22(M2, Da, WTdashB, as_dot, f).T
 
     # Assemble the target vector
-    T[:modes] = C1(M1, VT, as_p, qs_tar, dx)
-    T[modes:] = C2(N, WT, as_p, qs_tar, dx)
+    T[:modes] = C1(VTV, as_p, VTqs_tar, dx)
+    T[modes:] = C2(WTV, as_p, WTqs_tar, dx)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A), np.ascontiguousarray(T)
 
