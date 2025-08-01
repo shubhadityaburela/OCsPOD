@@ -1,8 +1,9 @@
 from numba import njit, prange
 import numpy as np
 
+from Helper import compute_state
 
-@njit
+
 def Calc_Grad_smooth(mask, f, qs_adj, lamda2):
     dL_du = lamda2 * f + mask.T @ qs_adj
 
@@ -15,14 +16,10 @@ def Calc_Grad_PODG_smooth(psir_, f, as_adj, lamda2):
     return dL_du
 
 
-@njit(parallel=True)
-def Calc_Grad_sPODG_smooth(mask, f, V, as_adj, intIds, weights, lamda2):
-    qs_adj = np.zeros((mask.shape[0], f.shape[1]))
 
-    for i in prange(f.shape[1]):
-        V_idx = intIds[i]
-        V_delta = weights[i] * V[V_idx] + (1 - weights[i]) * V[V_idx + 1]
-        qs_adj[:, i] = V_delta @ as_adj[:, i]
+def Calc_Grad_sPODG_smooth(mask, f, V, as_adj, intIds, weights, lamda2):
+
+    qs_adj = compute_state(V, V[0].shape[0], f.shape[1], as_adj, intIds, weights)
 
     dL_du = lamda2 * f + mask.T @ qs_adj
 

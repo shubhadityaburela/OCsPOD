@@ -1,9 +1,10 @@
 import numpy as np
 from matplotlib import pyplot as plt
-from numba import njit
+from numba import njit, prange
 from scipy.signal import savgol_filter
 from sklearn.utils.extmath import randomized_svd
 from scipy import optimize
+from scipy.linalg import svd, eig, pinv
 
 
 @njit
@@ -82,8 +83,8 @@ def L2inner_prod(qq1, qq2, dt):
 
 
 # Other Helper functions
-def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, gaussian_mask_sigma=1,
-                                     start_controlling_from=0):
+def ControlSelectionMatrix(wf, n_c, Gaussian=False, trim_first_n=0, gaussian_mask_sigma=1,
+                           start_controlling_from=0):
     if trim_first_n >= n_c:
         print("Number of controls should always be more than the number which you want to trim out. "
               "Set it accordingly. Exiting !!!!!!!")
@@ -95,6 +96,25 @@ def ControlSelectionMatrix_advection(wf, n_c, Gaussian=False, trim_first_n=0, ga
                              sigma=gaussian_mask_sigma)  # Could also divide the middle quantity by 2 for similar non-overlapping gaussians
     else:
         control_index = np.array_split(np.arange(start_controlling_from, wf.Nxi), n_c)
+        for i in range(n_c - trim_first_n):
+            psi[control_index[trim_first_n + i], i] = 1.0
+
+    return np.ascontiguousarray(psi)
+
+
+def ControlSelectionMatrix_kdvb(wf, n_c, Gaussian=False, trim_first_n=0, gaussian_mask_sigma=1,
+                                start_controlling_from=0):
+    if trim_first_n >= n_c:
+        print("Number of controls should always be more than the number which you want to trim out. "
+              "Set it accordingly. Exiting !!!!!!!")
+        exit()
+    psi = np.zeros((wf.Nx, n_c - trim_first_n), order="F")
+    if Gaussian:
+        for i in range(n_c - trim_first_n):
+            psi[:, i] = func(wf.X - wf.Lx / n_c - (trim_first_n + i) * wf.Lx / n_c,
+                             sigma=gaussian_mask_sigma)  # Could also divide the middle quantity by 2 for similar non-overlapping gaussians
+    else:
+        control_index = np.array_split(np.arange(start_controlling_from, wf.Nx), n_c)
         for i in range(n_c - trim_first_n):
             psi[control_index[trim_first_n + i], i] = 1.0
 
@@ -143,6 +163,21 @@ def compute_red_basis(qs, equation="primal", **kwargs):
             return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
         else:
             U, S, VT = randomized_svd(qs, n_components=kwargs['Nm_a'], random_state=42)
+            return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
+
+
+def compute_deim_basis(qs, equation="primal", **kwargs):
+    if kwargs['threshold']:
+        U, S, VT = np.linalg.svd(qs, full_matrices=False)
+        indices = np.where(S / S[0] > kwargs['deim_tol'])[0]
+        return np.ascontiguousarray(U[:, :indices[-1] + 1]), np.ascontiguousarray(U[:, :indices[-1] + 1].dot(
+            np.diag(S[:indices[-1] + 1]).dot(VT[:indices[-1] + 1, :])))
+    else:
+        if equation == "primal":
+            U, S, VT = randomized_svd(qs, n_components=kwargs['Nm_deim_p'], random_state=42)
+            return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
+        else:
+            U, S, VT = randomized_svd(qs, n_components=kwargs['Nm_deim_a'], random_state=42)
             return np.ascontiguousarray(U), np.ascontiguousarray(U @ np.diag(S) @ VT)
 
 
@@ -195,7 +230,7 @@ def check_weak_divergence(J_opt_FOM_list, window=100, margin=0.0):
     if n < 2 * window:
         return False, None, None
 
-    prev_window = J_opt_FOM_list[-2*window:-window]
+    prev_window = J_opt_FOM_list[-2 * window:-window]
     last_window = J_opt_FOM_list[-window:]
 
     avg_prev = sum(prev_window) / window
@@ -203,3 +238,15 @@ def check_weak_divergence(J_opt_FOM_list, window=100, margin=0.0):
 
     is_diverging = (avg_last > avg_prev * (1 + margin))
     return is_diverging, avg_prev, avg_last
+
+
+@njit(parallel=True)
+def compute_state(V, Nx, Nt, as_adj, intIds, weights):
+    qs = np.zeros((Nx, Nt))
+
+    for i in prange(Nt):
+        V_idx = intIds[i]
+        V_delta = weights[i] * V[V_idx] + (1 - weights[i]) * V[V_idx + 1]
+        qs[:, i] = V_delta @ as_adj[:, i]
+
+    return qs

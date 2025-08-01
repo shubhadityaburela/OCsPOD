@@ -13,7 +13,7 @@ from TI_schemes import DF_start_FOM
 from Update import Update_Control_sPODG_FOTR_FA_TWBT
 from grid_params import advection
 from Plots import PlotFlow
-from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift
+from Helper import ControlSelectionMatrix, compute_red_basis, calc_shift
 from Helper_sPODG import subsample, get_T, central_FDMatrix, make_V_W_delta
 from Costs import Calc_Cost_sPODG, Calc_Cost
 import os
@@ -28,7 +28,7 @@ import sys
 
 from sPODG_solver import IC_primal_sPODG_FOTR, mat_primal_sPODG_FOTR, TI_primal_sPODG_FOTR
 
-sys.path.append('./sPOD/lib/')
+sys.path.append('../sPOD/lib/')
 from sPOD_algo import give_interpolation_error
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
@@ -104,7 +104,7 @@ wf.Grid()
 n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
+psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
 # trim_first_n should basically make the psi matrix and the number of controls to be user defined.
 n_c = psi.shape[1]
 f = np.zeros((n_c, wf.Nt), order="F")  # Initial guess for the control

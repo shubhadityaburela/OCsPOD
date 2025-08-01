@@ -1,11 +1,17 @@
+from typing import NamedTuple
+
 import numpy as np
 import scipy
 from numba import njit
 from scipy import sparse
+from scipy.linalg import qr
+from scipy.sparse import csc_matrix
 
 from Helper_sPODG import Target_offline_adjoint_FOTR_mix, findIntervalAndGiveInterpolationWeight_1D
 from TI_schemes import rk4_PODG_prim, rk4_PODG_adj, implicit_midpoint_PODG_adj, DIRK_PODG_adj, bdf2_PODG_adj, \
-    rk4_PODG_adj_, implicit_midpoint_PODG_adj_, DIRK_PODG_adj_, bdf2_PODG_adj_
+    rk4_PODG_adj_, implicit_midpoint_PODG_adj_, DIRK_PODG_adj_, bdf2_PODG_adj_, rk4_PODG_prim_kdvb, rk4_PODG_adj_kdvb, \
+    implicit_midpoint_PODG_FRTO_primal_kdvb, implicit_midpoint_PODG_FRTO_adjoint_kdvb, \
+    implicit_midpoint_PODG_FOTR_primal_kdvb, implicit_midpoint_PODG_FOTR_adjoint_kdvb, rk4_PODG_adj_kdvb_
 
 
 #############
@@ -242,3 +248,509 @@ def TI_adjoint_PODG_FRTO(at_adj, as_, M_f, A_f, LU_M_f, Tarr_a, Nx, dx, Nt, dt, 
 
 def mat_adjoint_PODG_FRTO(A_a, V, qs_target, CTC):
     return (V.T @ A_a) @ V, V[CTC, :].T @ qs_target[CTC, :]
+
+
+# -------------------------------------------------------------------------------------------------- #
+# -------------------------------------------------------------------------------------------------- #
+# -------------------------------------------------------------------------------------------------- #
+# -------------------------------------------------------------------------------------------------- #
+
+#############
+## FRTO POD
+#############
+
+class PrimalMatrices_kdvb_PODG(NamedTuple):
+    A_r: np.ndarray
+    D_2r: np.ndarray
+    D_3r: np.ndarray
+    B_r: np.ndarray
+    prefactor: np.ndarray
+    ST_V: np.ndarray
+    ST_D1V: np.ndarray
+
+
+class AdjointMatrices_kdvb_PODG_FRTO(NamedTuple):
+    VT_CTC_qT: np.ndarray
+
+
+class AdjointMatrices_kdvb_PODG_FOTR(NamedTuple):
+    A_r: np.ndarray
+    D_2r: np.ndarray
+    D_3r: np.ndarray
+    prefactor: np.ndarray
+    ST_Va: np.ndarray
+    ST_D1Va: np.ndarray
+    ST_Vp: np.ndarray
+    ST_D1Vp: np.ndarray
+    VaT_Vp: np.ndarray
+    VaT_CTC_qT: np.ndarray
+    VaT_B: np.ndarray
+
+
+@njit
+def IC_primal_kdvb_PODG_FRTO(V, q0):
+    return V.T @ q0
+
+
+def mat_primal_kdvb_PODG_FRTO(V, V_deim, **params_primal) -> PrimalMatrices_kdvb_PODG:
+    A_p = params_primal['A']
+    D1, D2, D3 = params_primal['D1'], params_primal['D2'], params_primal['D3']
+    B = params_primal['B']
+    Nm_deim = V_deim.shape[1]
+
+    # Linear factors
+    A_r = (V.T @ A_p) @ V
+    D_2r = (V.T @ D2) @ V
+    D_3r = (V.T @ D3) @ V
+    B_r = V.T @ B
+
+    # Nonlinear DEIM prep
+    _, _, piv = qr(V_deim.T, pivoting=True)
+    S = np.sort(piv[:Nm_deim])
+    STVdeim_inv = np.linalg.inv(V_deim[S])
+    VT_Vdeim_ST_Vdeim_inv = (V.T @ V_deim) @ STVdeim_inv
+
+    ST_V = V[S]
+    ST_D1V = (D1 @ V)[S]
+
+    return PrimalMatrices_kdvb_PODG(
+        A_r=A_r,
+        D_2r=D_2r,
+        D_3r=D_3r,
+        B_r=B_r,
+        prefactor=VT_Vdeim_ST_Vdeim_inv,
+        ST_V=ST_V,
+        ST_D1V=ST_D1V
+    )
+
+
+@njit
+def RHS_primal_kdvb_PODG_FRTO_expl(a, f, A_r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, omega, gamma, nu):
+    a = np.ascontiguousarray(a)
+    f = np.ascontiguousarray(f)
+    A_r = np.ascontiguousarray(A_r)
+    D_2r = np.ascontiguousarray(D_2r)
+    D_3r = np.ascontiguousarray(D_3r)
+    prefactor = np.ascontiguousarray(prefactor)
+    ST_V = np.ascontiguousarray(ST_V)
+    ST_D1V = np.ascontiguousarray(ST_D1V)
+    B_r = np.ascontiguousarray(B_r)
+
+    return (A_r - gamma * D_3r + nu * D_2r) @ a - 6.0 * omega * prefactor @ ((ST_V @ a) * (ST_D1V @ a)) + B_r @ f
+
+
+@njit
+def TI_primal_kdvb_PODG_FRTO_expl(a, f0, A_r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, omega, gamma, nu, Nt, dt):
+    # Time loop
+    as_p = np.zeros((a.shape[0], Nt))
+    as_p[:, 0] = a
+
+    for n in range(1, Nt):
+        as_p[:, n] = rk4_PODG_prim_kdvb(RHS_primal_kdvb_PODG_FRTO_expl, as_p[:, n - 1], f0[:, n - 1], f0[:, n], dt,
+                                        A_r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, omega, gamma, nu)
+
+    print('RK4 reduced primal finished')
+
+    return as_p
+
+
+# Nonlinear Jacobian for KdV steepening term
+def J_nl_PODG_FRTO_kdv(a: np.ndarray,
+                       prefactor: np.ndarray,
+                       ST_D1V: np.ndarray,
+                       ST_V: np.ndarray,
+                       omega: float,
+                       dt: float) -> np.ndarray:
+    return 3.0 * omega * dt * (prefactor @ (ST_D1V.dot(a)[:, None] * ST_V + ST_V.dot(a)[:, None] * ST_D1V))
+
+
+# Right-hand side for KdV-Burgers-advection
+def RHS_primal_kdvb_PODG_FRTO_impl(a: np.ndarray,
+                                   u: np.ndarray,
+                                   A_r: np.ndarray,
+                                   D_2r: np.ndarray,
+                                   D_3r: np.ndarray,
+                                   prefactor: np.ndarray,
+                                   ST_V: np.ndarray,
+                                   ST_D1V: np.ndarray,
+                                   B_r: np.ndarray,
+                                   omega: float,
+                                   gamma: float,
+                                   nu: float) -> np.ndarray:
+    return (A_r - gamma * D_3r + nu * D_2r) @ a \
+        - 6.0 * omega * prefactor @ ((ST_V @ a) * (ST_D1V @ a)) \
+        + B_r @ u
+
+
+def TI_primal_kdvb_PODG_FRTO_impl(a, f, primal_mat, J_l, Nx, Nt, dt, **params_primal):
+    # Time loop
+    as_p = np.zeros((a.shape[0], Nt))
+    as_p[:, 0] = a
+    for n in range(1, Nt):
+        as_p[:, n] = implicit_midpoint_PODG_FRTO_primal_kdvb(RHS_primal_kdvb_PODG_FRTO_impl,
+                                                             J_nl_PODG_FRTO_kdv,
+                                                             as_p[:, n - 1],
+                                                             f[:, n - 1],
+                                                             f[:, n],
+                                                             J_l,
+                                                             primal_mat,
+                                                             dt,
+                                                             **params_primal)
+    print('Implicit midpoint reduced primal finished')
+    return as_p
+
+
+@njit
+def IC_adjoint_kdvb_PODG_FRTO(modes):
+    return np.zeros(modes)
+
+
+def mat_adjoint_kdvb_PODG_FRTO(V, CTC, qs_target) -> AdjointMatrices_kdvb_PODG_FRTO:
+    return AdjointMatrices_kdvb_PODG_FRTO(
+        VT_CTC_qT=V[CTC, :].T @ qs_target[CTC, :]
+    )
+
+
+@njit
+def RHS_adjoint_kdvb_PODG_FRTO_expl(a_adj, a, VT_CTC_qT, A_r, D_2r, D_3r, prefactor, ST_V, ST_D1V, omega, gamma,
+                                    nu, dx):
+    a_adj = np.ascontiguousarray(a_adj)
+    a = np.ascontiguousarray(a)
+    A_r = np.ascontiguousarray(A_r)
+    D_2r = np.ascontiguousarray(D_2r)
+    D_3r = np.ascontiguousarray(D_3r)
+    prefactor = np.ascontiguousarray(prefactor)
+    ST_V = np.ascontiguousarray(ST_V)
+    ST_D1V = np.ascontiguousarray(ST_D1V)
+    VT_CTC_qT = np.ascontiguousarray(VT_CTC_qT)
+
+    out = - (A_r - gamma * D_3r + nu * D_2r).T @ a_adj + \
+          6.0 * omega * (prefactor @ (ST_D1V.dot(a)[:, None] * ST_V + ST_V.dot(a)[:, None] * ST_D1V)).T @ a_adj - \
+          dx * (a - VT_CTC_qT)
+
+    return out
+
+
+@njit
+def TI_adjoint_kdvb_PODG_FRTO_expl(a_adj, as_p, VT_CTC_qT, A_r, D_2r, D_3r, prefactor, ST_V, ST_D1V, omega, gamma,
+                                   nu,
+                                   dx, Nt, dt):
+    as_adj = np.zeros((a_adj.shape[0], Nt))
+    as_adj[:, -1] = a_adj
+
+    for n in range(1, Nt):
+        as_adj[:, -(n + 1)] = rk4_PODG_adj_kdvb(RHS_adjoint_kdvb_PODG_FRTO_expl, as_adj[:, -n], as_p[:, -n],
+                                                as_p[:, -(n + 1)],
+                                                VT_CTC_qT[:, -n], VT_CTC_qT[:, -(n + 1)], - dt, A_r, D_2r, D_3r,
+                                                prefactor,
+                                                ST_V, ST_D1V, omega, gamma, nu, dx)
+
+    print('RK4 reduced adjoint finished')
+    return as_adj
+
+
+def RHS_adjoint_kdvb_PODG_FRTO_impl(a_adj: np.ndarray,
+                                    a: np.ndarray,
+                                    VT_CTC_qT: np.ndarray,
+                                    dx: float,
+                                    A_r: np.ndarray,
+                                    D_2r: np.ndarray,
+                                    D_3r: np.ndarray,
+                                    prefactor: np.ndarray,
+                                    ST_V: np.ndarray,
+                                    ST_D1V: np.ndarray,
+                                    omega: float,
+                                    gamma: float,
+                                    nu: float) -> np.ndarray:
+    out = - (A_r - gamma * D_3r + nu * D_2r).T @ a_adj + \
+          6.0 * omega * (prefactor @ (ST_D1V.dot(a)[:, None] * ST_V + ST_V.dot(a)[:, None] * ST_D1V)).T @ a_adj - \
+          dx * (a - VT_CTC_qT)
+
+    return out
+
+
+def TI_adjoint_kdvb_PODG_FRTO_impl(a_adj, as_p, adjoint_mat, primal_mat, J_l, Nx, Nt, dx, dt, **params_primal):
+    # Time loop
+    as_adj = np.zeros((a_adj.shape[0], Nt))
+    as_adj[:, -1] = a_adj
+    VT_CTC_qT = adjoint_mat.VT_CTC_qT
+
+    for n in range(1, Nt):
+        as_adj[:, -(n + 1)] = implicit_midpoint_PODG_FRTO_adjoint_kdvb(RHS_adjoint_kdvb_PODG_FRTO_impl,
+                                                                       J_nl_PODG_FRTO_kdv,
+                                                                       as_adj[:, -n],
+                                                                       as_p[:, -n],
+                                                                       as_p[:, -(n + 1)],
+                                                                       VT_CTC_qT[:, -n],
+                                                                       VT_CTC_qT[:, -(n + 1)],
+                                                                       J_l,
+                                                                       dx,
+                                                                       dt,
+                                                                       primal_mat,
+                                                                       **params_primal)
+    print('Implicit midpoint reduced adjoint finished')
+
+    return as_adj
+
+
+#############
+## FOTR POD
+#############
+
+
+@njit
+def IC_primal_kdvb_PODG_FOTR(V_p, q0):
+    return V_p.T @ q0
+
+
+def mat_primal_kdvb_PODG_FOTR(V_p, V_deim_p, **params_primal) -> PrimalMatrices_kdvb_PODG:
+    A_p = params_primal['A']
+    D1, D2, D3 = params_primal['D1'], params_primal['D2'], params_primal['D3']
+    B = params_primal['B']
+    Nm_deim = V_deim_p.shape[1]
+
+    # Linear factors
+    A_r = (V_p.T @ A_p) @ V_p
+    D_2r = (V_p.T @ D2) @ V_p
+    D_3r = (V_p.T @ D3) @ V_p
+    B_r = V_p.T @ B
+
+    # Nonlinear DEIM prep
+    _, _, piv = qr(V_deim_p.T, pivoting=True)
+    S = np.sort(piv[:Nm_deim])
+    STVdeim_inv = np.linalg.inv(V_deim_p[S])
+    VT_Vdeim_ST_Vdeim_inv = (V_p.T @ V_deim_p) @ STVdeim_inv
+
+    ST_V = V_p[S]
+    ST_D1V = (D1 @ V_p)[S]
+
+    return PrimalMatrices_kdvb_PODG(
+        A_r=A_r,
+        D_2r=D_2r,
+        D_3r=D_3r,
+        B_r=B_r,
+        prefactor=VT_Vdeim_ST_Vdeim_inv,
+        ST_V=ST_V,
+        ST_D1V=ST_D1V
+    )
+
+
+@njit
+def RHS_primal_kdvb_PODG_FOTR_expl(a, f, A_r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, omega, gamma, nu):
+    a = np.ascontiguousarray(a)
+    f = np.ascontiguousarray(f)
+    A_r = np.ascontiguousarray(A_r)
+    D_2r = np.ascontiguousarray(D_2r)
+    D_3r = np.ascontiguousarray(D_3r)
+    prefactor = np.ascontiguousarray(prefactor)
+    ST_V = np.ascontiguousarray(ST_V)
+    ST_D1V = np.ascontiguousarray(ST_D1V)
+    B_r = np.ascontiguousarray(B_r)
+
+    return (A_r - gamma * D_3r + nu * D_2r) @ a - 6.0 * omega * prefactor @ ((ST_V @ a) * (ST_D1V @ a)) + B_r @ f
+
+
+@njit
+def TI_primal_kdvb_PODG_FOTR_expl(a, f0, A_r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, omega, gamma, nu, Nt, dt):
+    # Time loop
+    as_p = np.zeros((a.shape[0], Nt))
+    as_p[:, 0] = a
+
+    for n in range(1, Nt):
+        as_p[:, n] = rk4_PODG_prim_kdvb(RHS_primal_kdvb_PODG_FOTR_expl, as_p[:, n - 1], f0[:, n - 1], f0[:, n], dt,
+                                        A_r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, omega, gamma, nu)
+
+    print('RK4 reduced primal finished')
+
+    return as_p
+
+
+# Nonlinear Jacobian for KdV steepening term
+def J_nl_PODG_FOTR_kdv(a: np.ndarray,
+                       prefactor: np.ndarray,
+                       ST_D1V: np.ndarray,
+                       ST_V: np.ndarray,
+                       omega: float,
+                       dt: float) -> np.ndarray:
+    return 3.0 * omega * dt * (prefactor @ (ST_D1V.dot(a)[:, None] * ST_V + ST_V.dot(a)[:, None] * ST_D1V))
+
+
+# Right-hand side for KdV-Burgers-advection
+def RHS_primal_kdvb_PODG_FOTR_impl(a: np.ndarray,
+                                   u: np.ndarray,
+                                   A_r: np.ndarray,
+                                   D_2r: np.ndarray,
+                                   D_3r: np.ndarray,
+                                   prefactor: np.ndarray,
+                                   ST_V: np.ndarray,
+                                   ST_D1V: np.ndarray,
+                                   B_r: np.ndarray,
+                                   omega: float,
+                                   gamma: float,
+                                   nu: float) -> np.ndarray:
+    return (A_r - gamma * D_3r + nu * D_2r) @ a \
+        - 6.0 * omega * prefactor @ ((ST_V @ a) * (ST_D1V @ a)) \
+        + B_r @ u
+
+
+def TI_primal_kdvb_PODG_FOTR_impl(a, f, primal_mat, J_l, Nx, Nt, dt, **params_primal):
+    # Time loop
+    as_p = np.zeros((a.shape[0], Nt))
+    as_p[:, 0] = a
+    for n in range(1, Nt):
+        as_p[:, n] = implicit_midpoint_PODG_FOTR_primal_kdvb(RHS_primal_kdvb_PODG_FOTR_impl,
+                                                             J_nl_PODG_FOTR_kdv,
+                                                             as_p[:, n - 1],
+                                                             f[:, n - 1],
+                                                             f[:, n],
+                                                             J_l,
+                                                             primal_mat,
+                                                             dt,
+                                                             **params_primal)
+    print('Implicit midpoint reduced primal finished')
+    return as_p
+
+
+@njit
+def IC_adjoint_kdvb_PODG_FOTR(modes):
+    return np.zeros(modes)
+
+
+def mat_adjoint_kdvb_PODG_FOTR(V_a, V_deim_a, V_p, B, qs_target, **params_adjoint) -> AdjointMatrices_kdvb_PODG_FOTR:
+    A_p = params_adjoint['A']
+    D1, D2, D3 = params_adjoint['D1'], params_adjoint['D2'], params_adjoint['D3']
+    CTC = params_adjoint['CTC']
+    Nm_deim_a = V_deim_a.shape[1]
+
+    # Linear factors
+    A_r = (V_a.T @ A_p) @ V_a
+    D_2r = (V_a.T @ D2) @ V_a
+    D_3r = (V_a.T @ D3) @ V_a
+    VaT_Vp = V_a[CTC, :].T @ V_p[CTC, :]
+    VaT_CTC_qT = V_a[CTC, :].T @ qs_target[CTC, :]
+    B_r = V_a.T @ B
+
+    # DEIM prep
+    _, _, piv = qr(V_deim_a.T, pivoting=True)
+    S = np.sort(piv[:Nm_deim_a])
+    STVdeim_inv = np.linalg.inv(V_deim_a[S])
+    VaT_Vdeim_ST_Vdeim_inv = (V_a.T @ V_deim_a) @ STVdeim_inv
+
+    ST_Va = V_a[S]
+    ST_D1Va = (D1 @ V_a)[S]
+    ST_Vp = V_p[S]
+    ST_D1Vp = (D1 @ V_p)[S]
+
+    return AdjointMatrices_kdvb_PODG_FOTR(
+        A_r=A_r,
+        D_2r=D_2r,
+        D_3r=D_3r,
+        prefactor=VaT_Vdeim_ST_Vdeim_inv,
+        ST_Va=ST_Va,
+        ST_D1Va=ST_D1Va,
+        ST_Vp=ST_Vp,
+        ST_D1Vp=ST_D1Vp,
+        VaT_Vp=VaT_Vp,
+        VaT_CTC_qT=VaT_CTC_qT,
+        VaT_B=B_r
+    )
+
+
+@njit
+def RHS_adjoint_kdvb_PODG_FOTR_expl(a_adj, a, VaT_CTC_qT, A_r, D_2r, D_3r, prefactor, ST_Vp, ST_Va,
+                                    ST_D1Vp, ST_D1Va, VaT_Vp, omega, gamma, nu, dx):
+    a_adj = np.ascontiguousarray(a_adj)
+    a = np.ascontiguousarray(a)
+    A_r = np.ascontiguousarray(A_r)
+    D_2r = np.ascontiguousarray(D_2r)
+    D_3r = np.ascontiguousarray(D_3r)
+    prefactor = np.ascontiguousarray(prefactor)
+    ST_Vp = np.ascontiguousarray(ST_Vp)
+    ST_Va = np.ascontiguousarray(ST_Va)
+    ST_D1Vp = np.ascontiguousarray(ST_D1Vp)
+    ST_D1Va = np.ascontiguousarray(ST_D1Va)
+    VaT_Vp = np.ascontiguousarray(VaT_Vp)
+    VaT_CTC_qT = np.ascontiguousarray(VaT_CTC_qT)
+
+    out = - (A_r - gamma * D_3r + nu * D_2r).T @ a_adj + \
+          6.0 * omega * (prefactor @ (ST_D1Vp.dot(a)[:, None] * ST_Va + ST_Vp.dot(a)[:, None] * ST_D1Va)).T @ a_adj - \
+          dx * (VaT_Vp @ a - VaT_CTC_qT)
+
+    return out
+
+
+@njit
+def TI_adjoint_kdvb_PODG_FOTR_expl(a_adj, as_p, VaT_CTC_qT, A_r, D_2r, D_3r, prefactor, ST_Vp, ST_Va,
+                                   ST_D1Vp, ST_D1Va, VaT_Vp, omega, gamma, nu,
+                                   dx, Nt, dt):
+    as_adj = np.zeros((a_adj.shape[0], Nt))
+    as_adj[:, -1] = a_adj
+
+    for n in range(1, Nt):
+        as_adj[:, -(n + 1)] = rk4_PODG_adj_kdvb_(RHS_adjoint_kdvb_PODG_FOTR_expl, as_adj[:, -n], as_p[:, -n],
+                                                 as_p[:, -(n + 1)],
+                                                 VaT_CTC_qT[:, -n], VaT_CTC_qT[:, -(n + 1)],
+                                                 - dt, A_r, D_2r, D_3r,
+                                                 prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, omega, gamma, nu,
+                                                 dx)
+
+    print('RK4 reduced adjoint finished')
+    return as_adj
+
+
+def J_nl_PODG_FOTR_adj_kdv(a: np.ndarray,
+                           prefactor: np.ndarray,
+                           ST_D1Va: np.ndarray,
+                           ST_Va: np.ndarray,
+                           ST_D1Vp: np.ndarray,
+                           ST_Vp: np.ndarray,
+                           omega: float,
+                           dt: float) -> np.ndarray:
+    return 3.0 * omega * dt * (prefactor @ (ST_D1Vp.dot(a)[:, None] * ST_Va + ST_Vp.dot(a)[:, None] * ST_D1Va))
+
+
+def RHS_adjoint_kdvb_PODG_FOTR_impl(a_adj: np.ndarray,
+                                    a: np.ndarray,
+                                    VT_CTC_qT: np.ndarray,
+                                    dx: float,
+                                    A_r: np.ndarray,
+                                    D_2r: np.ndarray,
+                                    D_3r: np.ndarray,
+                                    prefactor: np.ndarray,
+                                    ST_Va: np.ndarray,
+                                    ST_D1Va: np.ndarray,
+                                    ST_Vp: np.ndarray,
+                                    ST_D1Vp: np.ndarray,
+                                    VaT_Vp: np.ndarray,
+                                    omega: float,
+                                    gamma: float,
+                                    nu: float) -> np.ndarray:
+    out = - (A_r - gamma * D_3r + nu * D_2r).T @ a_adj + \
+          6.0 * omega * (prefactor @ (ST_D1Vp.dot(a)[:, None] * ST_Va + ST_Vp.dot(a)[:, None] * ST_D1Va)).T @ a_adj - \
+          dx * (VaT_Vp @ a - VT_CTC_qT)
+
+    return out
+
+
+def TI_adjoint_kdvb_PODG_FOTR_impl(a_adj, as_p, adjoint_mat, J_l, Nx, Nt, dx, dt, **params_adjoint):
+    # Time loop
+    as_adj = np.zeros((a_adj.shape[0], Nt))
+    as_adj[:, -1] = a_adj
+    VaT_CTC_qT = adjoint_mat.VaT_CTC_qT
+
+    for n in range(1, Nt):
+        as_adj[:, -(n + 1)] = implicit_midpoint_PODG_FOTR_adjoint_kdvb(RHS_adjoint_kdvb_PODG_FOTR_impl,
+                                                                       J_nl_PODG_FOTR_adj_kdv,
+                                                                       as_adj[:, -n],
+                                                                       as_p[:, -n],
+                                                                       as_p[:, -(n + 1)],
+                                                                       VaT_CTC_qT[:, -n],
+                                                                       VaT_CTC_qT[:, -(n + 1)],
+                                                                       J_l,
+                                                                       dx,
+                                                                       dt,
+                                                                       adjoint_mat,
+                                                                       **params_adjoint)
+    print('Implicit midpoint reduced adjoint finished')
+
+    return as_adj

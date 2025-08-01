@@ -1,5 +1,5 @@
 """
-This file is the version with ROM adjoint. It can handle both the scenarios.
+This file is the version with Lagrange interpolation. It can handle both the scenarios.
 1. Fixed tolerance
 2. Fixed modes
 """
@@ -8,25 +8,69 @@ import sys
 import time
 import argparse
 import traceback
-
-import numpy as np
-import scipy
 from time import perf_counter
 from ast import literal_eval
 
+import numpy as np
+import scipy
+import scipy.sparse as sp
+from matplotlib import pyplot as plt
+
+# Add local sPOD library to path
+sys.path.append('../sPOD/lib/')
+
+# ──────────────── Local Modules ────────────────
 from Coefficient_Matrix import CoefficientMatrix
-from Costs import Calc_Cost_PODG, Calc_Cost
-from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
-from Grads import Calc_Grad_PODG_smooth, Calc_Grad_mapping
-from Helper import ControlSelectionMatrix_advection, compute_red_basis, L2norm_ROM, check_weak_divergence
-from PODG_solver import (
-    IC_primal_PODG_FOTR, mat_primal_PODG_FOTR,
-    TI_primal_PODG_FOTR, IC_adjoint_PODG_FOTR,
-    mat_adjoint_PODG_FOTR, TI_adjoint_PODG_FOTR
+from Cubic_spline import (
+    give_spline_coefficient_matrices,
+    construct_spline_coeffs_multiple,
+    shift_matrix_precomputed_coeffs_multiple,
 )
-from Update import Update_Control_PODG_FOTR_RA_TWBT, Update_Control_PODG_FOTR_RA_BB, get_BB_step
+from FOM_solver import (
+    IC_primal,
+    TI_primal,
+    TI_primal_target,
+    IC_adjoint,
+    TI_adjoint,
+)
+from Grads import (
+    Calc_Grad_sPODG_FRTO_smooth,
+    Calc_Grad_mapping,
+)
+from Update import (
+    Update_Control_sPODG_FRTO_TWBT,
+    Update_Control_sPODG_FRTO_BB,
+    get_BB_step,
+)
 from grid_params import advection
 from Plots import PlotFlow
+from Costs import Calc_Cost_sPODG, Calc_Cost
+
+from Helper import (
+    ControlSelectionMatrix,
+    compute_red_basis,
+    calc_shift,
+    L2norm_ROM,
+    check_weak_divergence,
+)
+from Helper_sPODG import (
+    subsample,
+    get_T,
+    central_FDMatrix,
+    central_FD2Matrix,
+    make_V_W_U_delta,
+    make_V_W_delta_CubSpl,
+)
+
+from sPODG_solver import (
+    IC_primal_sPODG_FRTO,
+    IC_adjoint_sPODG_FRTO,
+    mat_primal_sPODG_FRTO,
+    TI_primal_sPODG_FRTO,
+    TI_adjoint_sPODG_FRTO,
+)
+
+from sPOD_algo import give_interpolation_error
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -43,8 +87,11 @@ def parse_arguments():
                    help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
     p.add_argument("CTC_mask_activate", type=literal_eval, choices=[True, False],
                    help="Include CTC mask in the system? (True/False)")
-    p.add_argument("--modes", type=int, nargs=2,
-                   help="Modes for primal and adjoint (e.g. --modes 3 5)")
+    p.add_argument("interp_scheme", type=str, choices=["Lagr", "CubSpl"],
+                   help="Specify the Interpolation scheme to use ("
+                        "Lagr or CubSpl)")
+    p.add_argument("--modes", type=int, nargs=1,
+                   help="Enter the modes e.g., --modes 3")
     p.add_argument("--tol", type=float, help="Tolerance level for fixed‐tol run")
     return p.parse_args()
 
@@ -72,7 +119,7 @@ def decide_run_type(args):
 
 
 def setup_advection(problem):
-    Nxi, Nt = 3200, 3360
+    Nxi, Nt = 3200 // 2, 3360 // 2
     if problem == 1:
         wf = advection(Nxi=Nxi, timesteps=Nt,
                        cfl=8 / 6, tilt_from=3 * Nt // 4,
@@ -92,12 +139,13 @@ def setup_advection(problem):
     return wf
 
 
-def build_dirs(prefix, common_basis, reg_tuple, CTC_mask, problem, TYPE, VAL):
-    cb_str = "primal+adjoint_common_basis" if common_basis else "separate_basis"
+def build_dirs(prefix, common_basis, reg_tuple, CTC_mask, interp_scheme, problem, TYPE, VAL):
+    cb_str = "primal+adjoint_common_basis" if common_basis else "primal_basis"
     reg_str = f"L1={reg_tuple[0]}_L2={reg_tuple[1]}"
-    data_dir = os.path.join(prefix, "data/PODG_FOTR_RA_adaptive", cb_str, reg_str, f"CTC_mask={CTC_mask}",
+    interp_str = "Lagr" if interp_scheme == "Lagr" else "CubSpl"
+    data_dir = os.path.join(prefix, "data/sPODG_FRTO_adaptive", cb_str, reg_str, f"CTC_mask={CTC_mask}", interp_str,
                             f"problem={problem}", f"{TYPE}={VAL}")
-    plot_dir = os.path.join(prefix, "plots/PODG_FOTR_RA_adaptive", cb_str, reg_str, f"CTC_mask={CTC_mask}",
+    plot_dir = os.path.join(prefix, "plots/sPODG_FRTO_adaptive", cb_str, reg_str, f"CTC_mask={CTC_mask}", interp_str,
                             f"problem={problem}", f"{TYPE}={VAL}")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
@@ -118,8 +166,7 @@ def write_checkpoint(data_dir, opt_step,
                      f, best_control, best_details,
                      J_opt_list, J_opt_FOM_list,
                      dL_du_norm_list, running_time,
-                     trunc_modes_list_p, trunc_modes_list_a,
-                     basis_update_idx_list):
+                     trunc_modes_list, basis_update_idx_list):
     """
     Overwrite checkpoint files. All variables are written with fixed names,
     so each iteration replaces the previous checkpoint.
@@ -141,8 +188,7 @@ def write_checkpoint(data_dir, opt_step,
     np.save(os.path.join(ckpt_dir, "J_opt_FOM_list.npy"), np.array(J_opt_FOM_list))
     np.save(os.path.join(ckpt_dir, "dL_du_norm_list.npy"), np.array(dL_du_norm_list))
     np.save(os.path.join(ckpt_dir, "running_time.npy"), np.array(running_time))
-    np.save(os.path.join(ckpt_dir, "trunc_modes_p.npy"), np.array(trunc_modes_list_p))
-    np.save(os.path.join(ckpt_dir, "trunc_modes_a.npy"), np.array(trunc_modes_list_a))
+    np.save(os.path.join(ckpt_dir, "trunc_modes.npy"), np.array(trunc_modes_list))
     np.save(os.path.join(ckpt_dir, "basis_update_idx_list.npy"), np.array(basis_update_idx_list))
 
     print(f"Checkpoint overwritten → {ckpt_dir}")
@@ -164,9 +210,9 @@ if __name__ == "__main__":
     print(f"\nSolving problem: {args.problem}")
     print("Type of basis computation: adaptive")
     print(f"Using adjoint in basis: {args.primal_adjoint_common_basis}")
-    print(f"L1, L2 regularization = {tuple(args.reg)}")
     print(f"Using CTC mask pseudo hyperreduction: {args.CTC_mask_activate}")
-
+    print(f"L1, L2 regularization = {tuple(args.reg)}")
+    print(f"Interpolation scheme used: {args.interp_scheme}")
 
     # Determine run type
     TYPE, VAL, modes, tol, threshold = decide_run_type(args)
@@ -178,14 +224,15 @@ if __name__ == "__main__":
     wf = setup_advection(args.problem)
     if L1_reg != 0 and L2_reg == 0:  # Purely L1
         n_c_init = wf.Nxi
-        psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+        psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
         adjust = 1.0
     else:  # Mix type
         n_c_init = 40
-        psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
+        psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
         adjust = wf.dx
     n_c = psi.shape[1]
     f = np.zeros((n_c, wf.Nt))  # initial control guess
+    psi = scipy.sparse.csc_matrix(psi)
 
     # Build coefficient matrices
     Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder,
@@ -209,9 +256,10 @@ if __name__ == "__main__":
     data_dir, plot_dir = build_dirs(args.dir_prefix,
                                     args.primal_adjoint_common_basis,
                                     args.reg, args.CTC_mask_activate,
+                                    args.interp_scheme,
                                     args.problem, TYPE, VAL)
 
-    # List of problem constants
+    # Prepare kwargs
     kwargs = {
         'dx': wf.dx,
         'dt': wf.dt,
@@ -221,8 +269,9 @@ if __name__ == "__main__":
         'lamda_l1': L1_reg,
         'lamda_l2': L2_reg,
         'delta_conv': 1e-4,  # Convergence criteria
-        'delta': 1 / 2,  # Armijo constant.  USE 1.01 with L1_reg=0 for getting the older results
+        'delta': 1 / 2,  # Armijo constant
         'opt_iter': args.N_iter,  # Total iterations
+        'shift_sample': 800,  # Number of samples for shift interpolation
         'beta': 1 / 2,  # Beta factor for two-way backtracking line search
         'verbose': True,  # Print options
         'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
@@ -231,21 +280,31 @@ if __name__ == "__main__":
         # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
         # "FALSE" for mode based.
         'Nm_p': modes[0],  # Number of modes for truncation if threshold selected to False.
-        'Nm_a': modes[1],  # Number of modes for truncation if threshold selected to False.
+        'interp_scheme': args.interp_scheme,  # Either Lagrange interpolation or Cubic spline
+        'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
         'adjoint_scheme': "RK4",  # Time integration scheme for adjoint equation
         'common_basis': args.primal_adjoint_common_basis,  # True if primal + adjoint in basis else False
     }
+
+    D = central_FDMatrix(order=6, Nx=wf.Nxi, dx=wf.dx)
+    D2 = central_FD2Matrix(order=6, Nx=wf.Nxi, dx=wf.dx)
+    delta_s = subsample(wf.X, num_sample=kwargs['shift_sample'])
+    if kwargs['interp_scheme'] == "Lagr":
+        # Extract transformation operators based on sub-sampled delta
+        T_delta, _ = get_T(delta_s, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
+    else:
+        # Calculate the constant spline coefficient matrices (only needed once)
+        A1, D1, D2, R = give_spline_coefficient_matrices(kwargs['Nx'])
 
     # Collector lists
     dL_du_norm_list = []
     J_opt_FOM_list = []
     J_opt_list = []
     running_time = []
-    trunc_modes_list_p = []
-    trunc_modes_list_a = []
+    trunc_modes_list = []
     basis_update_idx_list = []
     best_control = np.zeros_like(f)
-    best_details = {'J': np.inf, 'N_iter': None, 'Nm_p': None, 'Nm_a': None}
+    best_details = {'J': np.inf, 'N_iter': None, 'Nm': None}
     f_last_valid = None
 
     start_total = time.time()
@@ -269,69 +328,78 @@ if __name__ == "__main__":
                 basis_update_idx_list.append(opt_step)
 
                 # ───── Forward FOM: compute FOM state qs ─────
+                # Compute FOM trajectories
                 qs_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
                 qs_adj_full = TI_adjoint(q0_adj, qs_full, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt,
                                          scheme="RK4")
-                # Concatenate if common_basis, else keep separately
-                qs_norm = qs_full / np.linalg.norm(qs_full)
-                qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
-                if kwargs['common_basis']:
-                    snap_cat_p = np.concatenate([qs_norm, qs_adj_norm], axis=1)
-                    snap_cat_a = snap_cat_p.copy()
-                else:
-                    snap_cat_p = qs_full.copy()
-                    snap_cat_a = qs_adj_full.copy()
+
+                # Compute shifts and (re)interpolate
+                z = calc_shift(qs_full, q0, wf.X, wf.t)
+
+                if kwargs['interp_scheme'] == "Lagr":
+                    _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
+                    # Primal: reverse‐transform (and normalize if shared‐basis)
+                    if kwargs['common_basis']:
+                        qs_norm = qs_full / np.linalg.norm(qs_full)
+                        qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
+                        qs_norm_s = T.reverse(qs_norm)
+                        qs_adj_norm_s = T.reverse(qs_adj_norm)
+                        snap_cat_p_s = np.concatenate([qs_norm_s, qs_adj_norm_s], axis=1)
+                    else:
+                        snap_cat_p_s = T.reverse(qs_full).copy()
+                else:  # Cubic‐spline case
+                    if kwargs['common_basis']:
+                        qs_norm = qs_full / np.linalg.norm(qs_full)
+                        qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
+
+                        b_p, c_p, d_p = construct_spline_coeffs_multiple(qs_norm, A1, D1, D2, R, kwargs['dx'])
+                        qs_norm_s = shift_matrix_precomputed_coeffs_multiple(qs_norm, z[0], b_p, c_p, d_p, kwargs['Nx'],
+                                                                             kwargs['dx'])
+
+                        b_a, c_a, d_a = construct_spline_coeffs_multiple(qs_adj_norm, A1, D1, D2, R, kwargs['dx'])
+                        qs_adj_norm_s = shift_matrix_precomputed_coeffs_multiple(qs_adj_norm, z[0], b_a, c_a, d_a,
+                                                                                 kwargs['Nx'],
+                                                                                 kwargs['dx'])
+
+                        snap_cat_p_s = np.concatenate([qs_norm_s, qs_adj_norm_s], axis=1)
+                    else:
+                        b_p, c_p, d_p = construct_spline_coeffs_multiple(qs_full, A1, D1, D2, R, kwargs['dx'])
+                        qs_s = shift_matrix_precomputed_coeffs_multiple(qs_full, z[0], b_p, c_p, d_p, kwargs['Nx'],
+                                                                        kwargs['dx'])
+                        snap_cat_p_s = qs_s.copy()
 
                 # Compute reduced bases
-                V_p, qsPOD_p = compute_red_basis(snap_cat_p, equation="primal", **kwargs)
-                Nm_p = V_p.shape[1]
-                err_p = np.linalg.norm(snap_cat_p - qsPOD_p) / np.linalg.norm(snap_cat_p)
-                print(f"Primal basis: Nm_p={Nm_p}, err={err_p:.3e}")
+                V, qs_sPOD = compute_red_basis(snap_cat_p_s, equation="primal", **kwargs)
+                Nm = V.shape[1]
+                err = np.linalg.norm(snap_cat_p_s - qs_sPOD) / np.linalg.norm(snap_cat_p_s)
+                print(f"Primal basis: Nm_p={Nm}, err={err:.3e}")
 
-                V_a, qsPOD_a = compute_red_basis(snap_cat_a, equation="adjoint", **kwargs)
-                Nm_a = V_a.shape[1]
-                err_a = np.linalg.norm(snap_cat_a - qsPOD_a) / np.linalg.norm(snap_cat_a)
-                print(f"Adjoint basis: Nm_a={Nm_a}, err={err_a:.3e}")
+                # Initial condition for dynamical simulation
+                a_p = IC_primal_sPODG_FRTO(q0, V)
+                a_a = IC_adjoint_sPODG_FRTO(Nm)
+                trunc_modes_list.append(Nm)
 
-                # Initial conditions for ROM
-                a_p = IC_primal_PODG_FOTR(V_p, q0)
-                a_a = IC_adjoint_PODG_FOTR(Nm_a)
-                trunc_modes_list_p.append(Nm_p)
-                trunc_modes_list_a.append(Nm_a)
-
-                # Build ROM system matrices
-                Ar_p, psir_p = mat_primal_PODG_FOTR(A_p, V_p, psi)
-                Ar_a, V_aTV_p, Tarr, psir_a = mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi, C)
-
-                # Select LU factors for adjoint mass‐matrix if needed
-                if kwargs['adjoint_scheme'] == "RK4":
-                    M_f = None
-                    A_f = Ar_a.copy()
-                    LU_M_f = None
-                elif kwargs['adjoint_scheme'] == "implicit_midpoint":
-                    M_f = np.eye(Nm_a) + (- kwargs['dt']) / 2 * Ar_a
-                    A_f = np.eye(Nm_a) - (- kwargs['dt']) / 2 * Ar_a
-                    LU_M_f = scipy.linalg.lu_factor(M_f)
-                elif kwargs['adjoint_scheme'] == "DIRK":
-                    M_f = np.eye(Nm_a) + (- kwargs['dt']) / 4 * Ar_a
-                    A_f = Ar_a.copy()
-                    LU_M_f = scipy.linalg.lu_factor(M_f)
-                elif kwargs['adjoint_scheme'] == "BDF2":
-                    M_f = 3.0 * np.eye(Nm_a) + 2.0 * (- kwargs['dt']) * Ar_a
-                    A_f = Ar_a.copy()
-                    LU_M_f = scipy.linalg.lu_factor(M_f)
+                # Construct the primal system matrices for the sPOD-Galerkin approach
+                if kwargs['interp_scheme'] == "Lagr":
+                    Vd_p, Wd_p, Ud_p = make_V_W_U_delta(V, T_delta, D, D2, kwargs['shift_sample'], kwargs['Nx'], Nm)
                 else:
-                    kwargs['adjoint_scheme'] = "RK4"
-                    M_f = None
-                    A_f = Ar_a.copy()
-                    LU_M_f = None
+                    Vd_p, Wd_p, Ud_p = make_V_W_delta_CubSpl(V, delta_s, A1, D1, D2, R, kwargs['shift_sample'],
+                                                             kwargs['Nx'],
+                                                             kwargs['dx'], Nm)
+
+                # Construct the primal and adjoint system matrices for the sPOD-Galerkin approach
+                lhs_p, rhs_p, c_p, tar_a = mat_primal_sPODG_FRTO(Vd_p, Wd_p, Ud_p, C, A_p, psi,
+                                                                 samples=kwargs['shift_sample'],
+                                                                 modes=Nm)
 
             # ───── Forward ROM: compute ROM state a_p → as_p ─────
-            as_p = TI_primal_PODG_FOTR(a_p, f, Ar_p, psir_p, wf.Nt, wf.dt)
+            as_p, as_dot, intIds, weights = TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm,
+                                                                 Nt=kwargs['Nt'],
+                                                                 dt=kwargs['dt'])
 
             # ───── Compute costs ─────
-            J_s, J_ns = Calc_Cost_PODG(V_p, as_p, qs_target, f, C, kwargs['dx'], kwargs['dt'],
-                                       kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+            J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f, C, intIds, weights,
+                                           kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_ROM = J_s + J_ns
 
             qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
@@ -344,15 +412,16 @@ if __name__ == "__main__":
 
             # Track best control
             if J_FOM < best_details['J']:
-                best_details.update({'J': J_FOM, 'N_iter': opt_step, 'Nm_p': Nm_p, 'Nm_a': Nm_a})
+                best_details.update({'J': J_FOM, 'N_iter': opt_step, 'Nm': Nm})
                 best_control = f.copy()
 
             # ───── Backward ROM (adjoint) ─────
-            as_adj = TI_adjoint_PODG_FOTR(a_a, as_p, M_f, A_f, LU_M_f, V_aTV_p, Tarr, kwargs['Nt'], kwargs['dt'],
-                                          kwargs['dx'], kwargs['adjoint_scheme'])
+            as_adj = TI_adjoint_sPODG_FRTO(a_a, f, as_p, qs_target, as_dot, lhs_p, rhs_p, c_p, tar_a, C, Vd_p, Wd_p,
+                                           Nm, delta_s, Nt=kwargs['Nt'], dt=kwargs['dt'], dx=kwargs['dx'],
+                                           scheme=kwargs['adjoint_scheme'])
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
-            dL_du_s = Calc_Grad_PODG_smooth(psir_a, f, as_adj, kwargs['lamda_l2'])
+            dL_du_s = Calc_Grad_sPODG_FRTO_smooth(f, c_p, as_adj, as_p, intIds, weights, kwargs['lamda_l2'])
             dL_du_g = Calc_Grad_mapping(f, dL_du_s, omega, kwargs['lamda_l1'])
             dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
 
@@ -365,17 +434,21 @@ if __name__ == "__main__":
                 omega_bb = get_BB_step(fOld, f, dL_du_Old, dL_du_s, opt_step, **kwargs)
                 if omega_bb < 0:
                     print("WARNING: BB gave negative step size thus resorting to using TWBT")
-                    fNew, omega_twbt, stag = Update_Control_PODG_FOTR_RA_TWBT(f, a_p, qs_target, V_p, Ar_p, psir_p,
-                                                                              J_s, omega_twbt, dL_du_s, C, adjust, **kwargs)
+                    fNew, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p,
+                                                                            a_p, qs_target, delta_s, J_s,
+                                                                            omega_twbt, Nm, dL_du_s, C, adjust,
+                                                                            **kwargs)
                     omega = omega_twbt
                 else:
-                    fNew = Update_Control_PODG_FOTR_RA_BB(f, dL_du_s, omega_bb, kwargs['lamda_l1'])
+                    fNew = Update_Control_sPODG_FRTO_BB(f, dL_du_s, omega_bb, kwargs['lamda_l1'])
                     stag = False
                     omega = omega_bb
             else:
                 print("TWBT acting…")
-                fNew, omega_twbt, stag = Update_Control_PODG_FOTR_RA_TWBT(f, a_p, qs_target, V_p, Ar_p, psir_p,
-                                                                          J_s, omega_twbt, dL_du_s, C, adjust, **kwargs)
+                fNew, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p,
+                                                                        a_p, qs_target, delta_s, J_s,
+                                                                        omega_twbt, Nm, dL_du_s, C, adjust,
+                                                                        **kwargs)
                 omega = omega_twbt
 
             t1 = perf_counter()
@@ -392,7 +465,7 @@ if __name__ == "__main__":
                 f"||dL_du||_0 = {ratio:.3e}"
             )
 
-            # Convergence criteria
+            # Convergence Criteria
             if opt_step == kwargs['opt_iter'] - 1:
                 print("\n\n-------------------------------")
                 print(
@@ -485,8 +558,7 @@ if __name__ == "__main__":
                     J_opt_FOM_list=J_opt_FOM_list,
                     dL_du_norm_list=dL_du_norm_list,
                     running_time=running_time,
-                    trunc_modes_list_p=trunc_modes_list_p,
-                    trunc_modes_list_a=trunc_modes_list_a,
+                    trunc_modes_list=trunc_modes_list,
                     basis_update_idx_list=basis_update_idx_list
                 )
 
@@ -525,8 +597,7 @@ if __name__ == "__main__":
             "J_opt_FOM_list_at_crash": J_opt_FOM_list,
             "running_time_at_crash": running_time,
             "dL_du_norm_list_at_crash": dL_du_norm_list,
-            "trunc_modes_list_p_at_crash": trunc_modes_list_p,
-            "trunc_modes_list_a_at_crash": trunc_modes_list_a,
+            "trunc_modes_list_at_crash": trunc_modes_list,
             "basis_update_idx_list_at_crash": basis_update_idx_list
         }
         if f_last_valid is not None:
@@ -541,7 +612,7 @@ if __name__ == "__main__":
         print("\nFinal save…")
         to_save_final = {"J_opt_list_final": J_opt_list, "J_opt_FOM_list_final": J_opt_FOM_list,
                          "running_time_final": running_time, "dL_du_norm_list_final": dL_du_norm_list,
-                         "trunc_modes_list_p_final": trunc_modes_list_p, "trunc_modes_list_a_final": trunc_modes_list_a,
+                         "trunc_modes_list_final": trunc_modes_list,
                          "basis_update_idx_list_final": basis_update_idx_list,
                          "best_control_final": best_control, "best_details_final": best_details,
                          "last_valid_control_final": f_last_valid}
