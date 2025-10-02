@@ -6,12 +6,14 @@
 #SBATCH --output=/work/burela/sPODG_%j.log  # Standard output log
 #SBATCH --partition=gbr
 #SBATCH --nodelist=node748
-
+#SBATCH --chdir=/homes/math/burela/KDV_burgers
 
 export PYTHONUNBUFFERED=1
 
 # Print job info
 pwd; hostname; date
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
 
 echo "sPODG run"
 
@@ -35,15 +37,15 @@ fi
 # Decide which Python script to run based on the script_type parameter
 if [ "$script_type" = "adaptive" ]; then
     if [ "$param_type" = "tol" ]; then
-        python3 sPODG_FOTR_kdvb_adaptive.py $common_basis 20000 "/work/burela" 0 1e-3 False --tol $tol1 $tol2
+        python3 files_kdv/sPODG_PODG_kdv_adaptive.py False $common_basis 1000 8000 4 20000 "/work/burela" 0 1e-3 False --tol $tol1 $tol2
     else
-        python3 sPODG_FOTR_kdvb_adaptive.py $common_basis 20000 "/work/burela" 0 1e-3 False --modes $mode1 $mode2 $mode3 $mode4
+        python3 files_kdv/sPODG_PODG_kdv_adaptive.py False $common_basis 1000 8000 4 20000 "/work/burela" 0 1e-3 False --modes $mode1 $mode2 $mode3 $mode4
     fi
 else
     if [ "$param_type" = "tol" ]; then
-        python3 sPODG_FOTR_kdvb.py $common_basis 20000 "/work/burela" 0 1e-3 False --tol $tol1 $tol2
+        python3 files_kdv/sPODG_PODG_kdv.py False $common_basis 1000 8000 4 20000 "/work/burela" 0 1e-3 False --tol $tol1 $tol2
     else
-        python3 sPODG_FOTR_kdvb.py $common_basis 20000 "/work/burela" 0 1e-3 False --modes $mode1 $mode2 $mode3 $mode4
+        python3 files_kdv/sPODG_PODG_kdv.py False $common_basis 1000 8000 4 20000 "/work/burela" 0 1e-3 False --modes $mode1 $mode2 $mode3 $mode4
     fi
 fi
 

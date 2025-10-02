@@ -17,18 +17,20 @@ from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
 from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
 from Grads import Calc_Grad_smooth, Calc_Grad_mapping
-from Helper import ControlSelectionMatrix, L2norm_ROM, check_weak_divergence
+from Helper import ControlSelectionMatrix, L2norm_ROM, check_weak_divergence, L2inner_prod
 from TI_schemes import DF_start_FOM
 from Update import get_BB_step, Update_Control_BB, Update_Control_TWBT
 from grid_params import advection
 from Plots import PlotFlow
 
+np.random.seed(0)
+
 
 # ───────────────────────────────────────────────────────────────────────
 def parse_arguments():
     p = argparse.ArgumentParser(description="Input the variables for running the script.")
-    p.add_argument("problem", type=int, choices=[1, 2, 3],
-                   help="Problem number (1, 2, or 3)")
+    p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
+                   help="Enter the grid resolution and the cfl factor")
     p.add_argument("N_iter", type=int, help="Number of optimization iterations")
     p.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
                    help="Directory prefix for I/O")
@@ -39,31 +41,19 @@ def parse_arguments():
     return p.parse_args()
 
 
-def setup_advection(problem):
-    Nxi, Nt = 3200, 3360
-    if problem == 1:
-        wf = advection(Nxi=Nxi, timesteps=Nt,
-                       cfl=8 / 6, tilt_from=3 * Nt // 4,
-                       v_x=0.5, v_x_t=1.0,
-                       variance=7, offset=12)
-    elif problem == 2:
-        wf = advection(Nxi=Nxi, timesteps=Nt,
-                       cfl=8 / 6, tilt_from=3 * Nt // 4,
-                       v_x=0.55, v_x_t=1.0,
-                       variance=0.5, offset=30)
-    else:
-        wf = advection(Nxi=Nxi, timesteps=Nt,
-                       cfl=8 / 6, tilt_from=9 * Nt // 10,
-                       v_x=0.6, v_x_t=1.3,
-                       variance=0.5, offset=30)
+def setup_advection(Nx, Nt, cfl_fac):
+    wf = advection(Nx=Nx, timesteps=Nt,
+                   cfl=0.17 / cfl_fac, tilt_from=3 * Nt // 4,
+                   v_x=7 / 3, v_x_t=11 / 3,
+                   variance=7, offset=20)
     wf.Grid()
     return wf
 
 
-def build_dirs(prefix, reg_tuple, CTC_mask, problem):
+def build_dirs(prefix, reg_tuple, CTC_mask):
     reg_str = f"L1={reg_tuple[0]}_L2={reg_tuple[1]}"
-    data_dir = os.path.join(prefix, "data/FOM", reg_str, f"CTC_mask={CTC_mask}", f"problem={problem}")
-    plot_dir = os.path.join(prefix, "plots/FOM", reg_str, f"CTC_mask={CTC_mask}", f"problem={problem}")
+    data_dir = os.path.join(prefix, "data/FOM", reg_str, f"CTC_mask={CTC_mask}")
+    plot_dir = os.path.join(prefix, "plots/FOM", reg_str, f"CTC_mask={CTC_mask}")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
     return data_dir, plot_dir
@@ -106,7 +96,6 @@ def write_checkpoint(data_dir, opt_step,
     print(f"Checkpoint overwritten → {ckpt_dir}")
 
 
-
 def C_matrix(Nx, CTC_end_index, apply_CTC_mask=False):
     C = np.ones(Nx)
     if apply_CTC_mask:
@@ -120,16 +109,17 @@ def C_matrix(Nx, CTC_end_index, apply_CTC_mask=False):
 if __name__ == "__main__":
     args = parse_arguments()
 
-    print(f"\nSolving problem: {args.problem}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
+    print(f"Grid = {tuple(args.grid)}")
 
     # Unpack regularization parameters
     L1_reg, L2_reg = args.reg
+    Nx, Nt, cfl_fac = args.grid
 
     # Set up WF and control matrix
-    wf = setup_advection(args.problem)
+    wf = setup_advection(Nx, Nt, cfl_fac)
     if L1_reg != 0 and L2_reg == 0:  # Purely L1
-        n_c_init = wf.Nxi
+        n_c_init = wf.Nx
         psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
         adjust = 1.0
     else:  # Mix type
@@ -137,35 +127,38 @@ if __name__ == "__main__":
         psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
         adjust = wf.dx
     n_c = psi.shape[1]
+
     f = np.zeros((n_c, wf.Nt))  # initial control guess
+    df = np.random.randn(*f.shape)
     psi = scipy.sparse.csc_matrix(psi)
 
     # Build coefficient matrices
     Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder,
-                            Nxi=wf.Nxi, Neta=1,
+                            Nxi=wf.Nx, Neta=1,
                             periodicity='Periodic',
                             dx=wf.dx, dy=0)
+
     A_p = - wf.v_x[0] * Mat.Grad_Xi_kron
     A_a = A_p.transpose()
 
     # Solve uncontrolled FOM once
-    qs0 = IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance)
-    qs_org = TI_primal(qs0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nxi, wf.Nt, wf.dt)
+    qs0 = IC_primal(wf.X, wf.Lx, wf.offset, wf.variance)
+    qs_org = TI_primal(qs0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt, wf.dt)
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
 
     # Calculate the CTC matrix/array  (CTC and C are exactly the same)
-    C = C_matrix(wf.Nxi, wf.CTC_end_index, apply_CTC_mask=args.CTC_mask_activate)
+    C = C_matrix(wf.Nx, wf.CTC_end_index, apply_CTC_mask=args.CTC_mask_activate)
 
     # Prepare directories
-    data_dir, plot_dir = build_dirs(args.dir_prefix, args.reg, args.CTC_mask_activate, args.problem)
+    data_dir, plot_dir = build_dirs(args.dir_prefix, args.reg, args.CTC_mask_activate)
 
     # Prepare kwargs
     kwargs = {
         'dx': wf.dx,
         'dt': wf.dt,
-        'Nx': wf.Nxi,
+        'Nx': wf.Nx,
         'Nt': wf.Nt,
         'n_c': n_c,
         'lamda_l1': L1_reg,
@@ -177,6 +170,7 @@ if __name__ == "__main__":
         'verbose': True,
         'omega_cutoff': 1e-10,
         'adjoint_scheme': "RK4",
+        'perform_grad_check': False,
     }
 
     # Select the LU pre-factors for the inverse of mass matrix for linear solve of adjoint equation
@@ -243,14 +237,14 @@ if __name__ == "__main__":
             print(f"Optimization step: {opt_step}")
 
             # ───── Forward FOM:  ─────
-            qs = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+            qs = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
 
             # ───── Compute costs ─────
             J_s, J_ns = Calc_Cost(qs, qs_target, f, C, kwargs['dx'], kwargs['dt'],
                                   kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_ROM = J_s + J_ns
 
-            qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+            qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
             JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f, C, kwargs['dx'], kwargs['dt'],
                                     kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_FOM = JJ_s + JJ_ns
@@ -263,7 +257,7 @@ if __name__ == "__main__":
                 best_control = f.copy()
 
             # ───── Backward FOM (adjoint) ─────
-            qs_adj = TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, C, wf.Nxi, wf.dx, wf.Nt, wf.dt,
+            qs_adj = TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
                                 scheme=kwargs['adjoint_scheme'], opt_poly_jacobian=Df)
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
@@ -272,6 +266,18 @@ if __name__ == "__main__":
             dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
 
             dL_du_norm_list.append(dL_du_norm)
+
+            # ───── Gradient check with Finite differences ─────
+            if kwargs['perform_grad_check']:
+                print("-------------GRAD CHECK-----------------")
+                eps = 1e-5
+                f_rand = f + eps * df
+                qs_rand = TI_primal(q0, f_rand, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+                J_s_eps, J_ns_eps = Calc_Cost(qs_rand, qs_target, f_rand, C, kwargs['dx'], kwargs['dt'],
+                                              kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+                J_FOM_eps = J_s_eps + J_ns_eps
+                print("Finite difference gradient", (J_FOM_eps - J_FOM) / eps)
+                print("Analytic gradient", L2inner_prod(dL_du_g, df, kwargs['dt']))
 
             # ───── Step‐size: BB vs. TWBT, including Armijo‐stagnation logic ─────
             ratio = dL_du_norm / dL_du_norm_list[0]
@@ -316,7 +322,7 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -332,7 +338,7 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -400,7 +406,7 @@ if __name__ == "__main__":
 
                     # store last valid control and possibly update best_details
                     f_last_valid = f.copy()
-                    qs_cand = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                    qs_cand = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
                     JJ_s_cand, JJ_ns_cand = Calc_Cost(
                         qs_cand, qs_target, f_last_valid, C,
                         kwargs['dx'], kwargs['dt'],
@@ -443,16 +449,17 @@ if __name__ == "__main__":
 
     # ─────────────────────────────────────────────────────────────────────
     # Compute best control based cost
-    qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+    qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
+                            scheme="RK4")
     f_opt = psi @ best_control
     J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
     J_final = J_s_f + J_ns_f
 
     # Compute last valid control based cost
-    qs_opt_full__ = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    qs_adj_opt__ = TI_adjoint(q0_adj, qs_opt_full__, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt,
+    qs_opt_full__ = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+    qs_adj_opt__ = TI_adjoint(q0_adj, qs_opt_full__, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
                               scheme="RK4")
     f_opt__ = psi @ f_last_valid
     J_s_f__, J_ns_f__ = Calc_Cost(qs_opt_full__, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
@@ -469,6 +476,8 @@ if __name__ == "__main__":
 
     # Plot results
     pf = PlotFlow(wf.X, wf.t)
+    pf.plot1D(qs_org, name="qs_org", immpath=plot_dir)
+    pf.plot1D(qs_target, name="qs_target", immpath=plot_dir)
     pf.plot1D(qs_opt_full, name="qs_opt", immpath=plot_dir)
     pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=plot_dir)
     pf.plot1D(f_opt, name="f_opt", immpath=plot_dir)

@@ -6,50 +6,45 @@
 #SBATCH --output=/work/burela/sPODG_%j.log  # Standard output log
 #SBATCH --partition=gbr
 #SBATCH --nodelist=node748
-
+#SBATCH --chdir=/homes/math/burela/KDV_burgers
 
 export PYTHONUNBUFFERED=1
 
 # Print job info
 pwd; hostname; date
 
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
 echo "sPODG run with 40 controls"
 
 # Common command-line arguments
-problem=$1
-common_basis=$2
-interp_scheme=$3
-param_type=$4    # Should be either "modes" or "tol"
-CTC_mask=$5
+common_basis=$1
+interp_scheme=$2
+param_type=$3    # Should be either "modes" or "tol"
+CTC_mask=$4
 
 # Depending on the parameter type, capture the proper values
 if [ "$param_type" = "tol" ]; then
-    tol_value=$6      # Single tolerance value
-    script_type=$7    # "adaptive" or "fixed"
+    tol_value=$5      # Single tolerance value
+    script_type=$6    # "adaptive" or "fixed"
 else
-    mode1=$6         # First mode value
-    mode2=$7          # Second mode value
-    script_type=$8    # "adaptive" or "fixed"
+    mode1=$5        # First mode value
+    mode2=$6          # Second mode value
+    script_type=$7    # "adaptive" or "fixed"
 fi
 
 # Decide which Python script to run based on the script_type parameter
 if [ "$script_type" = "adaptive" ]; then
     if [ "$param_type" = "tol" ]; then
-        python3 sPODG_FOTR_RA_adaptive.py $problem $common_basis 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --tol $tol_value
+        python3 files_advection/sPODG_FOTR_adaptive.py $common_basis 1000 16000 8 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --tol $tol_value
     else
-        python3 sPODG_FOTR_RA_adaptive.py $problem $common_basis 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --modes $mode1 $mode2
-    fi
-elif [ "$script_type" = "everytime" ]; then
-    if [ "$param_type" = "tol" ]; then
-        python3 sPODG_FOTR_RA_everytime.py $problem $common_basis 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --tol $tol_value
-    else
-        python3 sPODG_FOTR_RA_everytime.py $problem $common_basis 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --modes $mode1 $mode2
+        python3 files_advection/sPODG_FOTR_adaptive.py $common_basis 1000 16000 8 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --modes $mode1 $mode2
     fi
 else
     if [ "$param_type" = "tol" ]; then
-        python3 sPODG_FOTR_RA.py $problem $common_basis 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --tol $tol_value
+        python3 files_advection/sPODG_FOTR.py $common_basis 1000 16000 8 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --tol $tol_value
     else
-        python3 sPODG_FOTR_RA.py $problem $common_basis 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --modes $mode1 $mode2
+        python3 files_advection/sPODG_FOTR.py $common_basis 1000 16000 8 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --modes $mode1 $mode2
     fi
 fi
 

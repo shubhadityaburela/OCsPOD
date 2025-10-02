@@ -8,7 +8,7 @@ for script_type in fixed adaptive; do
                 # Submit jobs using --tol values
                 for tol in 1e-2 5e-3 1e-3 5e-4 1e-4 5e-5 1e-5 5e-6 1e-6 5e-7 1e-7; do
                     echo "Submitting job: script_type=$script_type, common_basis=$common_basis, interpolation_scheme=$interp_scheme, type_of_study=tol, CTC_mask=$CTC_mask, value=$tol"
-                    sbatch run_cluster_sPODG_inner_FRTO.sh $common_basis $interp_scheme tol $CTC_mask $tol $script_type
+                    sbatch run_cluster_sPODG_PODG_inner_FOTR.sh $common_basis $interp_scheme tol $CTC_mask $tol $script_type
                 done
             done
         done

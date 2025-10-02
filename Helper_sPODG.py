@@ -213,7 +213,7 @@ def LHS_offline_primal_FOTR(V_delta, W_delta, modes):
 
 
 @njit(parallel=True)
-def LHS_offline_primal_FOTR_kdvb(V_delta, W_delta, U_delta, num_sample, modes):
+def LHS_offline_primal_FOTR_kdv(V_delta, W_delta, U_delta, num_sample, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
     LHS_mat = np.zeros((6, num_sample, modes, modes))
     for it in prange(num_sample):
@@ -235,7 +235,7 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
     return np.ascontiguousarray(RHS_mat)
 
 
-def RHS_offline_primal_FOTR_kdvb(V_delta, W_delta, U_delta, A, num_sample, modes):
+def RHS_offline_primal_FOTR_kdv(V_delta, W_delta, U_delta, A, num_sample, modes):
     RHS_mat = np.zeros((4, num_sample, modes, modes))
     for it in range(num_sample):
         RHS_mat[0, it, ...] = V_delta[it].T @ A @ V_delta[it]  # A1
@@ -246,28 +246,28 @@ def RHS_offline_primal_FOTR_kdvb(V_delta, W_delta, U_delta, A, num_sample, modes
     return np.ascontiguousarray(RHS_mat)
 
 
-def DEIM_primal_FOTR_kdvb(T_delta, V_delta_primal, W_delta_primal, V_deim,
+def DEIM_primal_FOTR_kdv(T_delta, V_delta_primal, W_delta_primal, V_deim,
                           omega, num_sample, Nm, Nm_deim, delta_s):
     # Nonlinear DEIM prep for each possible shift sample
     DEIM_primal_mat = np.zeros((4, num_sample, Nm, Nm_deim))
 
-    for i in range(num_sample):
-        curly_U = T_delta[i] @ V_deim
-        if i == 0:
-            _, _, piv = qr(curly_U.T, pivoting=True, mode="economic")
-            S0 = np.sort(piv[:Nm_deim])
-            STcurlyU_inv = np.linalg.inv(curly_U[S0])
-            S = S0.copy()
-        else:
-            T_delta_dense = T_delta[i].toarray()
-            S_i_cont = T_delta_dense[:, S0]
-            S = np.argmax(np.abs(S_i_cont), axis=0, keepdims=False)
-            STcurlyU_inv = np.linalg.inv(curly_U[S])
-
-        DEIM_primal_mat[0, i, ...] = 6.0 * omega * (V_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon1
-        DEIM_primal_mat[1, i, ...] = 6.0 * omega * (W_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon2
-        DEIM_primal_mat[2, i, ...] = (V_delta_primal[i][S]).T  # S^T @ V
-        DEIM_primal_mat[3, i, ...] = (W_delta_primal[i][S]).T  # S^T @ D1 @ V,  Since D1 @ V = W
+    # for i in range(num_sample):
+    #     curly_U = T_delta[i] @ V_deim
+    #     if i == 0:
+    #         _, _, piv = qr(curly_U.T, pivoting=True, mode="economic")
+    #         S0 = np.sort(piv[:Nm_deim])
+    #         STcurlyU_inv = np.linalg.inv(curly_U[S0])
+    #         S = S0.copy()
+    #     else:
+    #         T_delta_dense = T_delta[i].toarray()
+    #         S_i_cont = T_delta_dense[:, S0]
+    #         S = np.argmax(np.abs(S_i_cont), axis=0, keepdims=False)
+    #         STcurlyU_inv = np.linalg.inv(curly_U[S])
+    #
+    #     DEIM_primal_mat[0, i, ...] = 6.0 * omega * (V_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon1
+    #     DEIM_primal_mat[1, i, ...] = 6.0 * omega * (W_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon2
+    #     DEIM_primal_mat[2, i, ...] = (V_delta_primal[i][S]).T  # S^T @ V
+    #     DEIM_primal_mat[3, i, ...] = (W_delta_primal[i][S]).T  # S^T @ D1 @ V,  Since D1 @ V = W
 
     return DEIM_primal_mat
 
@@ -283,32 +283,32 @@ def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
     return np.ascontiguousarray(C_mat)
 
 
-def DEIM_adjoint_FOTR_kdvb(T_delta, V_delta_adjoint, W_delta_adjoint, U_delta_adjoint,
+def DEIM_adjoint_FOTR_kdv(T_delta, V_delta_adjoint, W_delta_adjoint, U_delta_adjoint,
                            V_delta_primal, W_delta_primal, V_deim_a,
                            omega, num_sample, Nm_p, Nm_a, Nm_deim_a):
     # Nonlinear DEIM prep for each possible shift sample
     DEIM_adjoint_mat = np.zeros((4, num_sample, Nm_a, Nm_deim_a))
     DEIM_adjointMix_mat = np.zeros((2, num_sample, Nm_p, Nm_deim_a))
 
-    for i in range(num_sample):
-        curly_U = T_delta[i] @ V_deim_a
-        if i == 0:
-            _, _, piv = qr(curly_U.T, pivoting=True, mode="economic")
-            S0 = np.sort(piv[:Nm_deim_a])
-            STcurlyU_inv = np.linalg.inv(curly_U[S0])
-            S = S0.copy()
-        else:
-            T_delta_dense = T_delta[i].toarray()
-            S_i_cont = T_delta_dense[:, S0]
-            S = np.argmax(np.abs(S_i_cont), axis=0, keepdims=False)
-            STcurlyU_inv = np.linalg.inv(curly_U[S])
-
-        DEIM_adjoint_mat[0, i, ...] = 6.0 * omega * (V_delta_adjoint[i].T @ curly_U) @ STcurlyU_inv  # epsilon1
-        DEIM_adjoint_mat[1, i, ...] = (V_delta_adjoint[i][S]).T  # S^T @ V_a
-        DEIM_adjoint_mat[2, i, ...] = (W_delta_adjoint[i][S]).T  # S^T @ W_a  = S^T @ (D1 @ V_a)
-        DEIM_adjoint_mat[3, i, ...] = (U_delta_adjoint[i][S]).T  # S^T @ U_a  = S^T @ (D1 @ W_a)
-        DEIM_adjointMix_mat[0, i, ...] = (V_delta_primal[i][S]).T  # S^T @ V_p
-        DEIM_adjointMix_mat[1, i, ...] = (W_delta_primal[i][S]).T  # S^T @ (D1 @ V_p) = S^T @ W_p
+    # for i in range(num_sample):
+    #     curly_U = T_delta[i] @ V_deim_a
+    #     if i == 0:
+    #         _, _, piv = qr(curly_U.T, pivoting=True, mode="economic")
+    #         S0 = np.sort(piv[:Nm_deim_a])
+    #         STcurlyU_inv = np.linalg.inv(curly_U[S0])
+    #         S = S0.copy()
+    #     else:
+    #         T_delta_dense = T_delta[i].toarray()
+    #         S_i_cont = T_delta_dense[:, S0]
+    #         S = np.argmax(np.abs(S_i_cont), axis=0, keepdims=False)
+    #         STcurlyU_inv = np.linalg.inv(curly_U[S])
+    #
+    #     DEIM_adjoint_mat[0, i, ...] = 6.0 * omega * (V_delta_adjoint[i].T @ curly_U) @ STcurlyU_inv  # epsilon1
+    #     DEIM_adjoint_mat[1, i, ...] = (V_delta_adjoint[i][S]).T  # S^T @ V_a
+    #     DEIM_adjoint_mat[2, i, ...] = (W_delta_adjoint[i][S]).T  # S^T @ W_a  = S^T @ (D1 @ V_a)
+    #     DEIM_adjoint_mat[3, i, ...] = (U_delta_adjoint[i][S]).T  # S^T @ U_a  = S^T @ (D1 @ W_a)
+    #     DEIM_adjointMix_mat[0, i, ...] = (V_delta_primal[i][S]).T  # S^T @ V_p
+    #     DEIM_adjointMix_mat[1, i, ...] = (W_delta_primal[i][S]).T  # S^T @ (D1 @ V_p) = S^T @ W_p
 
 
     return DEIM_adjoint_mat, DEIM_adjointMix_mat
@@ -326,12 +326,11 @@ def Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint
 
 
 @njit(parallel=True)
-def Target_offline_adjoint_FOTR_mix(V_delta_primal, V_aT, num_samples, modes_a, modes_p):
+def Target_offline_adjoint_FOTR_mix(V_delta_primal, V_aT, CTC, num_samples, modes_a, modes_p):
     V_aTVd_p_mat = np.zeros((num_samples, modes_a, modes_p), dtype=V_delta_primal.dtype)
 
     for i in prange(num_samples):
-        V_aTVd_p_mat[i, ...] = V_aT @ V_delta_primal[i]
-
+        V_aTVd_p_mat[i, ...] = V_aT[:, CTC] @ V_delta_primal[i][CTC, :]
     return np.ascontiguousarray(V_aTVd_p_mat)
 
 
@@ -361,7 +360,43 @@ def Matrices_online_primal_FOTR(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
 
 
 @njit
-def Matrices_online_primal_FOTR_kdvb_expl(LHS_matrix, RHS_matrix, DEIM_matrix, C_matrix, f, a, ds, modes):
+def Matrices_online_adjoint_FOTR_expl(LHS_matrix, RHS_matrix, Tar_matrix, CTC, Vda, Wda,
+                                      qs_target, as_adj, as_, modes_a, modes_p, ds, dx):
+    M = np.empty((modes_a + 1, modes_a + 1), dtype=LHS_matrix[0].dtype)
+    A = np.empty(modes_a + 1)
+    as_adj_ = as_adj[:-1]  # Take the modes from the adjoint solution
+    as_p = as_[:-1]
+    z_p = as_[-1]
+
+    # Compute the interpolation weight and the interval in which the shift lies
+    # (This is very IMPORTANT. DO NOT REPLACE !!!!!!) The RK4 steps need the intermediate value of shift for
+    # correct interpolation index and weights calculation
+    intervalIdx, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -z_p)
+
+    Da = as_adj_.reshape(-1, 1)
+
+    M[:modes_a, :modes_a] = LHS_matrix[0]
+    M[:modes_a, modes_a:] = LHS_matrix[1] @ Da
+    M[modes_a:, :modes_a] = M[:modes_a, modes_a:].T
+    M[modes_a:, modes_a:] = Da.T @ (LHS_matrix[2] @ Da)
+
+    A[:modes_a] = - RHS_matrix[0] @ as_adj_ - dx * (np.add(weight * Tar_matrix[0, intervalIdx],
+                                                           (1 - weight) * Tar_matrix[0, intervalIdx + 1]) @ as_p -
+                                                    np.add(weight * Vda[intervalIdx],
+                                                           (1 - weight) * Vda[intervalIdx + 1])[CTC, :].T @ qs_target[
+                                                        CTC])
+
+    A[modes_a:] = - Da.T @ (RHS_matrix[1] @ as_adj_ + dx * (np.add(weight * Tar_matrix[1, intervalIdx],
+                                                                   (1 - weight) * Tar_matrix[
+                                                                       1, intervalIdx + 1]) @ as_p -
+                                                            np.add(weight * Wda[intervalIdx],
+                                                                   (1 - weight) * Wda[intervalIdx + 1])[CTC, :].T @ qs_target[CTC]))
+
+    return np.ascontiguousarray(M), np.ascontiguousarray(A)
+
+
+@njit
+def Matrices_online_primal_FOTR_kdv_expl(LHS_matrix, RHS_matrix, DEIM_matrix, C_matrix, f, a, ds, modes):
     M = np.empty((modes + 1, modes + 1), dtype=LHS_matrix[0].dtype)
     A = np.empty(modes + 1)
     as_ = a[:-1]
@@ -399,7 +434,7 @@ def Matrices_online_primal_FOTR_kdvb_expl(LHS_matrix, RHS_matrix, DEIM_matrix, C
 
 
 @njit
-def Matrices_online_adjoint_FOTR_expl(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_mix_matrix, Tar_matrix, CTC, Vda, Wda,
+def Matrices_online_adjoint_FOTR_kdv_expl(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_mix_matrix, Tar_matrix, CTC, Vda, Wda,
                                       qs_target, as_adj, as_, modes_a, modes_p, ds, dx):
     M = np.empty((modes_a + 1, modes_a + 1), dtype=LHS_matrix[0].dtype)
     A = np.empty(modes_a + 1)
@@ -535,7 +570,7 @@ def LHS_offline_primal_FRTO(V_delta, W_delta, modes):
 
 
 @njit(parallel=True)
-def LHS_offline_primal_FRTO_kdvb(V_delta, W_delta, U_delta, num_sample, modes):
+def LHS_offline_primal_FRTO_kdv(V_delta, W_delta, U_delta, num_sample, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
     LHS_mat = np.zeros((6, num_sample, modes, modes))
     for it in prange(num_sample):
@@ -557,7 +592,7 @@ def RHS_offline_primal_FRTO(V_delta, W_delta, A, modes):
     return np.ascontiguousarray(RHS_mat)
 
 
-def RHS_offline_primal_FRTO_kdvb(V_delta, W_delta, U_delta, A, num_sample, modes):
+def RHS_offline_primal_FRTO_kdv(V_delta, W_delta, U_delta, A, num_sample, modes):
     RHS_mat = np.zeros((4, num_sample, modes, modes))
     for it in range(num_sample):
         RHS_mat[0, it, ...] = V_delta[it].T @ A @ V_delta[it]  # A1
@@ -568,51 +603,51 @@ def RHS_offline_primal_FRTO_kdvb(V_delta, W_delta, U_delta, A, num_sample, modes
     return np.ascontiguousarray(RHS_mat)
 
 
-def DEIM_primal_FRTO_kdvb(T_delta, V_delta_primal, W_delta_primal, U_delta_primal, V_deim, D1, omega, num_sample, Nm,
+def DEIM_primal_FRTO_kdv(T_delta, V_delta_primal, W_delta_primal, U_delta_primal, V_deim, D1, omega, num_sample, Nm,
                           Nm_deim, delta_s):
     # Nonlinear DEIM prep for each possible shift sample
     DEIM_primal_mat = np.zeros((10, num_sample, Nm, Nm_deim))
     DEIM_mat = np.zeros((2, num_sample, Nm_deim, Nm_deim))
 
-    for i in range(num_sample):  # THIS COULD BE SIMPLIFIED BY CONSIDERING REMARK.6 FROM THE WILDFIRE PAPER.
-        # curly_U = T_delta[i] @ V_deim
-        # _, _, piv = qr(curly_U.T, pivoting=True)
-        # S = np.sort(piv[:Nm_deim])
-        # STcurlyU_inv = np.linalg.inv(curly_U[S])
-        # S_dash = np.copy(S)
-        # act = 0
-
-        curly_U = T_delta[i] @ V_deim
-        if i == 0:
-            _, _, piv = qr(curly_U.T, pivoting=True, mode="economic")
-            S0 = np.sort(piv[:Nm_deim])
-            STcurlyU_inv = np.linalg.inv(curly_U[S0])
-            S = S0.copy()
-            S_dash = np.zeros_like(S0)
-            act = 0.0
-        else:
-            T_delta_dense = T_delta[i].toarray()
-            T_delta_dense_dash = D1 @ T_delta_dense
-            S_i_cont = T_delta_dense[:, S0]
-            S_i_cont_dash = T_delta_dense_dash[:, S0]
-            S = np.argmax(np.abs(S_i_cont), axis=0, keepdims=False)
-            S_dash = np.argmax(np.abs(S_i_cont_dash), axis=0, keepdims=False)
-            STcurlyU_inv = np.linalg.inv(curly_U[S])
-            act = 1.0
-
-        DEIM_primal_mat[0, i, ...] = 6.0 * omega * (V_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon1
-        DEIM_primal_mat[1, i, ...] = 6.0 * omega * (W_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon2
-        DEIM_primal_mat[2, i, ...] = 6.0 * omega * (U_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon3
-        DEIM_primal_mat[3, i, ...] = 6.0 * omega * (V_delta_primal[i].T @ (D1 @ curly_U)) @ STcurlyU_inv  # epsilon1'
-        DEIM_primal_mat[4, i, ...] = 6.0 * omega * (W_delta_primal[i].T @ (D1 @ curly_U)) @ STcurlyU_inv  # epsilon2'
-        DEIM_primal_mat[5, i, ...] = (V_delta_primal[i][S]).T  # S^T @ V
-        DEIM_primal_mat[6, i, ...] = (W_delta_primal[i][S]).T  # S^T @ D1 @ V,  Since D1 @ V = W
-        DEIM_primal_mat[7, i, ...] = (U_delta_primal[i][S]).T  # S^T @ D1 @ W,  Since D1 @ W = U
-        DEIM_primal_mat[8, i, ...] = act * (V_delta_primal[i][S_dash]).T  # (S^T)' @ V
-        DEIM_primal_mat[9, i, ...] = act * (W_delta_primal[i][S_dash]).T  # (S^T)' @ D1 @ V
-
-        DEIM_mat[0, i, ...] = (D1 @ curly_U)[S] + act * curly_U[S_dash]  # S^T U' + (S^T)' U
-        DEIM_mat[1, i, ...] = STcurlyU_inv  # (S^T U)^{-1}
+    # for i in range(num_sample):  # THIS COULD BE SIMPLIFIED BY CONSIDERING REMARK.6 FROM THE WILDFIRE PAPER.
+    #     # curly_U = T_delta[i] @ V_deim
+    #     # _, _, piv = qr(curly_U.T, pivoting=True)
+    #     # S = np.sort(piv[:Nm_deim])
+    #     # STcurlyU_inv = np.linalg.inv(curly_U[S])
+    #     # S_dash = np.copy(S)
+    #     # act = 0
+    #
+    #     curly_U = T_delta[i] @ V_deim
+    #     if i == 0:
+    #         _, _, piv = qr(curly_U.T, pivoting=True, mode="economic")
+    #         S0 = np.sort(piv[:Nm_deim])
+    #         STcurlyU_inv = np.linalg.inv(curly_U[S0])
+    #         S = S0.copy()
+    #         S_dash = np.zeros_like(S0)
+    #         act = 0.0
+    #     else:
+    #         T_delta_dense = T_delta[i].toarray()
+    #         T_delta_dense_dash = D1 @ T_delta_dense
+    #         S_i_cont = T_delta_dense[:, S0]
+    #         S_i_cont_dash = T_delta_dense_dash[:, S0]
+    #         S = np.argmax(np.abs(S_i_cont), axis=0, keepdims=False)
+    #         S_dash = np.argmax(np.abs(S_i_cont_dash), axis=0, keepdims=False)
+    #         STcurlyU_inv = np.linalg.inv(curly_U[S])
+    #         act = 1.0
+    #
+    #     DEIM_primal_mat[0, i, ...] = 6.0 * omega * (V_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon1
+    #     DEIM_primal_mat[1, i, ...] = 6.0 * omega * (W_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon2
+    #     DEIM_primal_mat[2, i, ...] = 6.0 * omega * (U_delta_primal[i].T @ curly_U) @ STcurlyU_inv  # epsilon3
+    #     DEIM_primal_mat[3, i, ...] = 6.0 * omega * (V_delta_primal[i].T @ (D1 @ curly_U)) @ STcurlyU_inv  # epsilon1'
+    #     DEIM_primal_mat[4, i, ...] = 6.0 * omega * (W_delta_primal[i].T @ (D1 @ curly_U)) @ STcurlyU_inv  # epsilon2'
+    #     DEIM_primal_mat[5, i, ...] = (V_delta_primal[i][S]).T  # S^T @ V
+    #     DEIM_primal_mat[6, i, ...] = (W_delta_primal[i][S]).T  # S^T @ D1 @ V,  Since D1 @ V = W
+    #     DEIM_primal_mat[7, i, ...] = (U_delta_primal[i][S]).T  # S^T @ D1 @ W,  Since D1 @ W = U
+    #     DEIM_primal_mat[8, i, ...] = act * (V_delta_primal[i][S_dash]).T  # (S^T)' @ V
+    #     DEIM_primal_mat[9, i, ...] = act * (W_delta_primal[i][S_dash]).T  # (S^T)' @ D1 @ V
+    #
+    #     DEIM_mat[0, i, ...] = (D1 @ curly_U)[S] + act * curly_U[S_dash]  # S^T U' + (S^T)' U
+    #     DEIM_mat[1, i, ...] = STcurlyU_inv  # (S^T U)^{-1}
 
     return DEIM_primal_mat, DEIM_mat
 
@@ -666,7 +701,7 @@ def Matrices_online_primal_FRTO(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
 
 
 @njit
-def Matrices_online_primal_FRTO_kdvb_expl(LHS_matrix, RHS_matrix, DEIM_matrix, C_matrix, f, a, ds, modes):
+def Matrices_online_primal_FRTO_kdv_expl(LHS_matrix, RHS_matrix, DEIM_matrix, C_matrix, f, a, ds, modes):
     M = np.empty((modes + 1, modes + 1), dtype=LHS_matrix[0].dtype)
     A = np.empty(modes + 1)
     as_ = a[:-1]

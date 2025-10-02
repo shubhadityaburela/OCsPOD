@@ -89,13 +89,13 @@ def ControlSelectionMatrix(wf, n_c, Gaussian=False, trim_first_n=0, gaussian_mas
         print("Number of controls should always be more than the number which you want to trim out. "
               "Set it accordingly. Exiting !!!!!!!")
         exit()
-    psi = np.zeros((wf.Nxi, n_c - trim_first_n), order="F")
+    psi = np.zeros((wf.Nx, n_c - trim_first_n), order="F")
     if Gaussian:
         for i in range(n_c - trim_first_n):
-            psi[:, i] = func(wf.X - wf.Lxi / n_c - (trim_first_n + i) * wf.Lxi / n_c,
+            psi[:, i] = func(wf.X - wf.Lx / n_c - (trim_first_n + i) * wf.Lx / n_c,
                              sigma=gaussian_mask_sigma)  # Could also divide the middle quantity by 2 for similar non-overlapping gaussians
     else:
-        control_index = np.array_split(np.arange(start_controlling_from, wf.Nxi), n_c)
+        control_index = np.array_split(np.arange(start_controlling_from, wf.Nx), n_c)
         for i in range(n_c - trim_first_n):
             psi[control_index[trim_first_n + i], i] = 1.0
 

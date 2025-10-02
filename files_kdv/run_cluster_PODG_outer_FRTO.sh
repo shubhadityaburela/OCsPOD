@@ -1,12 +1,17 @@
 #!/bin/bash
 
 mode_sets=(
-  "2 2"
-  "5 5"
-  "8 8"
   "10 10"
-  "12 12"
-  "15 15"
+  "50 50"
+  "100 100"
+  "150 150"
+  "200 200"
+  "250 250"
+  "300 300"
+  "350 350"
+  "400 400"
+  "450 450"
+  "500 500"
 )
 
 
@@ -17,7 +22,7 @@ for script_type in fixed adaptive; do
       read -r mode1 mode2 <<< "$ms"
 
       echo "Submitting job: script_type=$script_type, common_basis=$common_basis, modes=($mode1,$mode2)"
-      sbatch run_cluster_sPODG_inner_FRTO.sh \
+      sbatch run_cluster_PODG_inner_FRTO.sh \
         "$common_basis" \
         "modes" \
         "$mode1" "$mode2" \
@@ -25,5 +30,3 @@ for script_type in fixed adaptive; do
     done
   done
 done
-
-

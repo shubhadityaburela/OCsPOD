@@ -8,20 +8,29 @@ from time import perf_counter
 
 import numpy as np
 import scipy
+from matplotlib import animation, pyplot as plt
 
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
-from FOM_solver import IC_primal_kdvb, IC_adjoint_kdvb, TI_primal_kdvb_impl, TI_adjoint_kdvb_impl
+from FOM_solver import IC_primal_kdv, TI_primal_kdv_impl, TI_adjoint_kdv_impl, IC_adjoint_kdv, TI_adjoint_kdv_expl
 from Grads import Calc_Grad_smooth, Calc_Grad_mapping
-from Helper import ControlSelectionMatrix_kdvb, L2norm_ROM, check_weak_divergence
-from Update import get_BB_step, Update_Control_TWBT_kdvb, Update_Control_BB_kdvb
-from grid_params import Korteweg_de_Vries_Burgers
+from Helper import ControlSelectionMatrix_kdvb, L2norm_ROM, check_weak_divergence, L2inner_prod, calc_shift, \
+    compute_red_basis
+from Helper_sPODG import get_T
+from Update import get_BB_step, Update_Control_TWBT_kdv, Update_Control_BB_kdv
+from grid_params import Korteweg_de_Vries
 from Plots import PlotFlow
+
+np.random.seed(0)
 
 
 # ───────────────────────────────────────────────────────────────────────
 def parse_arguments():
     p = argparse.ArgumentParser(description="Input the variables for running the script.")
+    p.add_argument("fully_nonlinear", type=literal_eval, choices=[True, False],
+                   help="Select True for fully nonlinear else False? (True/False)")
+    p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
+                   help="Enter the grid resolution and the cfl factor")
     p.add_argument("N_iter", type=int, help="Number of optimization iterations")
     p.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
                    help="Directory prefix for I/O")
@@ -32,18 +41,17 @@ def parse_arguments():
     return p.parse_args()
 
 
-def setup_kdvb():
-    Nx, Nt = 2000, 4000
-    kdvb = Korteweg_de_Vries_Burgers(Nx=Nx, timesteps=Nt, cfl=0.4, v_x=220.0,
-                                     variance=5e6, offset=30)
-    kdvb.Grid()
-    return kdvb
+def setup_kdv(Nx, Nt, cfl_fac):
+    kdv = Korteweg_de_Vries(Nx=Nx, timesteps=Nt, cfl=0.17 / cfl_fac, v_x=8 / 3, offset=20)
+    kdv.Grid()
+    return kdv
 
 
-def build_dirs(prefix, reg_tuple, CTC_mask):
+def build_dirs(prefix, fully_nonlinear, reg_tuple, CTC_mask):
     reg_str = f"L1={reg_tuple[0]}_L2={reg_tuple[1]}"
-    data_dir = os.path.join(prefix, "data/FOM_kdv", reg_str, f"CTC_mask={CTC_mask}")
-    plot_dir = os.path.join(prefix, "plots/FOM_kdv", reg_str, f"CTC_mask={CTC_mask}")
+    fnl_str = f"fully_nonlinear={fully_nonlinear}"
+    data_dir = os.path.join(prefix, "data/FOM_kdv", fnl_str, reg_str, f"CTC_mask={CTC_mask}")
+    plot_dir = os.path.join(prefix, "plots/FOM_kdv", fnl_str, reg_str, f"CTC_mask={CTC_mask}")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
     return data_dir, plot_dir
@@ -98,30 +106,33 @@ def C_matrix(Nx, CTC_end_index, apply_CTC_mask=False):  # For now not active
 if __name__ == "__main__":
     args = parse_arguments()
 
+    print(f"Problem type (full nonlinearity)= {args.fully_nonlinear}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
+    print(f"Grid = {tuple(args.grid)}")
 
     # Unpack regularization parameters
     L1_reg, L2_reg = args.reg
+    Nx, Nt, cfl_fac = args.grid
 
     # Set up kdvb and control matrix
-    kdvb = setup_kdvb()
+    kdv = setup_kdv(Nx, Nt, cfl_fac)
 
     if L1_reg != 0 and L2_reg == 0:  # Purely L1
-        n_c_init = kdvb.Nx
-        psi = ControlSelectionMatrix_kdvb(kdvb, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+        n_c_init = kdv.Nx
+        psi = ControlSelectionMatrix_kdvb(kdv, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
         adjust = 1.0
     else:  # Mix type
         n_c_init = 100
-        psi = ControlSelectionMatrix_kdvb(kdvb, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
-        adjust = kdvb.dx
+        psi = ControlSelectionMatrix_kdvb(kdv, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+        adjust = kdv.dx
     n_c = psi.shape[1]
 
     # Prepare kwargs
     kwargs = {
-        'dx': kdvb.dx,
-        'dt': kdvb.dt,
-        'Nx': kdvb.Nx,
-        'Nt': kdvb.Nt,
+        'dx': kdv.dx,
+        'dt': kdv.dt,
+        'Nx': kdv.Nx,
+        'Nt': kdv.Nt,
         'n_c': n_c,
         'lamda_l1': L1_reg,
         'lamda_l2': L2_reg,
@@ -131,46 +142,61 @@ if __name__ == "__main__":
         'beta': 1 / 2,  # for TWBT
         'verbose': True,
         'omega_cutoff': 1e-10,
+        'perform_grad_check': False,
     }
-    f = np.zeros((n_c, kdvb.Nt))  # initial control guess
+    f = np.zeros((n_c, kdv.Nt))  # initial control guess
+    df = np.random.randn(*f.shape)
     psi = scipy.sparse.csc_matrix(psi)
 
     # Build coefficient matrices
-    Mat = CoefficientMatrix(orderDerivative=kdvb.firstderivativeOrder,
-                            Nxi=kdvb.Nx, Neta=1,
+    Mat = CoefficientMatrix(orderDerivative=kdv.firstderivativeOrder,
+                            Nxi=kdv.Nx, Neta=1,
                             periodicity='Periodic',
-                            dx=kdvb.dx, dy=0)
-    A_p = - kdvb.v_x[0] * Mat.Grad_Xi_kron
+                            dx=kdv.dx, dy=0)
     D1 = Mat.Grad_Xi_kron
     D2 = Mat.Grad_Xi_kron @ D1
     D3 = Mat.Grad_Xi_kron @ D2
 
     # Calculate the CTC matrix/array  (CTC and C are exactly the same)
-    C = C_matrix(kdvb.Nx, None, apply_CTC_mask=args.CTC_mask_activate)
+    C = C_matrix(kdv.Nx, None, apply_CTC_mask=args.CTC_mask_activate)
     CTC = C.copy()
 
-    common_params = dict(A=A_p, D1=D1, D2=D2, D3=D3)
+    common_params = dict(D1=D1, D2=D2, D3=D3)
     shared_dynamics = {**common_params, 'B': psi}
-    params_primal = {**shared_dynamics, 'omega': 4e-1, 'gamma': 1e-2, 'nu': 1e-2}
-    params_target = {**shared_dynamics, 'omega': 1e0, 'gamma': 1e6, 'nu': 1e5}
-    params_adjoint = {**common_params, 'CTC': CTC, 'omega': 4e-1, 'gamma': 1e-2, 'nu': 1e-2}
 
-    J_l = scipy.sparse.identity(kdvb.Nx, format='csc') - 0.5 * kdvb.dt * (
-                A_p - params_primal['gamma'] * D3 + params_primal['nu'] * D2)
-    J_l_adjoint = scipy.sparse.identity(kdvb.Nx, format='csc') + 0.5 * kdvb.dt * (
-                - A_p.T + params_primal['gamma'] * D3.T - params_primal['nu'] * D2.T)
-    J_l_target = scipy.sparse.identity(kdvb.Nx, format='csc') - 0.5 * kdvb.dt * (
-                A_p - params_target['gamma'] * D3 + params_target['nu'] * D2)
+    if args.fully_nonlinear:
+        # Nonlinear
+        target_params = {'c': kdv.v_x[0], 'alpha': 0.0, 'omega': 1.4, 'gamma': 1.4, 'nu': 0.06}
+        shared_params = {'c': kdv.v_x[0], 'alpha': 0.0, 'omega': 1.0, 'gamma': 1.0, 'nu': 0.0}
+    else:
+        # Nearly linear
+        target_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
+        shared_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.0}
+
+    # Nonlinearity less prevalent
+    params_primal = {**shared_dynamics, **shared_params}
+    params_target = {**shared_dynamics, **target_params}
+    params_adjoint = {**common_params, 'CTC': CTC, **shared_params}
+
+    J_l = scipy.sparse.identity(kdv.Nx, format='csc') - 0.5 * kdv.dt * (
+            params_primal['alpha'] * (- params_primal['c']) * D1
+            - params_primal['gamma'] * D3 + params_primal['nu'] * D2)
+    J_l_adjoint = scipy.sparse.identity(kdv.Nx, format='csc') + 0.5 * kdv.dt * (
+            params_adjoint['alpha'] * params_adjoint['c'] * D1.T
+            + params_adjoint['gamma'] * D3.T - params_adjoint['nu'] * D2.T)
+    J_l_target = scipy.sparse.identity(kdv.Nx, format='csc') - 0.5 * kdv.dt * (
+            params_target['alpha'] * (- params_target['c']) * D1
+            - params_target['gamma'] * D3 + params_target['nu'] * D2)
 
     # Solve uncontrolled FOM once
-    qs0 = IC_primal_kdvb(kdvb.X, kdvb.Lx, kdvb.offset, kdvb.variance)
-    qs_org = TI_primal_kdvb_impl(qs0, f, J_l, kdvb.Nx, kdvb.Nt, kdvb.dt, **params_primal)
-    qs_target = TI_primal_kdvb_impl(qs0, f, J_l_target, kdvb.Nx, kdvb.Nt, kdvb.dt, **params_target)
+    qs0 = IC_primal_kdv(kdv.X, kdv.Lx, kdv.c, kdv.offset)
+    qs_org = TI_primal_kdv_impl(qs0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+    qs_target = TI_primal_kdv_impl(qs0, np.zeros_like(f), J_l_target, kdv.Nx, kdv.Nt, kdv.dt, **params_target)
     q0 = np.ascontiguousarray(qs0)
-    q0_adj = np.ascontiguousarray(IC_adjoint_kdvb(kdvb.X))
+    q0_adj = np.ascontiguousarray(IC_adjoint_kdv(kdv.X))
 
     # Prepare directories
-    data_dir, plot_dir = build_dirs(args.dir_prefix, args.reg, args.CTC_mask_activate)
+    data_dir, plot_dir = build_dirs(args.dir_prefix, args.fully_nonlinear, args.reg, args.CTC_mask_activate)
 
     # Collector lists
     dL_du_norm_list = []
@@ -183,9 +209,9 @@ if __name__ == "__main__":
     start_total = time.time()
     t0 = perf_counter()
 
-    omega_twbt = 1e-8
-    omega_bb = 1e-8
-    omega = 1e-8
+    omega_twbt = 1
+    omega_bb = 1
+    omega = 1
     stag = False
     stag_cntr = 0
 
@@ -198,7 +224,7 @@ if __name__ == "__main__":
             print(f"Optimization step: {opt_step}")
 
             # ───── Forward FOM:  ─────
-            qs = TI_primal_kdvb_impl(qs0, f, J_l, kdvb.Nx, kdvb.Nt, kdvb.dt, **params_primal)
+            qs = TI_primal_kdv_impl(q0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
 
             # ───── Compute costs ─────
             J_s, J_ns = Calc_Cost(qs, qs_target, f, C, kwargs['dx'], kwargs['dt'],
@@ -213,8 +239,8 @@ if __name__ == "__main__":
                 best_control = f.copy()
 
             # ───── Backward FOM (adjoint) ─────
-            qs_adj = TI_adjoint_kdvb_impl(q0_adj, qs, qs_target, J_l_adjoint,
-                                          kdvb.Nx, kdvb.Nt, kdvb.dx, kdvb.dt, **params_adjoint)
+            qs_adj = TI_adjoint_kdv_impl(q0_adj, qs, qs_target, J_l_adjoint, kdv.Nx, kdv.Nt, kdv.dx, kdv.dt,
+                                         **params_adjoint)
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
             dL_du_s = Calc_Grad_smooth(psi, f, qs_adj, kwargs['lamda_l2'])
@@ -223,6 +249,18 @@ if __name__ == "__main__":
 
             dL_du_norm_list.append(dL_du_norm)
 
+            # ───── Gradient check with Finite differences ─────
+            if kwargs['perform_grad_check']:
+                print("-------------GRAD CHECK-----------------")
+                eps = 1e-5
+                f_rand = f + eps * df
+                qs_rand = TI_primal_kdv_impl(q0, f_rand, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+                J_s_eps, J_ns_eps = Calc_Cost(qs_rand, qs_target, f_rand, C, kwargs['dx'], kwargs['dt'],
+                                              kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+                J_FOM_eps = J_s_eps + J_ns_eps
+                print("Finite difference gradient", (J_FOM_eps - J_FOM) / eps)
+                print("Analytic gradient", L2inner_prod(dL_du_g, df, kwargs['dt']))
+
             # ───── Step‐size: BB vs. TWBT, including Armijo‐stagnation logic ─────
             ratio = dL_du_norm / dL_du_norm_list[0]
             if ratio < 5e-3:
@@ -230,18 +268,18 @@ if __name__ == "__main__":
                 omega_bb = get_BB_step(fOld, f, dL_du_Old, dL_du_s, opt_step, **kwargs)
                 if omega_bb < 0:
                     print("WARNING: BB gave negative step size thus resorting to using TWBT")
-                    fNew, omega_twbt, stag = Update_Control_TWBT_kdvb(f, q0, qs_target, J_s, omega_twbt,
-                                                                      dL_du_s,
-                                                                      C, adjust, J_l, params_primal, **kwargs)
+                    fNew, omega_twbt, stag = Update_Control_TWBT_kdv(f, q0, qs_target, J_s, omega_twbt,
+                                                                     dL_du_s,
+                                                                     C, adjust, J_l, params_primal, **kwargs)
                     omega = omega_twbt
                 else:
-                    fNew = Update_Control_BB_kdvb(f, dL_du_s, omega_bb, kwargs['lamda_l1'])
+                    fNew = Update_Control_BB_kdv(f, dL_du_s, omega_bb, kwargs['lamda_l1'])
                     stag = False
                     omega = omega_bb
             else:
                 print("TWBT acting…")
-                fNew, omega_twbt, stag = Update_Control_TWBT_kdvb(f, q0, qs_target, J_s, omega_twbt, dL_du_s,
-                                                                  C, adjust, J_l, params_primal, **kwargs)
+                fNew, omega_twbt, stag = Update_Control_TWBT_kdv(f, q0, qs_target, J_s, omega_twbt, dL_du_s,
+                                                                 C, adjust, J_l, params_primal, **kwargs)
                 omega = omega_twbt
 
             t1 = perf_counter()
@@ -267,8 +305,8 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal_kdvb_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                                  **params_primal)
+                qs_opt_full = TI_primal_kdv_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                                 **params_primal)
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -284,8 +322,8 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal_kdvb_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                                  **params_primal)
+                qs_opt_full = TI_primal_kdv_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                                 **params_primal)
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -353,8 +391,8 @@ if __name__ == "__main__":
 
                     # store last valid control and possibly update best_details
                     f_last_valid = f.copy()
-                    qs_cand = TI_primal_kdvb_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                                  **params_primal)
+                    qs_cand = TI_primal_kdv_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                                 **params_primal)
                     JJ_s_cand, JJ_ns_cand = Calc_Cost(
                         qs_cand, qs_target, f_last_valid, C,
                         kwargs['dx'], kwargs['dt'],
@@ -397,20 +435,20 @@ if __name__ == "__main__":
 
     # ─────────────────────────────────────────────────────────────────────
     # Compute best control based cost
-    qs_opt_full = TI_primal_kdvb_impl(q0, best_control, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                      **params_primal)
-    qs_adj_opt = TI_adjoint_kdvb_impl(q0_adj, qs_opt_full, qs_target, J_l_adjoint,
-                                      kdvb.Nx, kdvb.Nt, kdvb.dx, kdvb.dt, **params_adjoint)
+    qs_opt_full = TI_primal_kdv_impl(q0, best_control, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                     **params_primal)
+    qs_adj_opt = TI_adjoint_kdv_impl(q0_adj, qs_opt_full, qs_target, J_l_adjoint,
+                                     kdv.Nx, kdv.Nt, kdv.dx, kdv.dt, **params_adjoint)
     f_opt = psi @ best_control
     J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
     J_final = J_s_f + J_ns_f
 
     # Compute last valid control based cost
-    qs_opt_full__ = TI_primal_kdvb_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                        **params_primal)
-    qs_adj_opt__ = TI_adjoint_kdvb_impl(q0_adj, qs_opt_full__, qs_target, J_l_adjoint,
-                                        kdvb.Nx, kdvb.Nt, kdvb.dx, kdvb.dt, **params_adjoint)
+    qs_opt_full__ = TI_primal_kdv_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                       **params_primal)
+    qs_adj_opt__ = TI_adjoint_kdv_impl(q0_adj, qs_opt_full__, qs_target, J_l_adjoint,
+                                       kdv.Nx, kdv.Nt, kdv.dx, kdv.dt, **params_adjoint)
     f_opt__ = psi @ f_last_valid
     J_s_f__, J_ns_f__ = Calc_Cost(qs_opt_full__, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                   kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -426,7 +464,7 @@ if __name__ == "__main__":
     # np.save(os.path.join(data_dir, "qs_target.npy"), qs_target)
 
     # Plot results
-    pf = PlotFlow(kdvb.X, kdvb.t)
+    pf = PlotFlow(kdv.X, kdv.t)
     pf.plot1D(qs_org, name="qs_org", immpath=plot_dir)
     pf.plot1D(qs_target, name="qs_target", immpath=plot_dir)
     pf.plot1D(qs_opt_full, name="qs_opt", immpath=plot_dir)
@@ -486,9 +524,9 @@ if __name__ == "__main__":
     # fig, ax = plt.subplots(figsize=(8, 4))
     # # plot both on the same axes, with labels
     # line1, = ax.plot(kdvb.X, qs_org[:, 0], lw=2, label='Original')
-    # # line2, = ax.plot(kdvb.X, qs_org_impl[:, 0], lw=2, label='Controlled')
+    # line2, = ax.plot(kdvb.X, qs_target[:, 0], lw=2, label='Target')
     # ax.set_xlim(kdvb.X.min(), kdvb.X.max())
-    # ax.set_ylim(-0.1, 1)
+    # # ax.set_ylim(-1, 2)
     # ax.set_xlabel('x')
     # ax.set_ylabel('u(x,t)')
     # ax.legend()
@@ -496,11 +534,69 @@ if __name__ == "__main__":
     # def update(frame_index):
     #     idx = frames[frame_index]
     #     line1.set_ydata(qs_org[:, idx])
-    #     # line2.set_ydata(qs_org_impl[:, idx])
+    #     line2.set_ydata(qs_target[:, idx])
     #     title.set_text(f"t = {kdvb.t[idx]:.2f}")
-    #     return line1, None, title
+    #     return line1, line2, title
     # ani = animation.FuncAnimation(
     #     fig, update, frames=len(frames), interval=30, blit=False
     # )
     # plt.show()
+    #
+    #
+    # plt.pcolormesh(qs_org.T)
+    # plt.show()
+    # plt.pcolormesh(qs_target.T)
+    # plt.show()
+    # exit()
+
+    # # Faster animation by subsampling frames and overlaying two curves
+    # skip = 20  # show every 20th time step
+    # frames = range(0, len(kdv.t), skip)
+    # fig, ax = plt.subplots(figsize=(8, 4))
+    # # plot both on the same axes, with labels
+    # line1, = ax.plot(kdv.X, qs_org[:, 0], lw=2, label='Original')
+    # line2, = ax.plot(kdv.X, qs_target[:, 0], lw=2, label='Target')
+    # ax.set_xlim(kdv.X.min(), kdv.X.max())
+    # # ax.set_ylim(-1, 2)
+    # ax.set_xlabel('x')
+    # ax.set_ylabel('u(x,t)')
+    # ax.legend()
+    # title = ax.set_title('')
+    # def update(frame_index):
+    #     idx = frames[frame_index]
+    #     line1.set_ydata(qs_org[:, idx])
+    #     line2.set_ydata(qs_target[:, idx])
+    #     title.set_text(f"t = {kdv.t[idx]:.2f}")
+    #     return line1, line2, title
+    # ani = animation.FuncAnimation(
+    #     fig, update, frames=len(frames), interval=30, blit=False
+    # )
+    # plt.show()
+    #
+    #
+    # plt.pcolormesh(qs_org.T)
+    # plt.show()
+    # plt.pcolormesh(qs_target.T)
+    # plt.show()
+    #
+    # print("------------------------------\n")
+    # u1 = f.copy()
+    # J_s, _ = Calc_Cost(qs_org, qs_target, u1, C, kwargs['dx'], kwargs['dt'],
+    #                    kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+    # v = np.random.randn(*u1.shape)
+    # eps_list = [1e-5]
+    # for eps in eps_list:
+    #     u2 = u1 + eps * v
+    #     qs2 = TI_primal_kdv_impl(q0, u2, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+    #     J_s_eps, _ = Calc_Cost(qs2, qs_target, u2, C, kwargs['dx'], kwargs['dt'],
+    #                            kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+    #     print(f"epsilon: {eps}", (J_s_eps - J_s) / eps)
+    #
+    # qs_adj = TI_adjoint_kdv_impl(q0_adj, qs_org, qs_target, J_l_adjoint, kdv.Nx, kdv.Nt, kdv.dx, kdv.dt,
+    #                              **params_adjoint)
+    #
+    # print(np.linalg.norm(qs_adj))
+    # dL_du_s = Calc_Grad_smooth(psi, u1, qs_adj, kwargs['lamda_l2'])
+    # print("Analytic gradient", L2inner_prod(dL_du_s, v, kwargs['dt']))
+    #
     # exit()

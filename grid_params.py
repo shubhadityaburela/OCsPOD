@@ -2,10 +2,10 @@ import numpy as np
 
 
 class advection:
-    def __init__(self, Nxi: int, timesteps: int, cfl: float, tilt_from: int, v_x: float, v_x_t: float,
+    def __init__(self, Nx: int, timesteps: int, cfl: float, tilt_from: int, v_x: float, v_x_t: float,
                  variance: float, offset: float) -> None:
         # Assertion statements for checking the sanctity of the input variables
-        assert Nxi > 0, f"Please input sensible values for the X grid points"
+        assert Nx > 0, f"Please input sensible values for the X grid points"
         assert timesteps >= 0, f"Please input sensible values for time steps"
 
         # First we define the public variables of the class. All the variables with "__" in front are private variables
@@ -15,8 +15,8 @@ class advection:
         self.dt = None
 
         # Private variables
-        self.Lxi = 100
-        self.Nxi = Nxi
+        self.Lx = 80
+        self.Nx = Nx
         self.Nt = timesteps
         self.cfl = cfl
 
@@ -36,7 +36,7 @@ class advection:
         self.offset = offset  # Offset from where the wave starts
 
     def Grid(self):
-        self.X = np.arange(1, self.Nxi + 1) * self.Lxi / self.Nxi
+        self.X = np.arange(1, self.Nx + 1) * self.Lx / self.Nx
         self.dx = self.X[1] - self.X[0]
 
         dt = self.dx * self.cfl / self.C
@@ -90,3 +90,42 @@ class Korteweg_de_Vries_Burgers:
         print('Final time : ', self.t[-1])
 
 
+
+class Korteweg_de_Vries:
+    def __init__(self, Nx: int, timesteps: int, cfl: float, v_x: float, offset: float) -> None:
+        # Assertion statements for checking the sanctity of the input variables
+        assert Nx > 0, f"Please input sensible values for the X grid points"
+        assert timesteps >= 0, f"Please input sensible values for time steps"
+
+        # First we define the public variables of the class. All the variables with "__" in front are private variables
+        self.X = None
+        self.dx = None
+        self.t = None
+        self.dt = None
+
+        # Private variables
+        self.Lx = 80
+        self.Nx = Nx
+        self.Nt = timesteps
+        self.cfl = cfl
+
+        # Order of accuracy for the derivative matrices of the first and second order
+        self.firstderivativeOrder = "6thOrder"
+
+        self.v_x = v_x * np.ones(self.Nt)
+        self.c = 2 / 3
+        self.C = 1.0
+
+        self.offset = offset  # Offset from where the wave starts
+
+    def Grid(self):
+        self.X = np.arange(1, self.Nx + 1) * self.Lx / self.Nx
+        self.dx = self.X[1] - self.X[0]
+
+        dt = self.dx * self.cfl / self.C
+        self.t = dt * np.arange(self.Nt)
+        self.dt = dt
+
+        print(f"dx = {self.dx} meters")
+        print(f"dt = {dt} seconds")
+        print('Final time : ', self.t[-1])

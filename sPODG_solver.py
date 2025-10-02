@@ -7,10 +7,11 @@ from Helper_sPODG import make_V_W_delta, LHS_offline_primal_FOTR, RHS_offline_pr
     Matrices_online_primal_FOTR, solve_lin_system, findIntervalAndGiveInterpolationWeight_1D, make_V_W_U_delta, \
     LHS_offline_primal_FRTO, RHS_offline_primal_FRTO, Control_offline_primal_FRTO, Matrices_online_primal_FRTO, \
     Matrices_online_adjoint_FRTO_expl, Matrices_online_adjoint_FRTO_impl, Target_offline_adjoint_FOTR, \
-    Matrices_online_adjoint_FOTR_expl, solve_lin_system_Tikh_reg, make_V_W_delta_CubSpl, Target_online_adjoint_FRTO, \
-    LHS_offline_primal_FRTO_kdvb, RHS_offline_primal_FRTO_kdvb, DEIM_primal_FRTO_kdvb, \
-    Matrices_online_primal_FRTO_kdvb_expl, LHS_offline_primal_FOTR_kdvb, RHS_offline_primal_FOTR_kdvb, \
-    DEIM_primal_FOTR_kdvb, DEIM_adjoint_FOTR_kdvb, Matrices_online_primal_FOTR_kdvb_expl
+    solve_lin_system_Tikh_reg, Target_online_adjoint_FRTO, \
+    LHS_offline_primal_FOTR_kdv, \
+    RHS_offline_primal_FOTR_kdv, DEIM_primal_FOTR_kdv, DEIM_adjoint_FOTR_kdv, Matrices_online_primal_FOTR_kdv_expl, \
+    Matrices_online_adjoint_FOTR_kdv_expl, LHS_offline_primal_FRTO_kdv, RHS_offline_primal_FRTO_kdv, \
+    DEIM_primal_FRTO_kdv, Matrices_online_primal_FRTO_kdv_expl, Matrices_online_adjoint_FOTR_expl
 from Helper_sPODG_FRTO import E11, E12, E21, E22, E11_kdvb, E12_kdvb, E21_kdvb, E22_kdvb, C1, C2
 from TI_schemes import rk4_sPODG_prim, rk4_sPODG_adj, implicit_midpoint_sPODG_adj, DIRK_sPODG_adj, bdf2_sPODG_adj, \
     rk4_sPODG_adj_, rk4_sPODG_prim_kdvb, implicit_midpoint_sPODG_FRTO_primal_kdvb, \
@@ -305,7 +306,7 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, tara,
 #############
 
 @njit
-def IC_primal_sPODG_FOTR_kdvb(q0, V):
+def IC_primal_sPODG_FOTR_kdv(q0, V):
     z = 0
     a = V.transpose() @ q0
     # Initialize the shifts with zero for online phase
@@ -314,20 +315,21 @@ def IC_primal_sPODG_FOTR_kdvb(q0, V):
     return a
 
 
-def mat_primal_sPODG_FOTR_kdvb(T_delta, V_delta_primal, W_delta_primal, U_delta_primal, V_deim, num_sample,
-                               modes, modes_deim, params_primal, delta_s):
+def mat_primal_sPODG_FOTR_kdv(T_delta, V_delta_primal, W_delta_primal, U_delta_primal, V_deim, num_sample,
+                              modes, modes_deim, params_primal, delta_s):
     # Construct LHS matrix
-    LHS_matrix = LHS_offline_primal_FOTR_kdvb(V_delta_primal, W_delta_primal, U_delta_primal, num_sample, modes)
+    LHS_matrix = LHS_offline_primal_FOTR_kdv(V_delta_primal, W_delta_primal, U_delta_primal, num_sample, modes)
 
     # Construct RHS matrix
-    A = params_primal['A'] - params_primal['gamma'] * params_primal['D3'] + params_primal['nu'] * params_primal['D2']
-    RHS_matrix = RHS_offline_primal_FOTR_kdvb(V_delta_primal, W_delta_primal, U_delta_primal, A, num_sample, modes)
+    A = - params_primal['alpha'] * params_primal['c'] * params_primal['D1'] \
+        - params_primal['gamma'] * params_primal['D3'] + params_primal['nu'] * params_primal['D2']
+    RHS_matrix = RHS_offline_primal_FOTR_kdv(V_delta_primal, W_delta_primal, U_delta_primal, A, num_sample, modes)
 
     # Construct the DEIM matrices
     omega = params_primal['omega']
-    DEIM_matrix = DEIM_primal_FOTR_kdvb(T_delta, V_delta_primal, W_delta_primal, V_deim,
-                                        omega,
-                                        num_sample, modes, modes_deim, delta_s)
+    DEIM_matrix = DEIM_primal_FOTR_kdv(T_delta, V_delta_primal, W_delta_primal, V_deim,
+                                       omega,
+                                       num_sample, modes, modes_deim, delta_s)
 
     # Construct the control matrix
     B = params_primal['B']
@@ -337,9 +339,9 @@ def mat_primal_sPODG_FOTR_kdvb(T_delta, V_delta_primal, W_delta_primal, U_delta_
 
 
 @njit
-def RHS_primal_sPODG_FOTR_kdvb_expl(a, f, lhs, rhs, deim, c, ds, modes):
+def RHS_primal_sPODG_FOTR_kdv_expl(a, f, lhs, rhs, deim, c, ds, modes):
     # Prepare the online primal matrices
-    M, A, intervalIdx, weight = Matrices_online_primal_FOTR_kdvb_expl(lhs, rhs, deim, c, f, a, ds, modes)
+    M, A, intervalIdx, weight = Matrices_online_primal_FOTR_kdv_expl(lhs, rhs, deim, c, f, a, ds, modes)
 
     # Solve the linear system of equations
     X = solve_lin_system(M, A)
@@ -347,7 +349,7 @@ def RHS_primal_sPODG_FOTR_kdvb_expl(a, f, lhs, rhs, deim, c, ds, modes):
     return X, intervalIdx, weight
 
 
-def TI_primal_sPODG_FOTR_kdvb_expl(lhs, rhs, deim, c, a, f, delta_s, modes, Nt, dt):
+def TI_primal_sPODG_FOTR_kdv_expl(lhs, rhs, deim, c, a, f, delta_s, modes, Nt, dt):
     # Time loop
     as_ = np.zeros((a.shape[0], Nt), order="F")
     f = np.asfortranarray(f)
@@ -357,7 +359,7 @@ def TI_primal_sPODG_FOTR_kdvb_expl(lhs, rhs, deim, c, a, f, delta_s, modes, Nt, 
     as_[:, 0] = a
 
     for n in range(1, Nt):
-        as_[:, n], _, IntIds[n - 1], weights[n - 1] = rk4_sPODG_prim_kdvb(RHS_primal_sPODG_FOTR_kdvb_expl,
+        as_[:, n], _, IntIds[n - 1], weights[n - 1] = rk4_sPODG_prim_kdvb(RHS_primal_sPODG_FOTR_kdv_expl,
                                                                           as_[:, n - 1],
                                                                           f[:, n - 1],
                                                                           f[:, n], dt, lhs, rhs, deim, c,
@@ -372,30 +374,30 @@ def TI_primal_sPODG_FOTR_kdvb_expl(lhs, rhs, deim, c, a, f, delta_s, modes, Nt, 
 
 
 @njit
-def IC_adjoint_sPODG_FOTR_kdvb(Nm_a, z):
+def IC_adjoint_sPODG_FOTR_kdv(Nm_a, z):
     a = np.concatenate((np.zeros(Nm_a), np.asarray([z])))
     return a
 
 
-def mat_adjoint_sPODG_FOTR_kdvb(T_delta, V_delta_adjoint, W_delta_adjoint, U_delta_adjoint,
-                                V_delta_primal, W_delta_primal, V_deim_a, num_sample,
-                                modes_p, modes_a, modes_deim_a, params_adjoint):
+def mat_adjoint_sPODG_FOTR_kdv(T_delta, V_delta_adjoint, W_delta_adjoint, U_delta_adjoint,
+                               V_delta_primal, W_delta_primal, V_deim_a, num_sample,
+                               modes_p, modes_a, modes_deim_a, params_adjoint):
     # First two funtion calls can take advantage of the already defined FOTR functions for primal.
 
     # Construct LHS matrix
-    LHS_matrix = LHS_offline_primal_FOTR_kdvb(V_delta_adjoint, W_delta_adjoint, U_delta_adjoint, num_sample, modes_a)
+    LHS_matrix = LHS_offline_primal_FOTR_kdv(V_delta_adjoint, W_delta_adjoint, U_delta_adjoint, num_sample, modes_a)
 
     # Construct RHS matrix
-    A = (params_adjoint['A'] - params_adjoint['gamma'] * params_adjoint['D3'] + params_adjoint['nu'] * params_adjoint[
-        'D2']).T
-    RHS_matrix = RHS_offline_primal_FOTR_kdvb(V_delta_adjoint, W_delta_adjoint, U_delta_adjoint, A, num_sample, modes_a)
+    A = - params_adjoint['alpha'] * params_adjoint['c'] * params_adjoint['D1'].T \
+        - params_adjoint['gamma'] * params_adjoint['D3'].T + params_adjoint['nu'] * params_adjoint['D2'].T
+    RHS_matrix = RHS_offline_primal_FOTR_kdv(V_delta_adjoint, W_delta_adjoint, U_delta_adjoint, A, num_sample, modes_a)
 
     # Construct the DEIM matrices
     omega = params_adjoint['omega']
-    DEIM_matrix, DEIM_mix_mat = DEIM_adjoint_FOTR_kdvb(T_delta, V_delta_adjoint, W_delta_adjoint, U_delta_adjoint,
-                                                       V_delta_primal, W_delta_primal, V_deim_a,
-                                                       omega,
-                                                       num_sample, modes_p, modes_a, modes_deim_a)
+    DEIM_matrix, DEIM_mix_mat = DEIM_adjoint_FOTR_kdv(T_delta, V_delta_adjoint, W_delta_adjoint, U_delta_adjoint,
+                                                      V_delta_primal, W_delta_primal, V_deim_a,
+                                                      omega,
+                                                      num_sample, modes_p, modes_a, modes_deim_a)
 
     # Construct the Target matrix
     CTC = params_adjoint['CTC']
@@ -406,11 +408,11 @@ def mat_adjoint_sPODG_FOTR_kdvb(T_delta, V_delta_adjoint, W_delta_adjoint, U_del
 
 
 @njit
-def RHS_adjoint_sPODG_FOTR_kdvb_expl(as_adj, as_, qs_target, lhs, rhs, deim, deim_mix, tar,
-                                     CTC, Vda, Wda, modes_a, modes_p, delta_s, dx):
+def RHS_adjoint_sPODG_FOTR_kdv_expl(as_adj, as_, qs_target, lhs, rhs, deim, deim_mix, tar,
+                                    CTC, Vda, Wda, modes_a, modes_p, delta_s, dx):
     # Prepare the online adjoint matrices
-    M, A = Matrices_online_adjoint_FOTR_expl(lhs, rhs, deim, deim_mix, tar, CTC, Vda, Wda, qs_target, as_adj, as_,
-                                             modes_a, modes_p, delta_s, dx)
+    M, A = Matrices_online_adjoint_FOTR_kdv_expl(lhs, rhs, deim, deim_mix, tar, CTC, Vda, Wda, qs_target, as_adj, as_,
+                                                 modes_a, modes_p, delta_s, dx)
 
     # Solve the linear system of equations
     if np.linalg.cond(M) == np.inf:
@@ -419,8 +421,8 @@ def RHS_adjoint_sPODG_FOTR_kdvb_expl(as_adj, as_, qs_target, lhs, rhs, deim, dei
         return solve_lin_system(M, A)
 
 
-def TI_adjoint_sPODG_FOTR_kdvb_expl(lhs, rhs, deim, deim_mix, tar, Vda, Wda, a_a, as_, qs_target,
-                                    modes_a, modes_p, delta_s, dx, Nt, dt, params_adjoint):
+def TI_adjoint_sPODG_FOTR_kdv_expl(lhs, rhs, deim, deim_mix, tar, Vda, Wda, a_a, as_, qs_target,
+                                   modes_a, modes_p, delta_s, dx, Nt, dt, params_adjoint):
     # Time loop
     as_adj = np.zeros((modes_a + 1, Nt), order="F")
     as_ = np.asfortranarray(as_)
@@ -428,9 +430,10 @@ def TI_adjoint_sPODG_FOTR_kdvb_expl(lhs, rhs, deim, deim_mix, tar, Vda, Wda, a_a
 
     CTC = params_adjoint['CTC']
     for n in range(1, Nt):
-        as_adj[:, -(n + 1)] = rk4_sPODG_adj_kdvb(RHS_adjoint_sPODG_FOTR_kdvb_expl, as_adj[:, -n],
+        as_adj[:, -(n + 1)] = rk4_sPODG_adj_kdvb(RHS_adjoint_sPODG_FOTR_kdv_expl, as_adj[:, -n],
                                                  as_[:, -n], as_[:, -(n + 1)],
-                                                 qs_target[:, -n], qs_target[:, -(n + 1)], - dt, lhs, rhs,
+                                                 qs_target[:, -n], qs_target[:, -(n + 1)],
+                                                 - dt, lhs, rhs,
                                                  deim, deim_mix, tar, CTC,
                                                  Vda, Wda, modes_a, modes_p, delta_s, dx)
     print('RK4 reduced adjoint finished')
@@ -443,7 +446,7 @@ def TI_adjoint_sPODG_FOTR_kdvb_expl(lhs, rhs, deim, deim_mix, tar, Vda, Wda, a_a
 
 
 @njit
-def IC_primal_sPODG_FRTO_kdvb(q0, V):
+def IC_primal_sPODG_FRTO_kdv(q0, V):
     z = 0
     a = V.transpose() @ q0
     # Initialize the shifts with zero for online phase
@@ -452,21 +455,21 @@ def IC_primal_sPODG_FRTO_kdvb(q0, V):
     return a
 
 
-def mat_primal_sPODG_FRTO_kdvb(T_delta, V_delta_primal, W_delta_primal, U_delta_primal, V_deim, num_sample,
-                               modes, modes_deim, params_primal, params_adjoint, delta_s):
+def mat_primal_sPODG_FRTO_kdv(T_delta, V_delta_primal, W_delta_primal, U_delta_primal, V_deim, num_sample,
+                              modes, modes_deim, params_primal, params_adjoint, delta_s):
     # Construct LHS matrix
-    LHS_matrix = LHS_offline_primal_FRTO_kdvb(V_delta_primal, W_delta_primal, U_delta_primal, num_sample, modes)
+    LHS_matrix = LHS_offline_primal_FRTO_kdv(V_delta_primal, W_delta_primal, U_delta_primal, num_sample, modes)
 
     # Construct RHS matrix
-    A = params_primal['A'] - params_primal['gamma'] * params_primal['D3'] + params_primal['nu'] * params_primal['D2']
-    RHS_matrix = RHS_offline_primal_FRTO_kdvb(V_delta_primal, W_delta_primal, U_delta_primal, A, num_sample, modes)
+    A = - params_primal['alpha'] * params_primal['c'] * params_primal['D1'] \
+        - params_primal['gamma'] * params_primal['D3'] + params_primal['nu'] * params_primal['D2']
+    RHS_matrix = RHS_offline_primal_FRTO_kdv(V_delta_primal, W_delta_primal, U_delta_primal, A, num_sample, modes)
 
     # Construct the DEIM matrices
     omega = params_primal['omega']
     D1 = params_primal['D1']
-    DEIM_matrix, DEIM_mat = DEIM_primal_FRTO_kdvb(T_delta, V_delta_primal, W_delta_primal, U_delta_primal, V_deim, D1,
-                                                  omega,
-                                                  num_sample, modes, modes_deim, delta_s)
+    DEIM_matrix, DEIM_mat = DEIM_primal_FRTO_kdv(T_delta, V_delta_primal, W_delta_primal, U_delta_primal, V_deim, D1,
+                                                 omega, num_sample, modes, modes_deim, delta_s)
 
     # Construct the control matrix
     B = params_primal['B']
@@ -480,16 +483,16 @@ def mat_primal_sPODG_FRTO_kdvb(T_delta, V_delta_primal, W_delta_primal, U_delta_
 
 
 @njit
-def RHS_primal_sPODG_FRTO_kdvb_expl(a, f, lhs, rhs, deim, c, ds, modes):
+def RHS_primal_sPODG_FRTO_kdv_expl(a, f, lhs, rhs, deim, c, ds, modes):
     # Prepare the online primal matrices
-    M, A, intervalIdx, weight = Matrices_online_primal_FRTO_kdvb_expl(lhs, rhs, deim, c, f, a, ds, modes)
+    M, A, intervalIdx, weight = Matrices_online_primal_FRTO_kdv_expl(lhs, rhs, deim, c, f, a, ds, modes)
 
     X = solve_lin_system(M, A)
 
     return X, intervalIdx, weight
 
 
-def TI_primal_sPODG_FRTO_kdvb_expl(lhs, rhs, deim, c, a, f0, delta_s, modes, Nt, dt):
+def TI_primal_sPODG_FRTO_kdv_expl(lhs, rhs, deim, c, a, f0, delta_s, modes, Nt, dt):
     # Time loop
     types_of_dots = 5  # derivatives to approximate
     as_ = np.zeros((a.shape[0], Nt), order="F")
@@ -500,7 +503,7 @@ def TI_primal_sPODG_FRTO_kdvb_expl(lhs, rhs, deim, c, a, f0, delta_s, modes, Nt,
 
     as_[:, 0] = a
     for n in range(1, Nt):
-        as_[:, n], as_dot[..., n], IntIds[n - 1], weights[n - 1] = rk4_sPODG_prim_kdvb(RHS_primal_sPODG_FRTO_kdvb_expl,
+        as_[:, n], as_dot[..., n], IntIds[n - 1], weights[n - 1] = rk4_sPODG_prim_kdvb(RHS_primal_sPODG_FRTO_kdv_expl,
                                                                                        as_[:, n - 1],
                                                                                        f0[:, n - 1],
                                                                                        f0[:, n], dt, lhs, rhs, deim, c,
@@ -516,10 +519,10 @@ def TI_primal_sPODG_FRTO_kdvb_expl(lhs, rhs, deim, c, a, f0, delta_s, modes, Nt,
 
 
 @njit
-def Jacobian_sPODG_FRTO_kdvb(M1, M2, N, A1, A2, D, M1_dash, M2_dash, N_dash, A1_dash, A2_dash,
-                             WT_B, UT_B, ST_V, ST_D1V, ST_D1V_dash, STdash_V, STdash_D1V, ST_U_dash, ST_U_inv,
-                             epsilon1, epsilon2, epsilon3, epsilon1_dash, epsilon2_dash,
-                             q_mid, u_mid, del_q, modes, dt):
+def Jacobian_sPODG_FRTO_kdv(M1, M2, N, A1, A2, D, M1_dash, M2_dash, N_dash, A1_dash, A2_dash,
+                            WT_B, UT_B, ST_V, ST_D1V, ST_D1V_dash, STdash_V, STdash_D1V, ST_U_dash, ST_U_inv,
+                            epsilon1, epsilon2, epsilon3, epsilon1_dash, epsilon2_dash,
+                            q_mid, u_mid, del_q, modes, dt):
     del_a = del_q[:modes]
     del_z = del_q[modes:]
     a_mid = q_mid[:modes]
@@ -591,7 +594,7 @@ def Jacobian_sPODG_FRTO_kdvb(M1, M2, N, A1, A2, D, M1_dash, M2_dash, N_dash, A1_
 
 
 @njit
-def RHS_primal_sPODG_FRTO_kdvb_impl(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_mat, C_matrix, f, a, ds, modes):
+def RHS_primal_sPODG_FRTO_kdv_impl(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_mat, C_matrix, f, a, ds, modes):
     M = np.empty((modes + 1, modes + 1))
     A = np.empty(modes + 1)
     as_ = a[:-1]
@@ -661,7 +664,7 @@ def RHS_primal_sPODG_FRTO_kdvb_impl(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_ma
         intervalIdx, weight
 
 
-def TI_primal_sPODG_FRTO_kdvb_impl(lhs, rhs, deim, deim_hl, c, a, f0, delta_s, modes, Nt, dt):
+def TI_primal_sPODG_FRTO_kdv_impl(lhs, rhs, deim, deim_hl, c, a, f0, delta_s, modes, Nt, dt):
     # Time loop
     types_of_dots = 2  # derivatives to approximate
     as_ = np.zeros((a.shape[0], Nt), order="F")
@@ -674,8 +677,8 @@ def TI_primal_sPODG_FRTO_kdvb_impl(lhs, rhs, deim, deim_hl, c, a, f0, delta_s, m
     for n in range(1, Nt):
         # print(n)
         as_[:, n], as_dot[..., n], IntIds[n - 1], weights[n - 1] = implicit_midpoint_sPODG_FRTO_primal_kdvb(
-            RHS_primal_sPODG_FRTO_kdvb_impl,
-            Jacobian_sPODG_FRTO_kdvb,
+            RHS_primal_sPODG_FRTO_kdv_impl,
+            Jacobian_sPODG_FRTO_kdv,
             as_[:, n - 1],
             f0[:, n - 1],
             f0[:, n],
@@ -696,7 +699,7 @@ def TI_primal_sPODG_FRTO_kdvb_impl(lhs, rhs, deim, deim_hl, c, a, f0, delta_s, m
 
 
 @njit
-def IC_adjoint_sPODG_FRTO_kdvb(modes):
+def IC_adjoint_sPODG_FRTO_kdv(modes):
     z = 0
     # Initialize the shifts with zero for online phase
     a = np.concatenate((np.zeros(modes), np.asarray([z])))
@@ -705,8 +708,8 @@ def IC_adjoint_sPODG_FRTO_kdvb(modes):
 
 
 @njit
-def RHS_adjoint_sPODG_FRTO_kdvb_impl(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_mat, C_matrix, TAR_matrix, CTC, Vdp, Wdp,
-                                     as_p, as_p_dot, f, qs_tar, ds, dx, modes):
+def RHS_adjoint_sPODG_FRTO_kdv_impl(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_mat, C_matrix, TAR_matrix, CTC, Vdp, Wdp,
+                                    as_p, as_p_dot, f, qs_tar, ds, dx, modes):
     M = np.empty((modes + 1, modes + 1))
     E = np.empty((modes + 1, modes + 1))
     T = np.empty(modes + 1)
@@ -790,14 +793,14 @@ def RHS_adjoint_sPODG_FRTO_kdvb_impl(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_m
     return np.ascontiguousarray(M), np.ascontiguousarray(E), np.ascontiguousarray(T)
 
 
-def TI_adjoint_sPODG_FRTO_kdvb_impl(as_adj0, f, as_p, qs_target, a_dot, lhs, rhs, deim, deim_hl, c, tar, Vdp, Wdp,
-                                    delta_s, modes, Nt,
-                                    dt, dx, params_adjoint):
+def TI_adjoint_sPODG_FRTO_kdv_impl(as_adj0, f, as_p, qs_target, a_dot, lhs, rhs, deim, deim_hl, c, tar, Vdp, Wdp,
+                                   delta_s, modes, Nt,
+                                   dt, dx, params_adjoint):
     as_adj = np.zeros((as_adj0.shape[0], Nt), order="F")
     as_adj[:, -1] = as_adj0
 
     for n in range(1, Nt):
-        as_adj[:, -(n + 1)] = implicit_midpoint_sPODG_FRTO_adjoint_kdvb(RHS_adjoint_sPODG_FRTO_kdvb_impl,
+        as_adj[:, -(n + 1)] = implicit_midpoint_sPODG_FRTO_adjoint_kdvb(RHS_adjoint_sPODG_FRTO_kdv_impl,
                                                                         as_adj[:, -n],
                                                                         as_p[:, -n],
                                                                         as_p[:, -(n + 1)],

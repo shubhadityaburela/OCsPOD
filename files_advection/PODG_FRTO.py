@@ -18,23 +18,26 @@ from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
 from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
 from Grads import Calc_Grad_PODG_smooth, Calc_Grad_mapping
-from Helper import ControlSelectionMatrix, compute_red_basis, L2norm_ROM, check_weak_divergence
+from Helper import ControlSelectionMatrix, compute_red_basis, L2norm_ROM, check_weak_divergence, L2inner_prod
 from PODG_solver import (
     TI_adjoint_PODG_FRTO, TI_primal_PODG_FRTO, IC_primal_PODG_FRTO,
     IC_adjoint_PODG_FRTO, mat_primal_PODG_FRTO, mat_adjoint_PODG_FRTO
 )
-from Update import Update_Control_PODG_FRTO_TWBT, Update_Control_PODG_FRTO_BB, get_BB_step
+from Update import Update_Control_PODG_FRTO_TWBT, get_BB_step, Update_Control_BB
 from grid_params import advection
 from Plots import PlotFlow
+
+
+np.random.seed(0)
 
 
 # ───────────────────────────────────────────────────────────────────────
 def parse_arguments():
     p = argparse.ArgumentParser(description="Input the variables for running the script.")
-    p.add_argument("problem", type=int, choices=[1, 2, 3],
-                   help="Problem number (1, 2, or 3)")
     p.add_argument("primal_adjoint_common_basis", type=literal_eval, choices=[True, False],
                    help="Include adjoint in basis computation? (True/False)")
+    p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
+                   help="Enter the grid resolution and the cfl factor")
     p.add_argument("N_iter", type=int, help="Number of optimization iterations")
     p.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
                    help="Directory prefix for I/O")
@@ -70,34 +73,22 @@ def decide_run_type(args):
     return TYPE, VAL, modes, tol, threshold
 
 
-def setup_advection(problem):
-    Nxi, Nt = 3200 // 2, 3360 // 2
-    if problem == 1:
-        wf = advection(Nxi=Nxi, timesteps=Nt,
-                       cfl=8 / 6, tilt_from=3 * Nt // 4,
-                       v_x=0.5, v_x_t=1.0,
-                       variance=7, offset=12)
-    elif problem == 2:
-        wf = advection(Nxi=Nxi, timesteps=Nt,
-                       cfl=8 / 6, tilt_from=3 * Nt // 4,
-                       v_x=0.55, v_x_t=1.0,
-                       variance=0.5, offset=30)
-    else:
-        wf = advection(Nxi=Nxi, timesteps=Nt,
-                       cfl=8 / 6, tilt_from=9 * Nt // 10,
-                       v_x=0.6, v_x_t=1.3,
-                       variance=0.5, offset=30)
+def setup_advection(Nx, Nt, cfl_fac):
+    wf = advection(Nx=Nx, timesteps=Nt,
+                   cfl=0.17 / cfl_fac, tilt_from=3 * Nt // 4,
+                   v_x=7 / 3, v_x_t=11 / 3,
+                   variance=7, offset=20)
     wf.Grid()
     return wf
 
 
-def build_dirs(prefix, common_basis, reg_tuple, CTC_mask, problem, TYPE, VAL):
+def build_dirs(prefix, common_basis, reg_tuple, CTC_mask, TYPE, VAL):
     cb_str = "primal+adjoint_common_basis" if common_basis else "primal_basis"
     reg_str = f"L1={reg_tuple[0]}_L2={reg_tuple[1]}"
     data_dir = os.path.join(prefix, "data/PODG_FRTO", cb_str, reg_str, f"CTC_mask={CTC_mask}",
-                            f"problem={problem}", f"{TYPE}={VAL}")
+                            f"{TYPE}={VAL}")
     plot_dir = os.path.join(prefix, "plots/PODG_FRTO", cb_str, reg_str, f"CTC_mask={CTC_mask}",
-                            f"problem={problem}", f"{TYPE}={VAL}")
+                            f"{TYPE}={VAL}")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
     return data_dir, plot_dir
@@ -157,22 +148,23 @@ def C_matrix(Nx, CTC_end_index, apply_CTC_mask=False):
 if __name__ == "__main__":
     args = parse_arguments()
 
-    print(f"\nSolving problem: {args.problem}")
     print("Type of basis computation: fixed")
     print(f"Using adjoint in basis: {args.primal_adjoint_common_basis}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
     print(f"Using CTC mask pseudo hyperreduction: {args.CTC_mask_activate}")
+    print(f"Grid = {tuple(args.grid)}")
 
     # Determine run type
     TYPE, VAL, modes, tol, threshold = decide_run_type(args)
 
     # Unpack regularization parameters
     L1_reg, L2_reg = args.reg
+    Nx, Nt, cfl_fac = args.grid
 
     # Set up WF and control matrix
-    wf = setup_advection(args.problem)
+    wf = setup_advection(Nx, Nt, cfl_fac)
     if L1_reg != 0 and L2_reg == 0:  # Purely L1
-        n_c_init = wf.Nxi
+        n_c_init = wf.Nx
         psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
         adjust = 1.0
     else:  # Mix type
@@ -180,38 +172,40 @@ if __name__ == "__main__":
         psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
         adjust = wf.dx
     n_c = psi.shape[1]
+
     f = np.zeros((n_c, wf.Nt))  # initial control guess
+    df = np.random.randn(*f.shape)
     psi = scipy.sparse.csc_matrix(psi)
 
     # Build coefficient matrices
     Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder,
-                            Nxi=wf.Nxi, Neta=1,
+                            Nxi=wf.Nx, Neta=1,
                             periodicity='Periodic',
                             dx=wf.dx, dy=0)
     A_p = - wf.v_x[0] * Mat.Grad_Xi_kron
     A_a = A_p.transpose()
 
     # Solve uncontrolled FOM once
-    qs0 = IC_primal(wf.X, wf.Lxi, wf.offset, wf.variance)
-    qs_org = TI_primal(qs0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nxi, wf.Nt, wf.dt)
+    qs0 = IC_primal(wf.X, wf.Lx, wf.offset, wf.variance)
+    qs_org = TI_primal(qs0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt, wf.dt)
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
 
     # Calculate the CTC matrix/array  (CTC and C are exactly the same)
-    C = C_matrix(wf.Nxi, wf.CTC_end_index, apply_CTC_mask=args.CTC_mask_activate)
+    C = C_matrix(wf.Nx, wf.CTC_end_index, apply_CTC_mask=args.CTC_mask_activate)
 
     # Prepare directories
     data_dir, plot_dir = build_dirs(args.dir_prefix,
                                     args.primal_adjoint_common_basis,
                                     args.reg, args.CTC_mask_activate,
-                                    args.problem, TYPE, VAL)
+                                    TYPE, VAL)
 
     # Prepare kwargs
     kwargs = {
         'dx': wf.dx,
         'dt': wf.dt,
-        'Nx': wf.Nxi,
+        'Nx': wf.Nx,
         'Nt': wf.Nt,
         'n_c': n_c,
         'lamda_l1': L1_reg,
@@ -225,13 +219,15 @@ if __name__ == "__main__":
         'omega_cutoff': 1e-10,
         'threshold': threshold,
         'Nm_p': modes[0],
-        'adjoint_scheme': "RK4",
-        'common_basis': args.primal_adjoint_common_basis
+        'adjoint_scheme': "DIRK",
+        'common_basis': args.primal_adjoint_common_basis,
+        'perform_grad_check': False,
+        'offline_online_err_check': False
     }
 
     # Precompute full basis once (fixed‐basis approach)
-    qs_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    qs_adj_full = TI_adjoint(q0_adj, qs_full, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    qs_full = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+    qs_adj_full = TI_adjoint(q0_adj, qs_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt, scheme="RK4")
 
     # Concatenate if common_basis, else keep separately
     qs_norm = qs_full / np.linalg.norm(qs_full)
@@ -313,7 +309,7 @@ if __name__ == "__main__":
                                        kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_ROM = J_s + J_ns
 
-            qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+            qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
             JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f, C, kwargs['dx'], kwargs['dt'],
                                     kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_FOM = JJ_s + JJ_ns
@@ -337,6 +333,31 @@ if __name__ == "__main__":
 
             dL_du_norm_list.append(dL_du_norm)
 
+            # ───── Gradient check with Finite differences ─────
+            if kwargs['perform_grad_check']:
+                print("-------------GRAD CHECK-----------------")
+                eps = 1e-5
+                f_rand = f + eps * df
+                qs_rand = TI_primal(q0, f_rand, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+                J_s_eps, J_ns_eps = Calc_Cost(qs_rand, qs_target, f_rand, C, kwargs['dx'], kwargs['dt'],
+                                              kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+                J_FOM_eps = J_s_eps + J_ns_eps
+                print("Finite difference gradient", (J_FOM_eps - J_FOM) / eps)
+                print("Analytic gradient", L2inner_prod(dL_du_g, df, kwargs['dt']))
+
+            # ───── Offline/Online error check ─────
+            if kwargs['offline_online_err_check']:
+                print("-------------OFF/ON ERROR CHECK-----------------")
+                print("The discrepancy between the offline error and the online error starts growing with increasing "
+                      "optimization steps here because of the stale basis used to reconstruct the online solution, "
+                      "whereas the offline error is computed from the FOM primal and adjoint at the current control")
+                _, qs_POD_offline = compute_red_basis(qs_opt_full, equation="primal", **kwargs)
+                err_offline = np.linalg.norm(qs_opt_full - qs_POD_offline) / np.linalg.norm(qs_opt_full)
+                print(f"Primal offline error: err={err_offline:.3e}")
+                qs_POD_online = V @ as_p
+                err_online = np.linalg.norm(qs_opt_full - qs_POD_online) / np.linalg.norm(qs_opt_full)
+                print(f"Primal online error: err={err_online:.3e}")
+
             # ───── Step‐size: BB vs. TWBT, including Armijo‐stagnation logic ─────
             ratio = dL_du_norm / dL_du_norm_list[0]
             if ratio < 5e-3:
@@ -349,7 +370,7 @@ if __name__ == "__main__":
                                                                            **kwargs)
                     omega = omega_twbt
                 else:
-                    fNew = Update_Control_PODG_FRTO_BB(f, dL_du_s, omega_bb, kwargs['lamda_l1'])
+                    fNew = Update_Control_BB(f, dL_du_s, omega_bb, kwargs['lamda_l1'])
                     stag = False
                     omega = omega_bb
             else:
@@ -382,7 +403,7 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -398,7 +419,7 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                qs_opt_full = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -468,7 +489,7 @@ if __name__ == "__main__":
 
                     # store last valid control and possibly update best_details
                     f_last_valid = f.copy()
-                    qs_cand = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
+                    qs_cand = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
                     JJ_s_cand, JJ_ns_cand = Calc_Cost(
                         qs_cand, qs_target, f_last_valid, C,
                         kwargs['dx'], kwargs['dt'],
@@ -515,16 +536,16 @@ if __name__ == "__main__":
 
     # ─────────────────────────────────────────────────────────────────────
     # Compute best control based cost
-    qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+    qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt, scheme="RK4")
     f_opt = psi @ best_control
     J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
     J_final = J_s_f + J_ns_f
 
     # Compute last valid control based cost
-    qs_opt_full__ = TI_primal(q0, f_last_valid, A_p, psi, wf.Nxi, wf.Nt, wf.dt)
-    qs_adj_opt__ = TI_adjoint(q0_adj, qs_opt_full__, qs_target, None, A_a, None, C, wf.Nxi, wf.dx, wf.Nt, wf.dt,
+    qs_opt_full__ = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+    qs_adj_opt__ = TI_adjoint(q0_adj, qs_opt_full__, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
                               scheme="RK4")
     f_opt__ = psi @ f_last_valid
     J_s_f__, J_ns_f__ = Calc_Cost(qs_opt_full__, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],

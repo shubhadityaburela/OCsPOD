@@ -1,8 +1,12 @@
 import numpy as np
 import scipy
+from matplotlib import pyplot as plt
 from numba import njit
 from scipy import sparse
 from scipy.sparse import csc_matrix, diags
+from tqdm import tqdm
+
+# from tqdm import tqdm
 
 from TI_schemes import rk4_FOM_adj, rk4_FOM, rk4_FOM_targ, implicit_midpoint_FOM_adj, DIRK_FOM_adj, \
     poly_interp_FOM_adj, bdf4_FOM_adj, bdf2_FOM_adj, bdf3_FOM_adj, rk4_FOM_kdvb, rk4_FOM_adj_kdvb, \
@@ -10,8 +14,11 @@ from TI_schemes import rk4_FOM_adj, rk4_FOM, rk4_FOM_targ, implicit_midpoint_FOM
 
 
 @njit
-def IC_primal(X, Lxi, offset, variance):
-    q = np.exp(-((X - Lxi / offset) ** 2) / variance)
+def IC_primal(X, Lx, offset, variance):
+    A = 8
+    mu = (Lx - 0) / offset
+    x_t = np.mod(X - 0, Lx - 0) + 0 - mu
+    q = A / np.cosh(np.sqrt(3 * A) / 6 * x_t) ** 2
     return q
 
 
@@ -19,9 +26,9 @@ def RHS_primal(q, f, A, psi):
     return A @ q + psi @ f
 
 
-def TI_primal(q, f, A, psi, Nxi, Nt, dt):
+def TI_primal(q, f, A, psi, Nx, Nt, dt):
     # Time loop
-    qs = np.zeros((Nxi, Nt))
+    qs = np.zeros((Nx, Nt))
     qs[:, 0] = q
     for n in range(1, Nt):
         qs[:, n] = rk4_FOM(RHS_primal, qs[:, n - 1], f[:, n - 1], f[:, n], dt, A, psi)
@@ -125,9 +132,9 @@ def RHS_primal_target(q, Grad, v_x):
     return qdot
 
 
-def TI_primal_target(q, Grad, v_x_target, Nxi, Nt, dt):
+def TI_primal_target(q, Grad, v_x_target, Nx, Nt, dt):
     # Time loop
-    qs = np.zeros((Nxi, Nt))
+    qs = np.zeros((Nx, Nt))
     qs[:, 0] = q
 
     for n in range(1, Nt):
@@ -142,22 +149,30 @@ def TI_primal_target(q, Grad, v_x_target, Nxi, Nt, dt):
 # -------------------------------------------------------------------------------------------------- #
 
 @njit
-def IC_primal_kdvb(X, Lx, offset, variance):
-    q = np.exp(-((X - Lx / offset) ** 2) / variance)
+def IC_primal_kdv(X, Lx, c, offset):
+    A = 12 * c
+    mu = (Lx - 0) / offset
+    x_t = np.mod(X - 0, Lx - 0) + 0 - mu
+    q = A / np.cosh(np.sqrt(3 * A) / 6 * x_t) ** 2
     return q
 
 
-def RHS_primal_kdvb_expl(q, f, A_p, D1, D2, D3, psi, omega, gamma, nu):
-    return A_p @ q - omega * 6.0 * q * (D1 @ q) - gamma * D3 @ q + nu * D2 @ q + psi @ f
+def RHS_primal_kdv_expl(q, u, D1, D2, D3, B, c, alpha, omega, gamma, nu):
+    return (- alpha * c * D1.dot(q)
+            - (omega / 3) * D1.dot(q ** 2)
+            - (omega / 3) * (q * D1.dot(q))
+            - gamma * D3.dot(q)
+            + nu * D2.dot(q)
+            + B.dot(u))
 
 
-def TI_primal_kdvb_expl(q, f, A_p, D1, D2, D3, psi, Nx, Nt, dt, omega=1.0, gamma=1e-4, nu=1e-4):
+def TI_primal_kdv_expl(q, f, D1, D2, D3, B, Nx, Nt, dt, c, alpha=1.0, omega=1.0, gamma=1e-4, nu=1e-4):
     # Time loop
     qs = np.zeros((Nx, Nt))
     qs[:, 0] = q
-    for n in range(1, Nt):
-        qs[:, n] = rk4_FOM_kdvb(RHS_primal_kdvb_expl, qs[:, n - 1], f[:, n - 1], f[:, n], dt,
-                                A_p, D1, D2, D3, psi, omega, gamma, nu)
+    for n in tqdm(range(1, Nt), desc="Primal Working"):
+        qs[:, n] = rk4_FOM_kdvb(RHS_primal_kdv_expl, qs[:, n - 1], f[:, n - 1], f[:, n], dt,
+                                D1, D2, D3, B, c, alpha, omega, gamma, nu)
     return qs
 
 
@@ -166,35 +181,37 @@ def J_nl_primal_kdv(q: np.ndarray,
                     D1: csc_matrix,
                     omega: float,
                     dt: float) -> csc_matrix:
-    # Returns sparse matrix diag(D q) + D.T*diag(q) scaled by 3*dt
     D1q = D1.dot(q)
-    return 3.0 * omega * dt * (diags(D1q, 0, format='csc') + D1.T.multiply(diags(q, 0, format='csc')))
+    return omega * dt * ((1 / 2) * diags(D1q, 0, format='csc')
+                         + (1 / 6) * (diags(q, 0, format='csc') @ D1))
 
 
 # Right-hand side for KdV-Burgers-advection
-def RHS_primal_kdvb_impl(q: np.ndarray,
-                         u: np.ndarray,
-                         A: csc_matrix,
-                         D1: csc_matrix,
-                         D2: csc_matrix,
-                         D3: csc_matrix,
-                         B: csc_matrix,
-                         omega: float,
-                         gamma: float,
-                         nu: float) -> np.ndarray:
-    return (A.dot(q)
-            - omega * 6.0 * q * (D1.dot(q))
+def RHS_primal_kdv_impl(q: np.ndarray,
+                        u: np.ndarray,
+                        D1: csc_matrix,
+                        D2: csc_matrix,
+                        D3: csc_matrix,
+                        B: csc_matrix,
+                        c: float,
+                        alpha: float,
+                        omega: float,
+                        gamma: float,
+                        nu: float) -> np.ndarray:
+    return (- alpha * c * D1.dot(q)
+            - (omega / 3) * D1.dot(q ** 2)
+            - (omega / 3) * (q * D1.dot(q))
             - gamma * D3.dot(q)
             + nu * D2.dot(q)
             + B.dot(u))
 
 
-def TI_primal_kdvb_impl(q, f, J_l, Nx, Nt, dt, **kwargs):
+def TI_primal_kdv_impl(q, f, J_l, Nx, Nt, dt, **kwargs):
     # Time loop
     qs = np.zeros((Nx, Nt))
     qs[:, 0] = q
     for n in range(1, Nt):
-        qs[:, n] = implicit_midpoint_FOM_primal_kdvb(RHS_primal_kdvb_impl,
+        qs[:, n] = implicit_midpoint_FOM_primal_kdvb(RHS_primal_kdv_impl,
                                                      J_nl_primal_kdv,
                                                      qs[:, n - 1],
                                                      f[:, n - 1],
@@ -202,67 +219,75 @@ def TI_primal_kdvb_impl(q, f, J_l, Nx, Nt, dt, **kwargs):
                                                      J_l,
                                                      dt,
                                                      **kwargs)
+
     print('Implicit midpoint primal finished')
     return qs
 
 
 @njit
-def IC_adjoint_kdvb(X):
+def IC_adjoint_kdv(X):
     q_adj = np.zeros_like(X)
     return q_adj
 
 
-def RHS_adjoint_kdvb_expl(q_adj, q, q_tar, A, D1, D2, D3, CTC, dx, omega, gamma, nu):
-    out = -A @ q_adj + omega * 6.0 * (
-            scipy.sparse.spdiags(D1 @ q, 0, CTC.size, CTC.size) +
-            D1.T @ scipy.sparse.spdiags(q, 0, CTC.size, CTC.size)).T @ q_adj + \
-          gamma * D3.T @ q_adj - nu * D2.T @ q_adj
+def RHS_adjoint_kdv_expl(q_adj, q, q_tar, D1, D2, D3, CTC, dx, c, alpha, omega, gamma, nu):
+    out = (alpha * c * D1.T +
+           gamma * D3.T -
+           nu * D2.T) @ q_adj - \
+          omega * q * D1.dot(q_adj)
     out[CTC] -= dx * (q - q_tar)[CTC]
     return out
 
 
-def TI_adjoint_kdvb_expl(q0_adj, qs, qs_target, A_f, D1, D2, D3, CTC, Nx, dx, Nt, dt, omega, gamma, nu):
+def TI_adjoint_kdv_expl(q0_adj, qs, qs_target, D1, D2, D3, CTC, Nx, dx, Nt, dt, c, alpha, omega, gamma, nu):
     # Time loop
     qs_adj = np.zeros((Nx, Nt))
     qs_adj[:, -1] = q0_adj
 
-    for n in range(1, Nt):
-        qs_adj[:, -(n + 1)] = rk4_FOM_adj_kdvb(RHS_adjoint_kdvb_expl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
-                                               qs_target[:, -n], qs_target[:, -(n + 1)], - dt, A_f, D1, D2, D3, CTC, dx,
-                                               omega, gamma, nu)
+    for n in tqdm(range(1, Nt), desc="Adjoint working"):
+        qs_adj[:, -(n + 1)] = rk4_FOM_adj_kdvb(RHS_adjoint_kdv_expl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
+                                               qs_target[:, -n], qs_target[:, -(n + 1)], - dt, D1, D2, D3, CTC, dx,
+                                               c, alpha, omega, gamma, nu)
 
     return qs_adj
 
 
-def RHS_adjoint_kdvb_impl(q_adj: np.ndarray,
-                          q: np.ndarray,
-                          q_tar: np.ndarray,
-                          dx: float,
-                          A: csc_matrix,
-                          D1: csc_matrix,
-                          D2: csc_matrix,
-                          D3: csc_matrix,
-                          CTC: np.ndarray,
-                          omega: float,
-                          gamma: float,
-                          nu: float) -> np.ndarray:
-    out = (- A.T +
-           gamma * D3.T -
-           nu * D2.T +
-           omega * 6.0 * (diags(D1.dot(q), 0, format='csc') + D1.T.multiply(diags(q, 0, format='csc')))) @ q_adj
-    out[CTC] -= dx * (q - q_tar)[CTC]
+def J_nl_adjoint_kdv(q: np.ndarray,
+                     D1: csc_matrix,
+                     omega: float,
+                     dt: float) -> csc_matrix:
+    return - ((omega * dt) / 2) * (diags(q, 0, format='csc') @ D1)
 
+
+def RHS_adjoint_kdv_impl(q_adj: np.ndarray,
+                         q: np.ndarray,
+                         q_tar: np.ndarray,
+                         dx: float,
+                         D1: csc_matrix,
+                         D2: csc_matrix,
+                         D3: csc_matrix,
+                         CTC: np.ndarray,
+                         c: float,
+                         alpha: float,
+                         omega: float,
+                         gamma: float,
+                         nu: float) -> np.ndarray:
+    out = (alpha * c * D1.T +
+           gamma * D3.T -
+           nu * D2.T) @ q_adj - \
+          omega * q * D1.dot(q_adj)
+    out[CTC] -= dx * (q - q_tar)[CTC]
     return out
 
 
-def TI_adjoint_kdvb_impl(q0_adj, qs, qs_target, J_l, Nx, Nt, dx, dt, **kwargs):
+def TI_adjoint_kdv_impl(q0_adj, qs, qs_target, J_l, Nx, Nt, dx, dt, **kwargs):
     # Time loop
     qs_adj = np.zeros((Nx, Nt))
     qs_adj[:, -1] = q0_adj
 
     for n in range(1, Nt):
-        qs_adj[:, -(n + 1)] = implicit_midpoint_FOM_adjoint_kdvb(RHS_adjoint_kdvb_impl,
-                                                                 J_nl_primal_kdv,
+        qs_adj[:, -(n + 1)] = implicit_midpoint_FOM_adjoint_kdvb(RHS_adjoint_kdv_impl,
+                                                                 J_nl_adjoint_kdv,
                                                                  qs_adj[:, -n],
                                                                  qs[:, -n],
                                                                  qs[:, -(n + 1)],
@@ -275,3 +300,106 @@ def TI_adjoint_kdvb_impl(q0_adj, qs, qs_target, J_l, Nx, Nt, dx, dt, **kwargs):
     print('Implicit midpoint adjoint finished')
 
     return qs_adj
+
+# if n % 100 == 0:
+#     qmid = 0.5 * (qs[:, n - 1] + qs[:, n])
+#     J_k = J_l + J_nl_primal_kdv(qmid, kwargs['D1'], kwargs['omega'], dt)
+#
+#     J_phys = - J_k.todense()
+#
+#     eigs = np.linalg.eigvals(J_phys)
+#     idx = np.argsort(eigs.real)[::-1]
+#     leading = eigs[idx[:5]]
+#
+#     # assume `eigs` and `dt` are already in your namespace
+#     z = eigs * dt
+#
+#     # choose plotting limits based on your spectrum
+#     re_max = max(np.abs(z.real)) * 1.1
+#     im_max = max(np.abs(z.imag)) * 1.1
+#
+#     # Create complex grid for RK4 contour
+#     re = np.linspace(-re_max, re_max, 500)
+#     im = np.linspace(-im_max, im_max, 500)
+#     RE, IM = np.meshgrid(re, im)
+#     Z = RE + 1j * IM
+#     R_abs = np.abs(1 + Z + Z ** 2 / 2 + Z ** 3 / 6 + Z ** 4 / 24)
+#
+#     fig, ax = plt.subplots(figsize=(8, 6))
+#
+#     # 1) shade stability region Re(z)<0
+#     ax.fill_betweenx(
+#         y=[-im_max, im_max],
+#         x1=[-re_max, -re_max],
+#         x2=[0, 0],
+#         color='lightblue',
+#         alpha=0.3,
+#         label='A‑stable region\n(Re(z)<0)'
+#     )
+#
+#     contour = ax.contour(RE, IM, R_abs, levels=[1], colors='black', linewidths=1.5)
+#     contour.collections[0].set_label('|R(z)| = 1 (RK4 stability boundary)')
+#
+#     # 2) plot all eigs
+#     ax.scatter(z.real, z.imag, s=20, color='gray', alpha=0.6, label='all modes')
+#
+#     # 3) highlight leading ones, e.g. largest real part
+#     idx = np.argsort(z.real)[::-1]
+#     leading = z[idx[:10]]
+#     ax.scatter(leading.real, leading.imag, s=80, color='red', label='leading modes')
+#
+#     # 4) draw the imaginary axis (stability boundary)
+#     ax.axvline(0, color='black', linestyle='--', linewidth=1)
+#
+#     ax.set_xlim(-re_max, re_max)
+#     ax.set_ylim(-im_max, im_max)
+#     ax.set_xlabel(r'$\Re(\lambda\Delta t)$')
+#     ax.set_ylabel(r'$\Im(\lambda\Delta t)$')
+#     ax.set_title('Eigenvalues on implicit‑midpoint stability region')
+#     ax.grid(True)
+#     plt.show()
+
+
+# eps_list = [1e-8, 1e-6, 1e-4]  # avoid astronomically small eps
+# for eps in eps_list:
+#     q_mid = (qs[:, 10] + qs[:, 11]) / 2  # pick a midpoint state from a forward trajectory
+#     u_mid = (f[:, 10] + f[:, 11]) / 2
+#     v = np.random.randn(*q_mid.shape)
+#
+#     R_plus = RHS_primal_kdv_impl(q_mid + eps * v, u_mid, **kwargs)
+#     R = RHS_primal_kdv_impl(q_mid, u_mid, **kwargs)
+#     finite_diff = (R_plus - R) / eps  # vector
+#
+#     # Compute the action of Jacobian on v
+#     J_l = (kwargs['A'] - kwargs['gamma'] * kwargs['D3'] + kwargs['nu'] * kwargs['D2'])
+#     J_nl = - J_nl_primal_kdv(q_mid, kwargs['D1'], kwargs['omega'], dt) * 2 / dt
+#     J_k = (J_l + J_nl).dot(v)
+#
+#     print(eps)
+#     print("||finite_diff - JF_action|| = ", np.linalg.norm(finite_diff - J_k))
+#     print("||finite_diff|| = ", np.linalg.norm(finite_diff))
+#     print("||finite_diff - JF_action|| / ||finite_diff|| = ", np.linalg.norm(finite_diff - J_k) / np.linalg.norm(finite_diff))
+
+
+
+
+# eps_list = [1e-8, 1e-6, 1e-4]  # avoid astronomically small eps
+    # for eps in eps_list:
+    #     p_mid = (qs_adj[:, 10] + qs_adj[:, 11]) / 2  # pick a midpoint state from a forward trajectory
+    #     a_mid = (qs[:, 10] + qs[:, 11]) / 2
+    #     b_mid = (qs_target[:, 10] + qs_target[:, 11]) / 2
+    #     w = np.random.randn(*p_mid.shape)
+    #
+    #     R_plus = RHS_adjoint_kdv_impl(p_mid + eps * w, a_mid, b_mid, dx, **kwargs)
+    #     R = RHS_adjoint_kdv_impl(p_mid, a_mid, b_mid, dx, **kwargs)
+    #     finite_diff = (R_plus - R) / eps  # vector
+    #
+    #     # Compute the action of Jacobian on w
+    #     J_l = (- kwargs['A'].T + kwargs['gamma'] * kwargs['D3'].T - kwargs['nu'] * kwargs['D2'].T)
+    #     J_nl = J_nl_primal_kdv(a_mid, kwargs['D1'], kwargs['omega'], dt).T * 2 / dt
+    #     J_k = (J_l + J_nl).dot(w)
+    #
+    #     print(eps)
+    #     print("||finite_diff - JF_action|| = ", np.linalg.norm(finite_diff - J_k))
+    #     print("||finite_diff|| = ", np.linalg.norm(finite_diff))
+    #     print("||finite_diff - JF_action|| / ||finite_diff|| = ", np.linalg.norm(finite_diff - J_k) / np.linalg.norm(finite_diff))
