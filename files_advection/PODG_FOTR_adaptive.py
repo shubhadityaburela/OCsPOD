@@ -34,6 +34,8 @@ np.random.seed(0)
 # ───────────────────────────────────────────────────────────────────────
 def parse_arguments():
     p = argparse.ArgumentParser(description="Input the variables for running the script.")
+    p.add_argument("type_of_problem", type=str, choices=["Shifting", "Constant_shift"],
+                   help="Choose the problem type")
     p.add_argument("primal_adjoint_common_basis", type=literal_eval, choices=[True, False],
                    help="Include adjoint in basis computation? (True/False)")
     p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
@@ -73,11 +75,21 @@ def decide_run_type(args):
     return TYPE, VAL, modes, tol, threshold
 
 
-def setup_advection(Nx, Nt, cfl_fac):
-    wf = advection(Nx=Nx, timesteps=Nt,
-                   cfl=0.17 / cfl_fac, tilt_from=3 * Nt // 4,
-                   v_x=7 / 3, v_x_t=11 / 3,
-                   variance=7, offset=20)
+def setup_advection(Nx, Nt, cfl_fac, type):
+    if type == "Shifting":
+        wf = advection(Lx=100, Nx=Nx, timesteps=Nt,
+                       cfl=(8 / 6) / cfl_fac, tilt_from=3 * Nt // 4,
+                       v_x=0.5, v_x_t=1.0,
+                       variance=7, offset=12)
+    elif type == "Constant_shift":
+        wf = advection(Lx=80, Nx=Nx, timesteps=Nt,
+                       cfl=0.0425 / cfl_fac, tilt_from=0,
+                       v_x=8 / 3, v_x_t=8 / 3,
+                       variance=7, offset=20)
+    else:
+        print("Please choose the correct problem type!!")
+        exit()
+
     wf.Grid()
     return wf
 
@@ -151,6 +163,7 @@ def C_matrix(Nx, CTC_end_index, apply_CTC_mask=False):
 if __name__ == "__main__":
     args = parse_arguments()
 
+    print(f"Type of problem = {args.type_of_problem}")
     print("Type of basis computation: adaptive")
     print(f"Using adjoint in basis: {args.primal_adjoint_common_basis}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
@@ -163,17 +176,29 @@ if __name__ == "__main__":
     # Unpack regularization parameters
     L1_reg, L2_reg = args.reg
     Nx, Nt, cfl_fac = args.grid
+    type_of_problem = args.type_of_problem
 
     # Set up WF and control matrix
-    wf = setup_advection(Nx, Nt, cfl_fac)
-    if L1_reg != 0 and L2_reg == 0:  # Purely L1
-        n_c_init = wf.Nx
-        psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
-        adjust = 1.0
-    else:  # Mix type
-        n_c_init = 40
-        psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
-        adjust = wf.dx
+    wf = setup_advection(Nx, Nt, cfl_fac, type_of_problem)
+    if type_of_problem == "Shifting":
+        if L1_reg != 0 and L2_reg == 0:  # Purely L1
+            n_c_init = wf.Nx
+            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            adjust = 1.0
+        else:  # Mix type
+            n_c_init = 40
+            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
+            adjust = wf.dx
+    elif type_of_problem == "Constant_shift":
+        if L1_reg != 0 and L2_reg == 0:  # Purely L1
+            n_c_init = wf.Nx
+            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            adjust = 1.0
+        else:  # Mix type
+            n_c_init = 100
+            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            adjust = wf.dx
+
     n_c = psi.shape[1]
 
     f = np.zeros((n_c, wf.Nt))  # initial control guess
@@ -189,9 +214,10 @@ if __name__ == "__main__":
     A_a = A_p.transpose()
 
     # Solve uncontrolled FOM once
-    qs0 = IC_primal(wf.X, wf.Lx, wf.offset, wf.variance)
+    qs0 = IC_primal(wf.X, wf.Lx, wf.offset, wf.variance, type_of_problem=type_of_problem)
     qs_org = TI_primal(qs0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
-    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt, wf.dt)
+    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt,
+                                 wf.dt, nu=0.1 if type_of_problem == "Constant_shift" else 0.0)
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
 
@@ -260,7 +286,7 @@ if __name__ == "__main__":
             print(f"\n==============================")
             print(f"Optimization step: {opt_step}")
 
-            if stag or opt_step == 0:
+            if stag or (type_of_problem == "Constant_shift" and opt_step % 50 == 0) or (type_of_problem == "Shifting" and opt_step == 0):
                 basis_update_idx_list.append(opt_step)
 
                 # ───── Forward FOM: compute FOM state qs ─────

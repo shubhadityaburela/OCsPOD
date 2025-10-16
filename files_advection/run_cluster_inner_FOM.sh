@@ -18,9 +18,13 @@ export PYTHONPATH="$PWD:$PYTHONPATH"
 echo "FOM run"
 
 # Common command-line arguments
-CTC_mask=$1
+type_of_problem=$1
+CTC_mask=$2
 
-python3 files_advection/FOM.py 1000 16000 8 20000 "/work/burela" $CTC_mask 0 1e-3
+grid_str="${@: -1}"
+read -r -a grid_params <<< "$grid_str"
+
+python3 files_advection/FOM.py $type_of_problem "${grid_params[@]:0:3}" 20000 "/work/burela" $CTC_mask 0 1e-3
 
 date
 

@@ -77,6 +77,8 @@ np.random.seed(0)
 # ───────────────────────────────────────────────────────────────────────
 def parse_arguments():
     p = argparse.ArgumentParser(description="Input the variables for running the script.")
+    p.add_argument("type_of_problem", type=str, choices=["Shifting", "Constant_shift"],
+                   help="Choose the problem type")
     p.add_argument("primal_adjoint_common_basis", type=literal_eval, choices=[True, False],
                    help="Include adjoint in basis computation? (True/False)")
     p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
@@ -88,9 +90,6 @@ def parse_arguments():
                    help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
     p.add_argument("CTC_mask_activate", type=literal_eval, choices=[True, False],
                    help="Include CTC mask in the system? (True/False)")
-    p.add_argument("interp_scheme", type=str, choices=["Lagr", "CubSpl"],
-                   help="Specify the Interpolation scheme to use ("
-                        "Lagr or CubSpl)")
     p.add_argument("--modes", type=int, nargs=1,
                    help="Enter the modes e.g., --modes 3")
     p.add_argument("--tol", type=float, help="Tolerance level for fixed‐tol run")
@@ -119,22 +118,31 @@ def decide_run_type(args):
     return TYPE, VAL, modes, tol, threshold
 
 
-def setup_advection(Nx, Nt, cfl_fac):
-    wf = advection(Nx=Nx, timesteps=Nt,
-                   cfl=0.17 / cfl_fac, tilt_from=3 * Nt // 4,
-                   v_x=7 / 3, v_x_t=11 / 3,
-                   variance=7, offset=20)
+def setup_advection(Nx, Nt, cfl_fac, type):
+    if type == "Shifting":
+        wf = advection(Lx=100, Nx=Nx, timesteps=Nt,
+                       cfl=(8 / 6) / cfl_fac, tilt_from=3 * Nt // 4,
+                       v_x=0.5, v_x_t=1.0,
+                       variance=7, offset=12)
+    elif type == "Constant_shift":
+        wf = advection(Lx=80, Nx=Nx, timesteps=Nt,
+                       cfl=0.0425 / cfl_fac, tilt_from=0,
+                       v_x=8 / 3, v_x_t=8 / 3,
+                       variance=7, offset=20)
+    else:
+        print("Please choose the correct problem type!!")
+        exit()
+
     wf.Grid()
     return wf
 
 
-def build_dirs(prefix, common_basis, reg_tuple, CTC_mask, interp_scheme, TYPE, VAL):
+def build_dirs(prefix, common_basis, reg_tuple, CTC_mask, TYPE, VAL):
     cb_str = "primal+adjoint_common_basis" if common_basis else "primal_basis"
     reg_str = f"L1={reg_tuple[0]}_L2={reg_tuple[1]}"
-    interp_str = "Lagr" if interp_scheme == "Lagr" else "CubSpl"
-    data_dir = os.path.join(prefix, "data/sPODG_FRTO", cb_str, reg_str, f"CTC_mask={CTC_mask}", interp_str,
+    data_dir = os.path.join(prefix, "data/sPODG_FRTO", cb_str, reg_str, f"CTC_mask={CTC_mask}",
                             f"{TYPE}={VAL}")
-    plot_dir = os.path.join(prefix, "plots/sPODG_FRTO", cb_str, reg_str, f"CTC_mask={CTC_mask}", interp_str,
+    plot_dir = os.path.join(prefix, "plots/sPODG_FRTO", cb_str, reg_str, f"CTC_mask={CTC_mask}",
                             f"{TYPE}={VAL}")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
@@ -195,11 +203,11 @@ def C_matrix(Nx, CTC_end_index, apply_CTC_mask=False):
 if __name__ == "__main__":
     args = parse_arguments()
 
+    print(f"Type of problem = {args.type_of_problem}")
     print("Type of basis computation: fixed")
     print(f"Using adjoint in basis: {args.primal_adjoint_common_basis}")
     print(f"Using CTC mask pseudo hyperreduction: {args.CTC_mask_activate}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
-    print(f"Interpolation scheme used: {args.interp_scheme}")
     print(f"Grid = {tuple(args.grid)}")
 
     # Determine run type
@@ -208,17 +216,29 @@ if __name__ == "__main__":
     # Unpack regularization parameters
     L1_reg, L2_reg = args.reg
     Nx, Nt, cfl_fac = args.grid
+    type_of_problem = args.type_of_problem
 
     # Set up WF and control matrix
-    wf = setup_advection(Nx, Nt, cfl_fac)
-    if L1_reg != 0 and L2_reg == 0:  # Purely L1
-        n_c_init = wf.Nx
-        psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
-        adjust = 1.0
-    else:  # Mix type
-        n_c_init = 40
-        psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
-        adjust = wf.dx
+    wf = setup_advection(Nx, Nt, cfl_fac, type_of_problem)
+    if type_of_problem == "Shifting":
+        if L1_reg != 0 and L2_reg == 0:  # Purely L1
+            n_c_init = wf.Nx
+            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            adjust = 1.0
+        else:  # Mix type
+            n_c_init = 40
+            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
+            adjust = wf.dx
+    elif type_of_problem == "Constant_shift":
+        if L1_reg != 0 and L2_reg == 0:  # Purely L1
+            n_c_init = wf.Nx
+            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            adjust = 1.0
+        else:  # Mix type
+            n_c_init = 100
+            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            adjust = wf.dx
+
     n_c = psi.shape[1]
 
     f = np.zeros((n_c, wf.Nt))  # initial control guess
@@ -234,9 +254,10 @@ if __name__ == "__main__":
     A_a = A_p.transpose()
 
     # Solve uncontrolled FOM once
-    qs0 = IC_primal(wf.X, wf.Lx, wf.offset, wf.variance)
+    qs0 = IC_primal(wf.X, wf.Lx, wf.offset, wf.variance, type_of_problem=type_of_problem)
     qs_org = TI_primal(qs0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
-    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt, wf.dt)
+    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt,
+                                 wf.dt, nu=0.1 if type_of_problem == "Constant_shift" else 0.0)
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
 
@@ -247,7 +268,6 @@ if __name__ == "__main__":
     data_dir, plot_dir = build_dirs(args.dir_prefix,
                                     args.primal_adjoint_common_basis,
                                     args.reg, args.CTC_mask_activate,
-                                    args.interp_scheme,
                                     TYPE, VAL)
 
     # Prepare kwargs
@@ -262,7 +282,11 @@ if __name__ == "__main__":
         'delta_conv': 1e-4,  # Convergence criteria
         'delta': 1 / 2,  # Armijo constant
         'opt_iter': args.N_iter,  # Total iterations
-        'shift_sample': wf.Nx,  # Number of samples for shift interpolation
+        'shift_sample': (
+            wf.Nx if type_of_problem == "Constant_shift"
+            else 800 if type_of_problem == "Shifting"
+            else wf.Nx
+        ),
         'beta': 1 / 2,  # Beta factor for two-way backtracking line search
         'verbose': True,  # Print options
         'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
@@ -271,7 +295,6 @@ if __name__ == "__main__":
         # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
         # "FALSE" for mode based.
         'Nm_p': modes[0],  # Number of modes for truncation if threshold selected to False.
-        'interp_scheme': args.interp_scheme,  # Either Lagrange interpolation or Cubic spline
         'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
         'adjoint_scheme': "DIRK",  # Time integration scheme for adjoint equation
         'common_basis': args.primal_adjoint_common_basis,  # True if primal + adjoint in basis else False
@@ -282,12 +305,9 @@ if __name__ == "__main__":
     D = central_FDMatrix(order=6, Nx=wf.Nx, dx=wf.dx)
     D2 = central_FD2Matrix(order=6, Nx=wf.Nx, dx=wf.dx)
     delta_s = subsample(wf.X, num_sample=kwargs['shift_sample'])
-    if kwargs['interp_scheme'] == "Lagr":
-        # Extract transformation operators based on sub-sampled delta
-        T_delta, _ = get_T(delta_s, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
-    else:
-        # Calculate the constant spline coefficient matrices (only needed once)
-        A1, D1, D2, R = give_spline_coefficient_matrices(kwargs['Nx'])
+    # Extract transformation operators based on sub-sampled delta
+    T_delta, _ = get_T(delta_s, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
+
 
     # Basis computation (fixed upfront)
     # Compute FOM trajectories
@@ -297,35 +317,16 @@ if __name__ == "__main__":
     # Compute shifts and (re)interpolate
     z = calc_shift(qs_full, q0, wf.X, wf.t)
 
-    if kwargs['interp_scheme'] == "Lagr":
-        _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
-        # Primal: reverse‐transform (and normalize if shared‐basis)
-        if kwargs['common_basis']:
-            qs_norm = qs_full / np.linalg.norm(qs_full)
-            qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
-            qs_norm_s = T.reverse(qs_norm)
-            qs_adj_norm_s = T.reverse(qs_adj_norm)
-            snap_cat_p_s = np.concatenate([qs_norm_s, qs_adj_norm_s], axis=1)
-        else:
-            snap_cat_p_s = T.reverse(qs_full).copy()
-    else:  # Cubic‐spline case
-        if kwargs['common_basis']:
-            qs_norm = qs_full / np.linalg.norm(qs_full)
-            qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
-
-            b_p, c_p, d_p = construct_spline_coeffs_multiple(qs_norm, A1, D1, D2, R, kwargs['dx'])
-            qs_norm_s = shift_matrix_precomputed_coeffs_multiple(qs_norm, z[0], b_p, c_p, d_p, kwargs['Nx'],
-                                                                 kwargs['dx'])
-
-            b_a, c_a, d_a = construct_spline_coeffs_multiple(qs_adj_norm, A1, D1, D2, R, kwargs['dx'])
-            qs_adj_norm_s = shift_matrix_precomputed_coeffs_multiple(qs_adj_norm, z[0], b_a, c_a, d_a, kwargs['Nx'],
-                                                                     kwargs['dx'])
-
-            snap_cat_p_s = np.concatenate([qs_norm_s, qs_adj_norm_s], axis=1)
-        else:
-            b_p, c_p, d_p = construct_spline_coeffs_multiple(qs_full, A1, D1, D2, R, kwargs['dx'])
-            qs_s = shift_matrix_precomputed_coeffs_multiple(qs_full, z[0], b_p, c_p, d_p, kwargs['Nx'], kwargs['dx'])
-            snap_cat_p_s = qs_s.copy()
+    _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
+    # Primal: reverse‐transform (and normalize if shared‐basis)
+    if kwargs['common_basis']:
+        qs_norm = qs_full / np.linalg.norm(qs_full)
+        qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
+        qs_norm_s = T.reverse(qs_norm)
+        qs_adj_norm_s = T.reverse(qs_adj_norm)
+        snap_cat_p_s = np.concatenate([qs_norm_s, qs_adj_norm_s], axis=1)
+    else:
+        snap_cat_p_s = T.reverse(qs_full).copy()
 
     # Compute reduced bases
     V, qs_sPOD = compute_red_basis(snap_cat_p_s, equation="primal", **kwargs)
@@ -338,11 +339,7 @@ if __name__ == "__main__":
     a_a = IC_adjoint_sPODG_FRTO(Nm)
 
     # Construct the primal system matrices for the sPOD-Galerkin approach
-    if kwargs['interp_scheme'] == "Lagr":
-        Vd_p, Wd_p, Ud_p = make_V_W_U_delta(V, T_delta, D, D2, kwargs['shift_sample'], kwargs['Nx'], Nm)
-    else:
-        Vd_p, Wd_p, Ud_p = make_V_W_delta_CubSpl(V, delta_s, A1, D1, D2, R, kwargs['shift_sample'], kwargs['Nx'],
-                                                 kwargs['dx'], Nm)
+    Vd_p, Wd_p, Ud_p = make_V_W_U_delta(V, T_delta, D, D2, kwargs['shift_sample'], kwargs['Nx'], Nm)
 
     # Construct the primal and adjoint system matrices for the sPOD-Galerkin approach
     lhs_p, rhs_p, c_p, tar_a = mat_primal_sPODG_FRTO(Vd_p, Wd_p, Ud_p, C, A_p, psi, samples=kwargs['shift_sample'],

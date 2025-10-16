@@ -18,14 +18,15 @@ from ast import literal_eval
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
 from FOM_solver import \
-    IC_primal_kdv, TI_primal_kdv_impl, TI_adjoint_kdv_impl, IC_adjoint_kdv
+    IC_primal_kdv, TI_primal_kdv_impl, TI_adjoint_kdv_impl, IC_adjoint_kdv, TI_primal_kdv_expl, TI_adjoint_kdv_expl
 from Grads import Calc_Grad_PODG_smooth, Calc_Grad_mapping
 from Helper import compute_red_basis, L2norm_ROM, check_weak_divergence, \
     ControlSelectionMatrix_kdvb, compute_deim_basis, L2inner_prod
 from PODG_solver import (
     IC_primal_PODG_FOTR_kdv, IC_adjoint_PODG_FOTR_kdv, mat_primal_PODG_FOTR_kdv,
     mat_adjoint_PODG_FOTR_kdv,
-    TI_primal_PODG_FOTR_kdv_expl, TI_adjoint_PODG_FOTR_kdv_expl,
+    TI_primal_PODG_FOTR_kdv_expl, TI_adjoint_PODG_FOTR_kdv_expl, TI_primal_PODG_FOTR_kdv_impl,
+    TI_adjoint_PODG_FOTR_kdv_impl,
 )
 from Update import get_BB_step, \
     Update_Control_PODG_FOTR_RA_TWBT_kdv, Update_Control_BB_kdv
@@ -94,7 +95,7 @@ def decide_run_type(args):
 
 
 def setup_kdv(Nx, Nt, cfl_fac):
-    kdv = Korteweg_de_Vries(Nx=Nx, timesteps=Nt, cfl=0.17 / cfl_fac, v_x=8 / 3, offset=20)
+    kdv = Korteweg_de_Vries(Nx=Nx, timesteps=Nt, cfl=0.0425 / cfl_fac, v_x=8 / 3, offset=20)
     kdv.Grid()
     return kdv
 
@@ -126,8 +127,7 @@ def write_checkpoint(data_dir, opt_step,
                      f, best_control, best_details,
                      J_opt_list, J_opt_FOM_list,
                      dL_du_norm_list, running_time,
-                     trunc_modes_list_p, trunc_modes_list_a,
-                     trunc_deim_modes_list_p, trunc_deim_modes_list_a):
+                     trunc_modes_list_p, trunc_modes_list_a):
     """
     Overwrite checkpoint files. All variables are written with fixed names,
     so each iteration replaces the previous checkpoint.
@@ -151,8 +151,6 @@ def write_checkpoint(data_dir, opt_step,
     np.save(os.path.join(ckpt_dir, "running_time.npy"), np.array(running_time))
     np.save(os.path.join(ckpt_dir, "trunc_modes_p.npy"), np.array(trunc_modes_list_p))
     np.save(os.path.join(ckpt_dir, "trunc_modes_a.npy"), np.array(trunc_modes_list_a))
-    np.save(os.path.join(ckpt_dir, "trunc_deim_modes_p.npy"), np.array(trunc_deim_modes_list_p))
-    np.save(os.path.join(ckpt_dir, "trunc_deim_modes_a.npy"), np.array(trunc_deim_modes_list_a))
 
     print(f"Checkpoint overwritten → {ckpt_dir}")
 
@@ -220,7 +218,7 @@ if __name__ == "__main__":
         'Nm_a': modes[2],
         'Nm_deim_a': modes[3],
         'common_basis': args.primal_adjoint_common_basis,
-        'perform_grad_check': False,
+        'perform_grad_check': True,
         'offline_online_err_check': False
     }
     f = np.zeros((n_c, kdv.Nt))  # initial control guess
@@ -254,10 +252,14 @@ if __name__ == "__main__":
         target_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
         shared_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.0}
 
-    # Nonlinearity less prevalent
-    params_primal = {**shared_dynamics, **shared_params}
-    params_target = {**shared_dynamics, **target_params}
-    params_adjoint = {**common_params, 'CTC': CTC, **shared_params}
+    L_p = - shared_params['alpha'] * shared_params['c'] * D1 - shared_params['gamma'] * D3 + shared_params['nu'] * D2
+    L_t = - target_params['alpha'] * target_params['c'] * D1 - target_params['gamma'] * D3 + target_params['nu'] * D2
+    L_a = shared_params['alpha'] * shared_params['c'] * D1.T + shared_params['gamma'] * D3.T - shared_params[
+        'nu'] * D2.T
+
+    params_primal = {**shared_dynamics, 'L': L_p, **shared_params}
+    params_target = {**shared_dynamics, 'L': L_t, **target_params}
+    params_adjoint = {**common_params, 'CTC': CTC, 'L': L_a, **shared_params}
 
     J_l = scipy.sparse.identity(kdv.Nx, format='csc') - 0.5 * kdv.dt * (
             params_primal['alpha'] * (- params_primal['c']) * D1
@@ -271,8 +273,16 @@ if __name__ == "__main__":
 
     # Solve uncontrolled FOM once
     qs0 = IC_primal_kdv(kdv.X, kdv.Lx, kdv.c, kdv.offset)
-    qs_org = TI_primal_kdv_impl(qs0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
-    qs_target = TI_primal_kdv_impl(qs0, np.zeros_like(f), J_l_target, kdv.Nx, kdv.Nt, kdv.dt, **params_target)
+    # qs_org = TI_primal_kdv_impl(qs0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+    qs_org = TI_primal_kdv_expl(qs0, f, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                params_primal['B'], params_primal['L'], kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                params_primal['c'], params_primal['alpha'], params_primal['omega'],
+                                params_primal['gamma'], params_primal['nu'])
+    # qs_target = TI_primal_kdv_impl(qs0, np.zeros_like(f), J_l_target, kdv.Nx, kdv.Nt, kdv.dt, **params_target)
+    qs_target = TI_primal_kdv_expl(qs0, np.zeros_like(f), params_target['D1'], params_target['D2'], params_target['D3'],
+                                   params_target['B'], params_target['L'], kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                   params_target['c'], params_target['alpha'], params_target['omega'],
+                                   params_target['gamma'], params_target['nu'])
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint_kdv(kdv.X))
 
@@ -286,8 +296,14 @@ if __name__ == "__main__":
     # --------------------------------------------------------------------------------- #
     # Precompute full basis once (fixed‐basis approach)
     qs_full = qs_org.copy()
-    qs_adj_full = TI_adjoint_kdv_impl(q0_adj, qs_full, qs_target, J_l_adjoint, kdv.Nx, kdv.Nt, kdv.dx, kdv.dt,
-                                      **params_adjoint)
+    # qs_adj_full = TI_adjoint_kdv_impl(q0_adj, qs_full, qs_target, J_l_adjoint, kdv.Nx, kdv.Nt, kdv.dx, kdv.dt,
+    #                                   **params_adjoint)
+    qs_adj_full = TI_adjoint_kdv_expl(q0_adj, qs_full, qs_target,
+                                      params_adjoint['D1'], params_adjoint['D2'], params_adjoint['D3'],
+                                      params_adjoint['CTC'], params_adjoint['L'], kwargs['Nx'], kwargs['dx'],
+                                      kwargs['Nt'], kwargs['dt'],
+                                      params_adjoint['c'], params_adjoint['alpha'], params_adjoint['omega'],
+                                      params_adjoint['gamma'], params_adjoint['nu'])
 
     # Concatenate if common_basis, else keep separately
     qs_norm = qs_full / np.linalg.norm(qs_full)
@@ -310,32 +326,13 @@ if __name__ == "__main__":
     err_a = np.linalg.norm(snap_cat_a - qsPOD_a) / np.linalg.norm(snap_cat_a)
     print(f"Adjoint basis: Nm_a={Nm_a}, err={err_a:.3e}")
 
-    # Compute the primal DEIM basis
-    qs_full_deim_primal = D1 @ (qs_full ** 2) + qs_full * (D1 @ qs_full)  # DEIM snapshot matrix
-    V_deim_p, qsPOD_deim = compute_deim_basis(qs_full_deim_primal, equation="primal", **kwargs)
-    Nm_deim_p = V_deim_p.shape[1]
-    err = np.linalg.norm(qs_full_deim_primal - qsPOD_deim) / np.linalg.norm(qs_full_deim_primal)
-    print(f"Primal DEIM basis: Nm_deim_p={Nm_deim_p}, err={err:.3e}")
-
-    # Compute the adjoint DEIM basis
-    qs_deim_adjoint = np.zeros((kdv.Nx, 6 * kdv.Nt))  # 6 because of the 6 banded structure
-    for i in range(kdv.Nt):
-        M = np.diag(qs_full[:, i]) @ D1
-        qs_deim_adjoint[:, 6 * i: 6 * (i + 1)] = np.vstack([np.pad(M.diagonal(k),
-                                                                   (max(-k, 0), max(k, 0)))
-                                                            for k in (-3, -2, -1, 1, 2, 3)]).T
-    V_deim_a, qsPOD_deim = compute_deim_basis(qs_deim_adjoint, equation="adjoint", **kwargs)
-    Nm_deim_a = V_deim_a.shape[1]
-    err = np.linalg.norm(qs_deim_adjoint - qsPOD_deim) / np.linalg.norm(qs_deim_adjoint)
-    print(f"Adjoint DEIM basis: Nm_deim_a={Nm_deim_a}, err={err:.3e}")
-
     # Initial conditions for ROM
     a_p = IC_primal_PODG_FOTR_kdv(V_p, q0)
     a_a = IC_adjoint_PODG_FOTR_kdv(Nm_a)
 
     # Build ROM system matrices
-    primal_mat = mat_primal_PODG_FOTR_kdv(V_p, V_deim_p, **params_primal)
-    adjoint_mat = mat_adjoint_PODG_FOTR_kdv(V_a, V_deim_a, V_p, params_primal['B'], qs_target, **params_adjoint)
+    primal_mat = mat_primal_PODG_FOTR_kdv(V_p, **params_primal)
+    adjoint_mat = mat_adjoint_PODG_FOTR_kdv(V_a, V_p, params_primal['B'], qs_target, **params_adjoint)
 
     # Prepare the linear parts of the Jacobian for the reduced order models
     J_l_ROM_primal = np.eye(Nm_p) - 0.5 * kdv.dt * (
@@ -352,11 +349,8 @@ if __name__ == "__main__":
     running_time = []
     trunc_modes_list_p = [Nm_p]  # fixed basis, just one value
     trunc_modes_list_a = [Nm_a]
-    trunc_deim_modes_list_p = [Nm_deim_p]
-    trunc_deim_modes_list_a = [Nm_deim_a]
     best_control = np.zeros_like(f)
-    best_details = {'J': np.inf, 'N_iter': None, 'Nm_p': Nm_p, 'Nm_a': Nm_a,
-                    'Nm_deim_p': Nm_deim_p, 'Nm_deim_a': Nm_deim_a}
+    best_details = {'J': np.inf, 'N_iter': None, 'Nm_p': Nm_p, 'Nm_a': Nm_a}
     f_last_valid = None
 
     start_total = time.time()
@@ -378,17 +372,25 @@ if __name__ == "__main__":
 
             # ───── Forward ROM: compute ROM state a_p → as_p ─────
             as_p = TI_primal_PODG_FOTR_kdv_expl(a_p, f, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                                primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                                primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                                primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                                primal_mat.B_r, primal_mat.L_r, params_primal['c'],
+                                                params_primal['alpha'],
                                                 params_primal['omega'], params_primal['gamma'],
                                                 params_primal['nu'], kwargs['Nt'], kwargs['dt'])
+            # as_p = TI_primal_PODG_FOTR_kdv_impl(a_p, f, primal_mat, J_l_ROM_primal,
+            #                                     kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+            #                                     **params_primal)
 
             # ───── Compute costs ─────
             J_s, J_ns = Calc_Cost_PODG(V_p, as_p, qs_target, f, C, kwargs['dx'], kwargs['dt'],
                                        kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_ROM = J_s + J_ns
 
-            qs_opt_full = TI_primal_kdv_impl(q0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+            # qs_opt_full = TI_primal_kdv_impl(q0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+            qs_opt_full = TI_primal_kdv_expl(q0, f, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                             params_primal['B'], params_primal['L'], kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                             params_primal['c'], params_primal['alpha'], params_primal['omega'],
+                                             params_primal['gamma'], params_primal['nu'])
             JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f, C, kwargs['dx'], kwargs['dt'],
                                     kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_FOM = JJ_s + JJ_ns
@@ -398,18 +400,22 @@ if __name__ == "__main__":
 
             # Track best control
             if J_FOM < best_details['J']:
-                best_details.update({'J': J_FOM, 'N_iter': opt_step, 'Nm_p': Nm_p, 'Nm_a': Nm_a,
-                                     'Nm_deim_p': Nm_deim_p, 'Nm_deim_a': Nm_deim_a})
+                best_details.update({'J': J_FOM, 'N_iter': opt_step, 'Nm_p': Nm_p, 'Nm_a': Nm_a})
                 best_control = f.copy()
 
             # ───── Backward ROM (adjoint) ─────
-            as_adj = TI_adjoint_PODG_FOTR_kdv_expl(a_a, as_p, adjoint_mat.VaT_CTC_qT, adjoint_mat.D_1r,
-                                                   adjoint_mat.D_2r, adjoint_mat.D_3r, adjoint_mat.prefactor,
-                                                   adjoint_mat.ST_Vp, adjoint_mat.ST_Va, adjoint_mat.ST_D1Vp,
-                                                   adjoint_mat.ST_D1Va, adjoint_mat.VaT_Vp,
+            # as_adj = TI_adjoint_PODG_FOTR_kdv_impl(a_a, as_p, adjoint_mat, J_l_ROM_adjoint,
+            #                                        kwargs['Nx'], kwargs['Nt'],
+            #                                        kwargs['dx'], kwargs['dt'],
+            #                                        **params_adjoint)
+            as_adj = TI_adjoint_PODG_FOTR_kdv_expl(a_a, as_p, adjoint_mat.VaT_CTC_qT,
+                                                   adjoint_mat.D_1r, adjoint_mat.D_2r,
+                                                   adjoint_mat.D_3r, adjoint_mat.kron_1,
+                                                   adjoint_mat.kron_2, adjoint_mat.VaT_Vp, adjoint_mat.L_r,
                                                    params_adjoint['c'], params_adjoint['alpha'],
                                                    params_adjoint['omega'], params_adjoint['gamma'],
-                                                   params_adjoint['nu'], kwargs['dx'], kwargs['Nt'], kwargs['dt'])
+                                                   params_adjoint['nu'], kwargs['dx'], kwargs['Nt'],
+                                                   kwargs['dt'])
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
             dL_du_s = Calc_Grad_PODG_smooth(adjoint_mat.VaT_B, f, as_adj, kwargs['lamda_l2'])
@@ -423,12 +429,18 @@ if __name__ == "__main__":
                 print("-------------GRAD CHECK-----------------")
                 eps = 1e-5
                 f_rand = f + eps * df
-                qs_rand = TI_primal_kdv_impl(q0, f_rand, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+                # qs_rand = TI_primal_kdv_impl(q0, f_rand, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+                qs_rand = TI_primal_kdv_expl(q0, f_rand, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                             params_primal['B'], params_primal['L'], kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                             params_primal['c'], params_primal['alpha'], params_primal['omega'],
+                                             params_primal['gamma'], params_primal['nu'])
                 JJ_s_eps, JJ_ns_eps = Calc_Cost(qs_rand, qs_target, f_rand, C, kwargs['dx'], kwargs['dt'],
                                                 kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM_eps = JJ_s_eps + JJ_ns_eps
                 print("Finite difference gradient", (J_FOM_eps - J_FOM) / eps)
                 print("Analytic gradient", L2inner_prod(dL_du_g, df, kwargs['dt']))
+
+            exit()
 
             # ───── Offline/Online error check ─────
             if kwargs['offline_online_err_check']:

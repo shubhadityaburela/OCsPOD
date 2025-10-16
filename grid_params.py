@@ -2,7 +2,7 @@ import numpy as np
 
 
 class advection:
-    def __init__(self, Nx: int, timesteps: int, cfl: float, tilt_from: int, v_x: float, v_x_t: float,
+    def __init__(self, Lx: float, Nx: int, timesteps: int, cfl: float, tilt_from: int, v_x: float, v_x_t: float,
                  variance: float, offset: float) -> None:
         # Assertion statements for checking the sanctity of the input variables
         assert Nx > 0, f"Please input sensible values for the X grid points"
@@ -15,7 +15,7 @@ class advection:
         self.dt = None
 
         # Private variables
-        self.Lx = 80
+        self.Lx = Lx
         self.Nx = Nx
         self.Nt = timesteps
         self.cfl = cfl
@@ -26,7 +26,7 @@ class advection:
         self.v_x = v_x * np.ones(self.Nt)
         self.C = 1.0
 
-        self.v_x_target = self.v_x
+        self.v_x_target = self.v_x.copy()
         self.v_x_target[tilt_from:] = v_x_t
         self.tilt_from = tilt_from
         self.CTC_end_index = None

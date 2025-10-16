@@ -6,6 +6,7 @@ from numba import njit
 from scipy import sparse
 from scipy.linalg import qr
 from scipy.sparse import csc_matrix
+from tqdm import tqdm
 
 from Helper_sPODG import Target_offline_adjoint_FOTR_mix, findIntervalAndGiveInterpolationWeight_1D
 from TI_schemes import rk4_PODG_prim, rk4_PODG_adj, implicit_midpoint_PODG_adj, DIRK_PODG_adj, bdf2_PODG_adj, \
@@ -263,23 +264,22 @@ class PrimalMatrices_PODG_kdv(NamedTuple):
     D_2r: np.ndarray
     D_3r: np.ndarray
     B_r: np.ndarray
-    prefactor: np.ndarray
-    ST_V: np.ndarray
-    ST_D1V: np.ndarray
+    L_r: np.ndarray
+    kron_1: np.ndarray
+    kron_2: np.ndarray
+    kron_3: np.ndarray
 
 
 class AdjointMatrices_PODG_FOTR_kdv(NamedTuple):
     D_1r: np.ndarray
     D_2r: np.ndarray
     D_3r: np.ndarray
-    prefactor: np.ndarray
-    ST_Va: np.ndarray
-    ST_D1Va: np.ndarray
-    ST_Vp: np.ndarray
-    ST_D1Vp: np.ndarray
+    kron_1: np.ndarray
+    kron_2: np.ndarray
     VaT_Vp: np.ndarray
     VaT_CTC_qT: np.ndarray
     VaT_B: np.ndarray
+    L_r: np.ndarray
 
 
 @njit
@@ -287,62 +287,62 @@ def IC_primal_PODG_FOTR_kdv(V_p, q0):
     return V_p.T @ q0
 
 
-def mat_primal_PODG_FOTR_kdv(V_p, V_deim_p, **params_primal) -> PrimalMatrices_PODG_kdv:
+def mat_primal_PODG_FOTR_kdv(V_p, **params_primal) -> PrimalMatrices_PODG_kdv:
     D1, D2, D3 = params_primal['D1'], params_primal['D2'], params_primal['D3']
     B = params_primal['B']
-    Nm_deim = V_deim_p.shape[1]
+    N = V_p.shape[0]
+    Nm = V_p.shape[1]
 
     # Linear factors
     D_1r = (V_p.T @ D1) @ V_p
     D_2r = (V_p.T @ D2) @ V_p
     D_3r = (V_p.T @ D3) @ V_p
+    L_r = - params_primal['alpha'] * params_primal['c'] * D_1r \
+          - params_primal['gamma'] * D_3r + params_primal['nu'] * D_2r
     B_r = V_p.T @ B
 
-    # Nonlinear DEIM prep
-    _, _, piv = qr(V_deim_p.T, pivoting=True)
-    S = np.sort(piv[:Nm_deim])
-    STVdeim_inv = np.linalg.inv(V_deim_p[S])
-    VT_Vdeim_ST_Vdeim_inv = (V_p.T @ V_deim_p) @ STVdeim_inv
-
-    ST_V = V_p[S]
-    ST_D1V = (D1 @ V_p)[S]
+    kron_1 = (V_p.T @ D1) @ np.einsum('ij,ik->ijk', V_p, V_p).reshape(N, Nm ** 2)
+    kron_2 = V_p.T @ np.einsum('ij,ik->ijk', V_p, D1 @ V_p).reshape(N, Nm ** 2)
+    kron_3 = (kron_1 + kron_2).reshape(Nm, Nm, Nm)
 
     return PrimalMatrices_PODG_kdv(
         D_1r=D_1r,
         D_2r=D_2r,
         D_3r=D_3r,
         B_r=B_r,
-        prefactor=VT_Vdeim_ST_Vdeim_inv,
-        ST_V=ST_V,
-        ST_D1V=ST_D1V
+        L_r=L_r,
+        kron_1=kron_1,
+        kron_2=kron_2,
+        kron_3=kron_3
     )
 
 
 @njit
-def RHS_primal_PODG_FOTR_kdv_expl(a, f, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, c, alpha, omega, gamma, nu):
+def RHS_primal_PODG_FOTR_kdv_expl(a, f, D_1r, D_2r, D_3r, kron_1, kron_2, kron_3, B_r, L_r, c, alpha, omega, gamma, nu):
     a = np.ascontiguousarray(a)
     f = np.ascontiguousarray(f)
     D_1r = np.ascontiguousarray(D_1r)
     D_2r = np.ascontiguousarray(D_2r)
     D_3r = np.ascontiguousarray(D_3r)
-    prefactor = np.ascontiguousarray(prefactor)
-    ST_V = np.ascontiguousarray(ST_V)
-    ST_D1V = np.ascontiguousarray(ST_D1V)
+    kron_1 = np.ascontiguousarray(kron_1)
+    kron_2 = np.ascontiguousarray(kron_2)
     B_r = np.ascontiguousarray(B_r)
+    L_r = np.ascontiguousarray(L_r)
+    a_kron = np.kron(a, a)
 
-    return (- alpha * c * D_1r - gamma * D_3r + nu * D_2r) @ a + B_r @ f
+    return L_r.dot(a) - (omega / 3) * ((kron_1 + kron_2).dot(a_kron)) + B_r.dot(f)
 
 
-@njit
-def TI_primal_PODG_FOTR_kdv_expl(a, f0, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, c, alpha, omega, gamma, nu, Nt,
+# @njit
+def TI_primal_PODG_FOTR_kdv_expl(a, f0, D_1r, D_2r, D_3r, kron_1, kron_2, kron_3, B_r, L_r, c, alpha, omega, gamma, nu, Nt,
                                  dt):
     # Time loop
     as_p = np.zeros((a.shape[0], Nt))
     as_p[:, 0] = a
 
-    for n in range(1, Nt):
+    for n in tqdm(range(1, Nt), desc="Reduced Primal Working"):
         as_p[:, n] = rk4_PODG_prim_kdvb(RHS_primal_PODG_FOTR_kdv_expl, as_p[:, n - 1], f0[:, n - 1], f0[:, n], dt,
-                                        D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, c, alpha, omega, gamma, nu)
+                                        D_1r, D_2r, D_3r, kron_1, kron_2, kron_3, B_r, L_r, c, alpha, omega, gamma, nu)
 
     print('RK4 reduced primal finished')
 
@@ -351,12 +351,12 @@ def TI_primal_PODG_FOTR_kdv_expl(a, f0, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1
 
 # Nonlinear Jacobian for KdV steepening term
 def J_nl_PODG_FOTR_kdv(a: np.ndarray,
-                       prefactor: np.ndarray,
-                       ST_D1V: np.ndarray,
-                       ST_V: np.ndarray,
+                       kron_1: np.ndarray,
+                       kron_2: np.ndarray,
+                       kron_3: np.ndarray,
                        omega: float,
                        dt: float) -> np.ndarray:
-    return 3.0 * omega * dt * (prefactor @ (ST_D1V.dot(a)[:, None] * ST_V + ST_V.dot(a)[:, None] * ST_D1V))
+    return (omega * dt / 6) * (np.einsum('ijk,j->ik', kron_3, a) + np.einsum('ikj,j->ik', kron_3, a))
 
 
 # Right-hand side for KdV-Burgers-advection
@@ -365,16 +365,18 @@ def RHS_primal_PODG_FOTR_kdv_impl(a: np.ndarray,
                                   D_1r: np.ndarray,
                                   D_2r: np.ndarray,
                                   D_3r: np.ndarray,
-                                  prefactor: np.ndarray,
-                                  ST_V: np.ndarray,
-                                  ST_D1V: np.ndarray,
+                                  kron_1: np.ndarray,
+                                  kron_2: np.ndarray,
+                                  kron_3: np.ndarray,
                                   B_r: np.ndarray,
+                                  L_r: np.ndarray,
                                   c: float,
                                   alpha: float,
                                   omega: float,
                                   gamma: float,
                                   nu: float) -> np.ndarray:
-    return (- alpha * c * D_1r - gamma * D_3r + nu * D_2r) @ a + B_r @ u
+    a_kron = np.kron(a, a)
+    return L_r.dot(a) - (omega / 3) * ((kron_1 + kron_2).dot(a_kron)) + B_r.dot(u)
 
 
 def TI_primal_PODG_FOTR_kdv_impl(a, f, primal_mat, J_l, Nx, Nt, dt, **params_primal):
@@ -400,79 +402,72 @@ def IC_adjoint_PODG_FOTR_kdv(modes):
     return np.zeros(modes)
 
 
-def mat_adjoint_PODG_FOTR_kdv(V_a, V_deim_a, V_p, B, qs_target, **params_adjoint) -> AdjointMatrices_PODG_FOTR_kdv:
+def mat_adjoint_PODG_FOTR_kdv(V_a, V_p, B, qs_target, **params_adjoint) -> AdjointMatrices_PODG_FOTR_kdv:
     D1, D2, D3 = params_adjoint['D1'], params_adjoint['D2'], params_adjoint['D3']
     CTC = params_adjoint['CTC']
-    Nm_deim_a = V_deim_a.shape[1]
+    N = V_p.shape[0]
+    Nm_p = V_p.shape[1]
+    Nm_a = V_a.shape[1]
 
     # Linear factors
     D_1r = (V_a.T @ D1.T) @ V_a
     D_2r = (V_a.T @ D2.T) @ V_a
     D_3r = (V_a.T @ D3.T) @ V_a
+    L_r = params_adjoint['alpha'] * params_adjoint['c'] * D_1r - params_adjoint['gamma'] * D_3r + params_adjoint['nu'] * D_2r
     VaT_Vp = V_a[CTC, :].T @ V_p[CTC, :]
     VaT_CTC_qT = V_a[CTC, :].T @ qs_target[CTC, :]
     B_r = V_a.T @ B
 
-    # DEIM prep
-    _, _, piv = qr(V_deim_a.T, pivoting=True)
-    S = np.sort(piv[:Nm_deim_a])
-    STVdeim_inv = np.linalg.inv(V_deim_a[S])
-    VaT_Vdeim_ST_Vdeim_inv = (V_a.T @ V_deim_a) @ STVdeim_inv
-
-    ST_Va = V_a[S]
-    ST_D1Va = (D1 @ V_a)[S]
-    ST_Vp = V_p[S]
-    ST_D1Vp = (D1 @ V_p)[S]
+    kron_1 = V_a.T @ np.einsum('ij,ik->ijk', V_p, D1 @ V_a).reshape(N, Nm_p * Nm_a)
+    kron_2 = np.reshape(kron_1, (Nm_a, Nm_p, Nm_a))
 
     return AdjointMatrices_PODG_FOTR_kdv(
         D_1r=D_1r,
         D_2r=D_2r,
         D_3r=D_3r,
-        prefactor=VaT_Vdeim_ST_Vdeim_inv,
-        ST_Va=ST_Va,
-        ST_D1Va=ST_D1Va,
-        ST_Vp=ST_Vp,
-        ST_D1Vp=ST_D1Vp,
+        kron_1=kron_1,
+        kron_2=kron_2,
         VaT_Vp=VaT_Vp,
         VaT_CTC_qT=VaT_CTC_qT,
-        VaT_B=B_r
+        VaT_B=B_r,
+        L_r=L_r
     )
 
 
 @njit
-def RHS_adjoint_PODG_FOTR_kdv_expl(a_adj, a, VaT_CTC_qT, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va,
-                                   ST_D1Vp, ST_D1Va, VaT_Vp, c, alpha, omega, gamma, nu, dx):
+def RHS_adjoint_PODG_FOTR_kdv_expl(a_adj, a, VaT_CTC_qT, D_1r, D_2r, D_3r, kron_1, kron_2, VaT_Vp, L_r,
+                                   c, alpha, omega, gamma, nu, dx):
     a_adj = np.ascontiguousarray(a_adj)
     a = np.ascontiguousarray(a)
     D_1r = np.ascontiguousarray(D_1r)
     D_2r = np.ascontiguousarray(D_2r)
     D_3r = np.ascontiguousarray(D_3r)
-    prefactor = np.ascontiguousarray(prefactor)
-    ST_Vp = np.ascontiguousarray(ST_Vp)
-    ST_Va = np.ascontiguousarray(ST_Va)
-    ST_D1Vp = np.ascontiguousarray(ST_D1Vp)
-    ST_D1Va = np.ascontiguousarray(ST_D1Va)
+    kron_1 = np.ascontiguousarray(kron_1)
     VaT_Vp = np.ascontiguousarray(VaT_Vp)
     VaT_CTC_qT = np.ascontiguousarray(VaT_CTC_qT)
+    L_r = np.ascontiguousarray(L_r)
+    a_kron = np.kron(a, a_adj)
 
-    out = (alpha * c * D_1r - gamma * D_3r + nu * D_2r) @ a_adj - dx * (VaT_Vp @ a - VaT_CTC_qT)
+    out = L_r.dot(a_adj) \
+          - omega * kron_1.dot(a_kron) \
+          - dx * (VaT_Vp.dot(a) - VaT_CTC_qT)
 
     return out
 
 
-@njit
-def TI_adjoint_PODG_FOTR_kdv_expl(a_adj, as_p, VaT_CTC_qT, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va,
-                                  ST_D1Vp, ST_D1Va, VaT_Vp, c, alpha, omega, gamma, nu,
+# @njit
+def TI_adjoint_PODG_FOTR_kdv_expl(a_adj, as_p, VaT_CTC_qT, D_1r, D_2r, D_3r, kron_1, kron_2,
+                                  VaT_Vp, L_r, c, alpha, omega, gamma, nu,
                                   dx, Nt, dt):
     as_adj = np.zeros((a_adj.shape[0], Nt))
     as_adj[:, -1] = a_adj
 
-    for n in range(1, Nt):
+    for n in tqdm(range(1, Nt), desc="Reduced Adjoint Working"):
         as_adj[:, -(n + 1)] = rk4_PODG_adj_kdvb_(RHS_adjoint_PODG_FOTR_kdv_expl, as_adj[:, -n], as_p[:, -n],
                                                  as_p[:, -(n + 1)],
                                                  VaT_CTC_qT[:, -n], VaT_CTC_qT[:, -(n + 1)],
                                                  - dt, D_1r, D_2r, D_3r,
-                                                 prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp,
+                                                 kron_1, kron_2, VaT_Vp, L_r,
                                                  c, alpha, omega, gamma, nu, dx)
 
     print('RK4 reduced adjoint finished')
@@ -480,14 +475,10 @@ def TI_adjoint_PODG_FOTR_kdv_expl(a_adj, as_p, VaT_CTC_qT, D_1r, D_2r, D_3r, pre
 
 
 def J_nl_PODG_FOTR_adj_kdv(a: np.ndarray,
-                           prefactor: np.ndarray,
-                           ST_D1Va: np.ndarray,
-                           ST_Va: np.ndarray,
-                           ST_D1Vp: np.ndarray,
-                           ST_Vp: np.ndarray,
+                           kron_2: np.ndarray,
                            omega: float,
                            dt: float) -> np.ndarray:
-    return 3.0 * omega * dt * (prefactor @ (ST_D1Vp.dot(a)[:, None] * ST_Va + ST_Vp.dot(a)[:, None] * ST_D1Va))
+    return - (omega * dt / 2) * (np.einsum('ijk,j->ik', kron_2, a))
 
 
 def RHS_adjoint_PODG_FOTR_kdv_impl(a_adj: np.ndarray,
@@ -497,18 +488,19 @@ def RHS_adjoint_PODG_FOTR_kdv_impl(a_adj: np.ndarray,
                                    D_1r: np.ndarray,
                                    D_2r: np.ndarray,
                                    D_3r: np.ndarray,
-                                   prefactor: np.ndarray,
-                                   ST_Va: np.ndarray,
-                                   ST_D1Va: np.ndarray,
-                                   ST_Vp: np.ndarray,
-                                   ST_D1Vp: np.ndarray,
+                                   kron_1: np.ndarray,
+                                   kron_2: np.ndarray,
                                    VaT_Vp: np.ndarray,
+                                   L_r: np.ndarray,
                                    c: float,
                                    alpha: float,
                                    omega: float,
                                    gamma: float,
                                    nu: float) -> np.ndarray:
-    out = (alpha * c * D_1r - gamma * D_3r + nu * D_2r) @ a_adj - dx * (VaT_Vp @ a - VaT_CTC_qT)
+    a_kron = np.kron(a, a_adj)
+    out = L_r.dot(a_adj) \
+          - omega * kron_1.dot(a_kron) \
+          - dx * (VaT_Vp.dot(a) - VaT_CTC_qT)
 
     return out
 

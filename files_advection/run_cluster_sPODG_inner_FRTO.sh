@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sPODG       # Job name
+#SBATCH --job-name=sPODG_FOTR       # Job name
 #SBATCH --ntasks=1            # Run on a single CPU
 #SBATCH --mem=48gb            # Job memory request
 #SBATCH --time=150:00:00       # Time limit
@@ -16,11 +16,11 @@ pwd; hostname; date
 
 export PYTHONPATH="$PWD:$PYTHONPATH"
 
-echo "sPODG run with 40 controls"
+echo "sPODG run FRTO"
 
 # Common command-line arguments
-common_basis=$1
-interp_scheme=$2
+type_of_problem=$1
+common_basis=$2
 param_type=$3    # Should be either "modes" or "tol"
 CTC_mask=$4
 
@@ -33,18 +33,22 @@ else
     script_type=$6    # "adaptive" or "fixed"
 fi
 
+grid_str="${@: -1}"
+read -r -a grid_params <<< "$grid_str"
+
+
 # Decide which Python script to run based on the script_type parameter
 if [ "$script_type" = "adaptive" ]; then
     if [ "$param_type" = "tol" ]; then
-        python3 files_advection/sPODG_FRTO_adaptive.py $common_basis 1000 16000 8 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --tol $tol_value
+        python3 files_advection/sPODG_FRTO_adaptive.py $type_of_problem $common_basis "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $CTC_mask --tol $tol_value
     else
-        python3 files_advection/sPODG_FRTO_adaptive.py $common_basis 1000 16000 8 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --modes $mode
+        python3 files_advection/sPODG_FRTO_adaptive.py $type_of_problem $common_basis "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $CTC_mask --modes $mode
     fi
 else
     if [ "$param_type" = "tol" ]; then
-        python3 files_advection/sPODG_FRTO.py $common_basis 1000 16000 8 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --tol $tol_value
+        python3 files_advection/sPODG_FRTO.py $type_of_problem $common_basis "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $CTC_mask --tol $tol_value
     else
-        python3 files_advection/sPODG_FRTO.py $common_basis 1000 16000 8 20000 "/work/burela" 0 1e-3 $CTC_mask $interp_scheme --modes $mode
+        python3 files_advection/sPODG_FRTO.py $type_of_problem $common_basis "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $CTC_mask --modes $mode
     fi
 fi
 

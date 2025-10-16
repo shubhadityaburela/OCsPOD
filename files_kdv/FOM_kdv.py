@@ -42,7 +42,7 @@ def parse_arguments():
 
 
 def setup_kdv(Nx, Nt, cfl_fac):
-    kdv = Korteweg_de_Vries(Nx=Nx, timesteps=Nt, cfl=0.17 / cfl_fac, v_x=8 / 3, offset=20)
+    kdv = Korteweg_de_Vries(Nx=Nx, timesteps=Nt, cfl=0.0425 / cfl_fac, v_x=8 / 3, offset=20)
     kdv.Grid()
     return kdv
 
@@ -142,7 +142,7 @@ if __name__ == "__main__":
         'beta': 1 / 2,  # for TWBT
         'verbose': True,
         'omega_cutoff': 1e-10,
-        'perform_grad_check': False,
+        'perform_grad_check': True,
     }
     f = np.zeros((n_c, kdv.Nt))  # initial control guess
     df = np.random.randn(*f.shape)
@@ -173,10 +173,13 @@ if __name__ == "__main__":
         target_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
         shared_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.0}
 
-    # Nonlinearity less prevalent
-    params_primal = {**shared_dynamics, **shared_params}
-    params_target = {**shared_dynamics, **target_params}
-    params_adjoint = {**common_params, 'CTC': CTC, **shared_params}
+    L_p = - shared_params['alpha'] * shared_params['c'] * D1 - shared_params['gamma'] * D3 + shared_params['nu'] * D2
+    L_t = - target_params['alpha'] * target_params['c'] * D1 - target_params['gamma'] * D3 + target_params['nu'] * D2
+    L_a = shared_params['alpha'] * shared_params['c'] * D1.T + shared_params['gamma'] * D3.T - shared_params['nu'] * D2.T
+
+    params_primal = {**shared_dynamics, 'L': L_p, **shared_params}
+    params_target = {**shared_dynamics, 'L': L_t, **target_params}
+    params_adjoint = {**common_params, 'CTC': CTC, 'L': L_a, **shared_params}
 
     J_l = scipy.sparse.identity(kdv.Nx, format='csc') - 0.5 * kdv.dt * (
             params_primal['alpha'] * (- params_primal['c']) * D1

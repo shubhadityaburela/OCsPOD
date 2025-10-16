@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sPODG       # Job name
+#SBATCH --job-name=sPODG_FOTR_RA       # Job name
 #SBATCH --ntasks=1            # Run on a single CPU
 #SBATCH --mem=48gb            # Job memory request
 #SBATCH --time=150:00:00       # Time limit
@@ -35,15 +35,15 @@ fi
 # Decide which Python script to run based on the script_type parameter
 if [ "$script_type" = "adaptive" ]; then
     if [ "$param_type" = "tol" ]; then
-        python3 files_kdv/sPODG_FRTO_kdv_adaptive.py False $common_basis 1000 8000 4 20000 "/work/burela" 0 1e-3 False --tol $tol1 $tol2
+        python3 files_kdv/sPODG_FRTO_kdv_adaptive.py False $common_basis 1000 8000 1 20000 "/work/burela" 0 1e-3 False --tol $tol1 $tol2
     else
-        python3 files_kdv/sPODG_FRTO_kdv_adaptive.py False $common_basis 1000 8000 4 20000 "/work/burela" 0 1e-3 False --modes $mode1 $mode2
+        python3 files_kdv/sPODG_FRTO_kdv_adaptive.py False $common_basis 1000 8000 1 20000 "/work/burela" 0 1e-3 False --modes $mode1 $mode2
     fi
 else
     if [ "$param_type" = "tol" ]; then
-        python3 files_kdv/sPODG_FRTO_kdv.py False $common_basis 1000 8000 4 20000 "/work/burela" 0 1e-3 False --tol $tol1 $tol2
+        python3 files_kdv/sPODG_FRTO_kdv.py False $common_basis 1000 8000 1 20000 "/work/burela" 0 1e-3 False --tol $tol1 $tol2
     else
-        python3 files_kdv/sPODG_FRTO_kdv.py False $common_basis 1000 8000 4 20000 "/work/burela" 0 1e-3 False --modes $mode1 $mode2
+        python3 files_kdv/sPODG_FRTO_kdv.py False $common_basis 1000 8000 1 20000 "/work/burela" 0 1e-3 False --modes $mode1 $mode2
     fi
 fi
 

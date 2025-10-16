@@ -28,11 +28,12 @@ def rk4_FOM_targ(RHS: callable,
                  q0: np.ndarray,
                  dt,
                  Grad,
-                 v_x_t) -> np.ndarray:
-    k1 = RHS(q0, Grad, v_x_t)
-    k2 = RHS(q0 + dt / 2 * k1, Grad, v_x_t)
-    k3 = RHS(q0 + dt / 2 * k2, Grad, v_x_t)
-    k4 = RHS(q0 + dt * k3, Grad, v_x_t)
+                 v_x_t,
+                 diffusion) -> np.ndarray:
+    k1 = RHS(q0, Grad, v_x_t, diffusion)
+    k2 = RHS(q0 + dt / 2 * k1, Grad, v_x_t, diffusion)
+    k3 = RHS(q0 + dt / 2 * k2, Grad, v_x_t, diffusion)
+    k4 = RHS(q0 + dt * k3, Grad, v_x_t, diffusion)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -718,6 +719,7 @@ def rk4_FOM_kdvb(RHS: callable,
                  D2,
                  D3,
                  B,
+                 L_p,
                  c,
                  alpha,
                  omega,
@@ -725,10 +727,10 @@ def rk4_FOM_kdvb(RHS: callable,
                  nu) -> np.ndarray:
     u_mid = (u1 + u2) / 2
 
-    k1 = RHS(q0, u1, D1, D2, D3, B, c, alpha, omega, gamma, nu)
-    k2 = RHS(q0 + dt / 2 * k1, u_mid, D1, D2, D3, B, c, alpha, omega, gamma, nu)
-    k3 = RHS(q0 + dt / 2 * k2, u_mid, D1, D2, D3, B, c, alpha, omega, gamma, nu)
-    k4 = RHS(q0 + dt * k3, u2, D1, D2, D3, B, c, alpha, omega, gamma, nu)
+    k1 = RHS(q0, u1, D1, D2, D3, B, L_p, c, alpha, omega, gamma, nu)
+    k2 = RHS(q0 + dt / 2 * k1, u_mid, D1, D2, D3, B, L_p, c, alpha, omega, gamma, nu)
+    k3 = RHS(q0 + dt / 2 * k2, u_mid, D1, D2, D3, B, L_p, c, alpha, omega, gamma, nu)
+    k4 = RHS(q0 + dt * k3, u2, D1, D2, D3, B, L_p, c, alpha, omega, gamma, nu)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -744,10 +746,11 @@ def rk4_PODG_prim_kdvb(RHS: callable,
                        D_1r,
                        D_2r,
                        D_3r,
-                       prefactor,
-                       ST_V,
-                       ST_D1V,
+                       kron_1,
+                       kron_2,
+                       kron_3,
                        B_r,
+                       L_r,
                        c,
                        alpha,
                        omega,
@@ -755,10 +758,10 @@ def rk4_PODG_prim_kdvb(RHS: callable,
                        nu) -> np.ndarray:
     u_mid = (u1 + u2) / 2
 
-    k1 = RHS(q0, u1, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, c, alpha, omega, gamma, nu)
-    k2 = RHS(q0 + dt / 2 * k1, u_mid, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, c, alpha, omega, gamma, nu)
-    k3 = RHS(q0 + dt / 2 * k2, u_mid, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, c, alpha, omega, gamma, nu)
-    k4 = RHS(q0 + dt * k3, u2, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, B_r, c, alpha, omega, gamma, nu)
+    k1 = RHS(q0, u1, D_1r, D_2r, D_3r, kron_1, kron_2, kron_3, B_r, L_r, c, alpha, omega, gamma, nu)
+    k2 = RHS(q0 + dt / 2 * k1, u_mid, D_1r, D_2r, D_3r, kron_1, kron_2, kron_3, B_r, L_r, c, alpha, omega, gamma, nu)
+    k3 = RHS(q0 + dt / 2 * k2, u_mid, D_1r, D_2r, D_3r, kron_1, kron_2, kron_3, B_r, L_r, c, alpha, omega, gamma, nu)
+    k4 = RHS(q0 + dt * k3, u2, D_1r, D_2r, D_3r, kron_1, kron_2, kron_3, B_r, L_r, c, alpha, omega, gamma, nu)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -776,6 +779,7 @@ def rk4_FOM_adj_kdvb(RHS: callable,
                      D2,
                      D3,
                      CTC,
+                     L_a,
                      dx,
                      c,
                      alpha,
@@ -785,10 +789,10 @@ def rk4_FOM_adj_kdvb(RHS: callable,
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, a1, b1, D1, D2, D3, CTC, dx, c, alpha, omega, gamma, nu)
-    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, D1, D2, D3, CTC, dx, c, alpha, omega, gamma, nu)
-    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, D1, D2, D3, CTC, dx, c, alpha, omega, gamma, nu)
-    k4 = RHS(q0 + dt * k3, a2, b2, D1, D2, D3, CTC, dx, c, alpha, omega, gamma, nu)
+    k1 = RHS(q0, a1, b1, D1, D2, D3, CTC, L_a, dx, c, alpha, omega, gamma, nu)
+    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, D1, D2, D3, CTC, L_a, dx, c, alpha, omega, gamma, nu)
+    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, D1, D2, D3, CTC, L_a, dx, c, alpha, omega, gamma, nu)
+    k4 = RHS(q0 + dt * k3, a2, b2, D1, D2, D3, CTC, L_a, dx, c, alpha, omega, gamma, nu)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -839,12 +843,10 @@ def rk4_PODG_adj_kdvb_(RHS: callable,
                        D_1r,
                        D_2r,
                        D_3r,
-                       prefactor,
-                       ST_Vp,
-                       ST_Va,
-                       ST_D1Vp,
-                       ST_D1Va,
+                       kron_1,
+                       kron_2,
                        VaT_Vp,
+                       L_r,
                        c,
                        alpha,
                        omega,
@@ -854,13 +856,13 @@ def rk4_PODG_adj_kdvb_(RHS: callable,
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, a1, b1, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, c, alpha, omega, gamma,
+    k1 = RHS(q0, a1, b1, D_1r, D_2r, D_3r, kron_1, kron_2, VaT_Vp, L_r, c, alpha, omega, gamma,
              nu, dx)
-    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, c,
+    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, D_1r, D_2r, D_3r, kron_1, kron_2, VaT_Vp, L_r, c,
              alpha, omega, gamma, nu, dx)
-    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, c,
+    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, D_1r, D_2r, D_3r, kron_1, kron_2, VaT_Vp, L_r, c,
              alpha, omega, gamma, nu, dx)
-    k4 = RHS(q0 + dt * k3, a2, b2, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, c, alpha, omega,
+    k4 = RHS(q0 + dt * k3, a2, b2, D_1r, D_2r, D_3r, kron_1, kron_2, VaT_Vp, L_r, c, alpha, omega,
              gamma, nu, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
@@ -1169,13 +1171,13 @@ def implicit_midpoint_PODG_FOTR_primal_kdvb(
 
         # Residual: R = q_k - q0 - dt*RHS(qmid, u_mid)
         R_k = q_k - q0 - dt * RHS(qmid, u_mid, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                  primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                  primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                  primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                  primal_mat.B_r, primal_mat.L_r, params_primal['c'], params_primal['alpha'],
                                   params_primal['omega'], params_primal['gamma'], params_primal['nu'])
 
         # Assemble Jacobian: J_l + J_nl
-        # J_nl_k = J_nl(qmid, primal_mat.prefactor, primal_mat.ST_D1V, primal_mat.ST_V, params_primal['omega'], dt)
-        J_k = J_l  # + J_nl_k
+        J_nl_k = J_nl(qmid, primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3, params_primal['omega'], dt)
+        J_k = J_l + J_nl_k
 
         delq = np.linalg.solve(J_k, -R_k)
         q_k += delq
@@ -1332,14 +1334,13 @@ def implicit_midpoint_PODG_FOTR_adjoint_kdvb(
 
     # Compute the residual
     R_k = p_k - p0 + dt * RHS(p_mid, a_mid, b_mid, dx, adjoint_mat.D_1r, adjoint_mat.D_2r, adjoint_mat.D_3r,
-                              adjoint_mat.prefactor, adjoint_mat.ST_Va, adjoint_mat.ST_D1Va, adjoint_mat.ST_Vp,
-                              adjoint_mat.ST_D1Vp, adjoint_mat.VaT_Vp, params_adjoint['c'],
+                              adjoint_mat.kron_1, adjoint_mat.kron_2, adjoint_mat.VaT_Vp, adjoint_mat.L_r,
+                              params_adjoint['c'],
                               params_adjoint['alpha'], params_adjoint['omega'],
                               params_adjoint['gamma'], params_adjoint['nu'])
 
     # Assemble Jacobian: J_l + J_nl
-    J_k = J_l.copy()  # + J_nl(a_mid, adjoint_mat.prefactor, adjoint_mat.ST_D1Va, adjoint_mat.ST_Va,
-    #    adjoint_mat.ST_D1Vp, adjoint_mat.ST_Vp, params_adjoint['omega'], dt).T
+    J_k = J_l + J_nl(a_mid, adjoint_mat.kron_2, params_adjoint['omega'], dt)
 
     # Solve linear system
     delq = np.linalg.solve(J_k, -R_k)

@@ -13,12 +13,18 @@ from TI_schemes import rk4_FOM_adj, rk4_FOM, rk4_FOM_targ, implicit_midpoint_FOM
     implicit_midpoint_FOM_primal_kdvb, implicit_midpoint_FOM_adjoint_kdvb
 
 
-@njit
-def IC_primal(X, Lx, offset, variance):
-    A = 8
-    mu = (Lx - 0) / offset
-    x_t = np.mod(X - 0, Lx - 0) + 0 - mu
-    q = A / np.cosh(np.sqrt(3 * A) / 6 * x_t) ** 2
+def IC_primal(X, Lx, offset, variance, type_of_problem):
+    if type_of_problem == "Constant_shift":
+        A = 8
+        mu = (Lx - 0) / offset
+        x_t = np.mod(X - 0, Lx - 0) + 0 - mu
+        q = A / np.cosh(np.sqrt(3 * A) / 6 * x_t) ** 2
+    elif type_of_problem == "Shifting":
+        q = np.exp(-((X - Lx / offset) ** 2) / variance)
+    else:
+        print("Choose a proper initial condition...")
+        exit()
+
     return q
 
 
@@ -126,19 +132,19 @@ def TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, CTC, Nxi, dx, Nt, dt, sc
     return qs_adj
 
 
-def RHS_primal_target(q, Grad, v_x):
+def RHS_primal_target(q, Grad, v_x, nu):
     DT = v_x * Grad
-    qdot = - DT.dot(q)
+    qdot = - DT.dot(q) + nu * (Grad @ Grad).dot(q)
     return qdot
 
 
-def TI_primal_target(q, Grad, v_x_target, Nx, Nt, dt):
+def TI_primal_target(q, Grad, v_x_target, Nx, Nt, dt, nu=0.0):
     # Time loop
     qs = np.zeros((Nx, Nt))
     qs[:, 0] = q
 
     for n in range(1, Nt):
-        qs[:, n] = rk4_FOM_targ(RHS_primal_target, qs[:, n - 1], dt, Grad, v_x_target[n - 1])
+        qs[:, n] = rk4_FOM_targ(RHS_primal_target, qs[:, n - 1], dt, Grad, v_x_target[n - 1], nu)
 
     return qs
 
@@ -157,22 +163,20 @@ def IC_primal_kdv(X, Lx, c, offset):
     return q
 
 
-def RHS_primal_kdv_expl(q, u, D1, D2, D3, B, c, alpha, omega, gamma, nu):
-    return (- alpha * c * D1.dot(q)
+def RHS_primal_kdv_expl(q, u, D1, D2, D3, B, L, c, alpha, omega, gamma, nu):
+    return (L.dot(q)
             - (omega / 3) * D1.dot(q ** 2)
             - (omega / 3) * (q * D1.dot(q))
-            - gamma * D3.dot(q)
-            + nu * D2.dot(q)
             + B.dot(u))
 
 
-def TI_primal_kdv_expl(q, f, D1, D2, D3, B, Nx, Nt, dt, c, alpha=1.0, omega=1.0, gamma=1e-4, nu=1e-4):
+def TI_primal_kdv_expl(q, f, D1, D2, D3, B, L, Nx, Nt, dt, c, alpha=1.0, omega=1.0, gamma=1e-4, nu=1e-4):
     # Time loop
     qs = np.zeros((Nx, Nt))
     qs[:, 0] = q
     for n in tqdm(range(1, Nt), desc="Primal Working"):
         qs[:, n] = rk4_FOM_kdvb(RHS_primal_kdv_expl, qs[:, n - 1], f[:, n - 1], f[:, n], dt,
-                                D1, D2, D3, B, c, alpha, omega, gamma, nu)
+                                D1, D2, D3, B, L, c, alpha, omega, gamma, nu)
     return qs
 
 
@@ -193,16 +197,15 @@ def RHS_primal_kdv_impl(q: np.ndarray,
                         D2: csc_matrix,
                         D3: csc_matrix,
                         B: csc_matrix,
+                        L: csc_matrix,
                         c: float,
                         alpha: float,
                         omega: float,
                         gamma: float,
                         nu: float) -> np.ndarray:
-    return (- alpha * c * D1.dot(q)
+    return (L.dot(q)
             - (omega / 3) * D1.dot(q ** 2)
             - (omega / 3) * (q * D1.dot(q))
-            - gamma * D3.dot(q)
-            + nu * D2.dot(q)
             + B.dot(u))
 
 
@@ -230,23 +233,21 @@ def IC_adjoint_kdv(X):
     return q_adj
 
 
-def RHS_adjoint_kdv_expl(q_adj, q, q_tar, D1, D2, D3, CTC, dx, c, alpha, omega, gamma, nu):
-    out = (alpha * c * D1.T +
-           gamma * D3.T -
-           nu * D2.T) @ q_adj - \
+def RHS_adjoint_kdv_expl(q_adj, q, q_tar, D1, D2, D3, CTC, L, dx, c, alpha, omega, gamma, nu):
+    out = L.dot(q_adj) - \
           omega * q * D1.dot(q_adj)
     out[CTC] -= dx * (q - q_tar)[CTC]
     return out
 
 
-def TI_adjoint_kdv_expl(q0_adj, qs, qs_target, D1, D2, D3, CTC, Nx, dx, Nt, dt, c, alpha, omega, gamma, nu):
+def TI_adjoint_kdv_expl(q0_adj, qs, qs_target, D1, D2, D3, CTC, L, Nx, dx, Nt, dt, c, alpha, omega, gamma, nu):
     # Time loop
     qs_adj = np.zeros((Nx, Nt))
     qs_adj[:, -1] = q0_adj
 
     for n in tqdm(range(1, Nt), desc="Adjoint working"):
         qs_adj[:, -(n + 1)] = rk4_FOM_adj_kdvb(RHS_adjoint_kdv_expl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
-                                               qs_target[:, -n], qs_target[:, -(n + 1)], - dt, D1, D2, D3, CTC, dx,
+                                               qs_target[:, -n], qs_target[:, -(n + 1)], - dt, D1, D2, D3, CTC, L, dx,
                                                c, alpha, omega, gamma, nu)
 
     return qs_adj
@@ -267,15 +268,14 @@ def RHS_adjoint_kdv_impl(q_adj: np.ndarray,
                          D2: csc_matrix,
                          D3: csc_matrix,
                          CTC: np.ndarray,
+                         L: csc_matrix,
                          c: float,
                          alpha: float,
                          omega: float,
                          gamma: float,
                          nu: float) -> np.ndarray:
-    out = (alpha * c * D1.T +
-           gamma * D3.T -
-           nu * D2.T) @ q_adj - \
-          omega * q * D1.dot(q_adj)
+    out = L.dot(q_adj) \
+          - omega * q * D1.dot(q_adj)
     out[CTC] -= dx * (q - q_tar)[CTC]
     return out
 
