@@ -117,3 +117,63 @@ class PlotFlow:
 
         out_file = os.path.join(immpath, f"{name}.png")
         fig1.savefig(out_file, dpi=300, transparent=True)
+
+
+def plot_normalized_singular_values(X, sv, semilogy=False, savepath=None, name=None, id=None):
+    """
+    Compute singular values of snapshot matrix X, normalize by the largest,
+    and plot them.
+
+    Parameters
+    ----------
+    X : array_like, shape (m, n)
+        Snapshot matrix (rows = DOFs, columns = snapshots) or vice-versa.
+    semilogy : bool, optional
+        If True, plot y-axis on a log scale (useful when values decay fast).
+    savepath : str or None, optional
+        If given, save the figure to this path (e.g. "sv.png").
+
+    Returns
+    -------
+    s : 1D numpy array
+        Singular values (not normalized), sorted descending.
+    s_norm : 1D numpy array
+        Singular values normalized by the largest (s / s[0]).
+    """
+
+    # compute singular values (fast: no U/V returned)
+    s = np.linalg.svd(X, compute_uv=False)
+    s = s[:sv]
+    if s.size == 0:
+        raise ValueError("No singular values found (empty input?).")
+
+    s_norm = s / s[0]  # normalize by largest singular value
+
+    idx = np.arange(1, len(s_norm) + 1)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    if semilogy:
+        ax.semilogy(idx, s_norm,
+                    color="brown",
+                    marker="+",
+                    linestyle='None',
+                    markersize=5)
+        ax.set_ylabel(r"$\sigma_{k} / \sigma_{0}$")
+    else:
+        ax.plot(idx, s_norm,
+                color="brown",
+                marker="+",
+                linestyle='None',
+                markersize=5)
+        ax.set_ylabel(r"$\sigma_{k} / \sigma_{0}$")
+
+    ax.set_xlabel(r"Num. of singular vals.")
+    ax.set_title(rf"$n_\mathrm{{opt}} = {id}$")
+    ax.grid(True, linestyle='--', alpha=0.6)
+
+    fig.tight_layout()
+
+    if savepath:
+        fig.savefig(savepath + name + '_' + str(id), dpi=300, bbox_inches='tight')
+
+    return s, s_norm

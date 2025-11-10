@@ -69,7 +69,6 @@ from sPODG_solver import (
 
 from sPOD_algo import give_interpolation_error
 
-
 np.random.seed(0)
 
 
@@ -312,7 +311,6 @@ if __name__ == "__main__":
     z = calc_shift(qs_org, q0, wf.X, wf.t)
     _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
 
-
     # Collector lists
     dL_du_norm_list = []
     J_opt_FOM_list = []
@@ -342,13 +340,15 @@ if __name__ == "__main__":
             print(f"\n==============================")
             print(f"Optimization step: {opt_step}")
 
-            if stag or (type_of_problem == "Constant_shift" and opt_step % 50 == 0) or (type_of_problem == "Shifting" and opt_step == 0):
+            if stag or (type_of_problem == "Constant_shift" and opt_step % 20 == 0) or (
+                    type_of_problem == "Shifting" and opt_step == 0):
                 basis_update_idx_list.append(opt_step)
 
                 # ───── Forward FOM: compute FOM state qs ─────
                 # Compute FOM trajectories
                 qs_full = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
-                qs_adj_full = TI_adjoint(q0_adj, qs_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+                qs_adj_full = TI_adjoint(q0_adj, qs_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
+                                         scheme="RK4")
 
                 # Compute shifts and (re)interpolate
                 if type_of_problem == "Shifting":
@@ -387,7 +387,8 @@ if __name__ == "__main__":
                 Vd_p, Wd_p = make_V_W_delta(V_p, T_delta, D, kwargs['shift_sample'], kwargs['Nx'], Nm_p)
                 Vd_a, Wd_a = make_V_W_delta(V_a, T_delta, D, kwargs['shift_sample'], kwargs['Nx'], Nm_a)
 
-                lhs_p, rhs_p, c_p = mat_primal_sPODG_FOTR(Vd_p, Wd_p, A_p, psi, samples=kwargs['shift_sample'], modes=Nm_p)
+                lhs_p, rhs_p, c_p = mat_primal_sPODG_FOTR(Vd_p, Wd_p, A_p, psi, samples=kwargs['shift_sample'],
+                                                          modes=Nm_p)
                 lhs_a, rhs_a, t_a = mat_adjoint_sPODG_FOTR(Vd_a, Wd_a, A_a, Vd_p, samples=kwargs['shift_sample'],
                                                            modes_a=Nm_a, modes_p=Nm_p, CTC=C)
 
@@ -414,7 +415,7 @@ if __name__ == "__main__":
                 best_control = f.copy()
 
             # ───── Backward ROM (adjoint) ─────
-            a_a = IC_adjoint_sPODG_FOTR(Nm_a, as_p[-1, -1])
+            a_a = IC_adjoint_sPODG_FOTR(Nm_a, as_p[-1, 0])
             as_adj = TI_adjoint_sPODG_FOTR(lhs_a, rhs_a, t_a, C, Vd_a, Wd_a, a_a, as_p, qs_target, Nm_a, Nm_p, delta_s,
                                            kwargs['dx'], kwargs['Nt'], kwargs['dt'], kwargs['adjoint_scheme'])
 
@@ -424,6 +425,7 @@ if __name__ == "__main__":
             dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
 
             dL_du_norm_list.append(dL_du_norm)
+
 
             # ───── Gradient check with Finite differences ─────
             if kwargs['perform_grad_check']:
@@ -496,7 +498,6 @@ if __name__ == "__main__":
 
             t1 = perf_counter()
             running_time.append(t1 - t0)
-            t0 = t1
 
             # Saving previous controls for Barzilai Borwein step
             fOld = f.copy()
@@ -664,11 +665,11 @@ if __name__ == "__main__":
 
         save_all(data_dir, **to_save_final)
 
-
     # ─────────────────────────────────────────────────────────────────────
     # Compute best control based cost
     qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nx, wf.Nt, wf.dt)
-    qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
+                            scheme="RK4")
     f_opt = psi @ best_control
     J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -697,4 +698,3 @@ if __name__ == "__main__":
     pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=plot_dir)
     pf.plot1D(f_opt, name="f_opt", immpath=plot_dir)
     pf.plot1D_ROM_converg(J_opt_list, J_opt_FOM_list, name="J", immpath=plot_dir)
-

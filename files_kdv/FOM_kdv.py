@@ -9,10 +9,10 @@ from time import perf_counter
 import numpy as np
 import scipy
 from matplotlib import animation, pyplot as plt
-
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
-from FOM_solver import IC_primal_kdv, TI_primal_kdv_impl, TI_adjoint_kdv_impl, IC_adjoint_kdv, TI_adjoint_kdv_expl
+from FOM_solver import IC_primal_kdv, TI_primal_kdv_impl, TI_adjoint_kdv_impl, IC_adjoint_kdv, TI_adjoint_kdv_expl, \
+    TI_primal_kdv_expl
 from Grads import Calc_Grad_smooth, Calc_Grad_mapping
 from Helper import ControlSelectionMatrix_kdvb, L2norm_ROM, check_weak_divergence, L2inner_prod, calc_shift, \
     compute_red_basis
@@ -142,7 +142,7 @@ if __name__ == "__main__":
         'beta': 1 / 2,  # for TWBT
         'verbose': True,
         'omega_cutoff': 1e-10,
-        'perform_grad_check': True,
+        'perform_grad_check': False,
     }
     f = np.zeros((n_c, kdv.Nt))  # initial control guess
     df = np.random.randn(*f.shape)
@@ -166,16 +166,17 @@ if __name__ == "__main__":
 
     if args.fully_nonlinear:
         # Nonlinear
-        target_params = {'c': kdv.v_x[0], 'alpha': 0.0, 'omega': 1.4, 'gamma': 1.4, 'nu': 0.06}
+        target_params = {'c': kdv.v_x_target[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
         shared_params = {'c': kdv.v_x[0], 'alpha': 0.0, 'omega': 1.0, 'gamma': 1.0, 'nu': 0.0}
     else:
         # Nearly linear
-        target_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
+        target_params = {'c': kdv.v_x_target[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
         shared_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.0}
 
     L_p = - shared_params['alpha'] * shared_params['c'] * D1 - shared_params['gamma'] * D3 + shared_params['nu'] * D2
     L_t = - target_params['alpha'] * target_params['c'] * D1 - target_params['gamma'] * D3 + target_params['nu'] * D2
-    L_a = shared_params['alpha'] * shared_params['c'] * D1.T + shared_params['gamma'] * D3.T - shared_params['nu'] * D2.T
+    L_a = shared_params['alpha'] * shared_params['c'] * D1.T + shared_params['gamma'] * D3.T - shared_params[
+        'nu'] * D2.T
 
     params_primal = {**shared_dynamics, 'L': L_p, **shared_params}
     params_target = {**shared_dynamics, 'L': L_t, **target_params}
@@ -193,8 +194,14 @@ if __name__ == "__main__":
 
     # Solve uncontrolled FOM once
     qs0 = IC_primal_kdv(kdv.X, kdv.Lx, kdv.c, kdv.offset)
-    qs_org = TI_primal_kdv_impl(qs0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
-    qs_target = TI_primal_kdv_impl(qs0, np.zeros_like(f), J_l_target, kdv.Nx, kdv.Nt, kdv.dt, **params_target)
+    qs_org = TI_primal_kdv_expl(qs0, f, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt, params_primal['c'],
+                                params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                params_primal['nu'])
+    qs_target = TI_primal_kdv_expl(qs0, np.zeros_like(f), params_target['D1'], params_target['D2'], params_target['D3'],
+                                   params_target['B'], params_target['L'], kdv.Nx, kdv.Nt, kdv.dt, params_target['c'],
+                                   params_target['alpha'], params_target['omega'], params_target['gamma'],
+                                   params_target['nu'])
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint_kdv(kdv.X))
 
@@ -227,7 +234,11 @@ if __name__ == "__main__":
             print(f"Optimization step: {opt_step}")
 
             # ───── Forward FOM:  ─────
-            qs = TI_primal_kdv_impl(q0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+            qs = TI_primal_kdv_expl(q0, f, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                    params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                    params_primal['c'],
+                                    params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                    params_primal['nu'])
 
             # ───── Compute costs ─────
             J_s, J_ns = Calc_Cost(qs, qs_target, f, C, kwargs['dx'], kwargs['dt'],
@@ -242,8 +253,11 @@ if __name__ == "__main__":
                 best_control = f.copy()
 
             # ───── Backward FOM (adjoint) ─────
-            qs_adj = TI_adjoint_kdv_impl(q0_adj, qs, qs_target, J_l_adjoint, kdv.Nx, kdv.Nt, kdv.dx, kdv.dt,
-                                         **params_adjoint)
+            qs_adj = TI_adjoint_kdv_expl(q0_adj, qs, qs_target, params_adjoint['D1'], params_adjoint['D2'],
+                                         params_adjoint['D3'],
+                                         params_adjoint['CTC'], params_adjoint['L'], kdv.Nx, kdv.dx, kdv.Nt, kdv.dt,
+                                         params_adjoint['c'], params_adjoint['alpha'], params_adjoint['omega'],
+                                         params_adjoint['gamma'], params_adjoint['nu'])
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
             dL_du_s = Calc_Grad_smooth(psi, f, qs_adj, kwargs['lamda_l2'])
@@ -257,7 +271,11 @@ if __name__ == "__main__":
                 print("-------------GRAD CHECK-----------------")
                 eps = 1e-5
                 f_rand = f + eps * df
-                qs_rand = TI_primal_kdv_impl(q0, f_rand, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+                qs_rand = TI_primal_kdv_expl(q0, f_rand, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                             params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                             params_primal['c'],
+                                             params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                             params_primal['nu'])
                 J_s_eps, J_ns_eps = Calc_Cost(qs_rand, qs_target, f_rand, C, kwargs['dx'], kwargs['dt'],
                                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM_eps = J_s_eps + J_ns_eps
@@ -266,7 +284,7 @@ if __name__ == "__main__":
 
             # ───── Step‐size: BB vs. TWBT, including Armijo‐stagnation logic ─────
             ratio = dL_du_norm / dL_du_norm_list[0]
-            if ratio < 5e-3:
+            if ratio < 5e-1:
                 print(f"BB acting.....")
                 omega_bb = get_BB_step(fOld, f, dL_du_Old, dL_du_s, opt_step, **kwargs)
                 if omega_bb < 0:
@@ -287,7 +305,6 @@ if __name__ == "__main__":
 
             t1 = perf_counter()
             running_time.append(t1 - t0)
-            t0 = t1
 
             # Saving previous controls for Barzilai Borwein step
             fOld = f.copy()
@@ -308,8 +325,12 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal_kdv_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                                 **params_primal)
+                qs_opt_full = TI_primal_kdv_expl(q0, f_last_valid, params_primal['D1'], params_primal['D2'],
+                                                 params_primal['D3'],
+                                                 params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                                 params_primal['c'],
+                                                 params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                                 params_primal['nu'])
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -325,8 +346,12 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal_kdv_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                                 **params_primal)
+                qs_opt_full = TI_primal_kdv_expl(q0, f_last_valid, params_primal['D1'], params_primal['D2'],
+                                                 params_primal['D3'],
+                                                 params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                                 params_primal['c'],
+                                                 params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                                 params_primal['nu'])
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -394,8 +419,13 @@ if __name__ == "__main__":
 
                     # store last valid control and possibly update best_details
                     f_last_valid = f.copy()
-                    qs_cand = TI_primal_kdv_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                                 **params_primal)
+                    qs_cand = TI_primal_kdv_expl(q0, f_last_valid, params_primal['D1'], params_primal['D2'],
+                                                 params_primal['D3'],
+                                                 params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                                 params_primal['c'],
+                                                 params_primal['alpha'], params_primal['omega'],
+                                                 params_primal['gamma'],
+                                                 params_primal['nu'])
                     JJ_s_cand, JJ_ns_cand = Calc_Cost(
                         qs_cand, qs_target, f_last_valid, C,
                         kwargs['dx'], kwargs['dt'],
@@ -438,20 +468,36 @@ if __name__ == "__main__":
 
     # ─────────────────────────────────────────────────────────────────────
     # Compute best control based cost
-    qs_opt_full = TI_primal_kdv_impl(q0, best_control, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                     **params_primal)
-    qs_adj_opt = TI_adjoint_kdv_impl(q0_adj, qs_opt_full, qs_target, J_l_adjoint,
-                                     kdv.Nx, kdv.Nt, kdv.dx, kdv.dt, **params_adjoint)
+    qs_opt_full = TI_primal_kdv_expl(q0, best_control, params_primal['D1'], params_primal['D2'],
+                                     params_primal['D3'],
+                                     params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                     params_primal['c'],
+                                     params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                     params_primal['nu'])
+    qs_adj_opt = TI_adjoint_kdv_expl(q0_adj, qs_opt_full, qs_target, params_adjoint['D1'], params_adjoint['D2'],
+                                     params_adjoint['D3'],
+                                     params_adjoint['CTC'], params_adjoint['L'], kdv.Nx, kdv.dx, kdv.Nt, kdv.dt,
+                                     params_adjoint['c'], params_adjoint['alpha'], params_adjoint['omega'],
+                                     params_adjoint['gamma'], params_adjoint['nu'])
+
     f_opt = psi @ best_control
     J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
     J_final = J_s_f + J_ns_f
 
     # Compute last valid control based cost
-    qs_opt_full__ = TI_primal_kdv_impl(q0, f_last_valid, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
-                                       **params_primal)
-    qs_adj_opt__ = TI_adjoint_kdv_impl(q0_adj, qs_opt_full__, qs_target, J_l_adjoint,
-                                       kdv.Nx, kdv.Nt, kdv.dx, kdv.dt, **params_adjoint)
+    qs_opt_full__ = TI_primal_kdv_expl(q0, f_last_valid, params_primal['D1'], params_primal['D2'],
+                                       params_primal['D3'],
+                                       params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                       params_primal['c'],
+                                       params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                       params_primal['nu'])
+    qs_adj_opt__ = TI_adjoint_kdv_expl(q0_adj, qs_opt_full__, qs_target, params_adjoint['D1'], params_adjoint['D2'],
+                                       params_adjoint['D3'],
+                                       params_adjoint['CTC'], params_adjoint['L'], kdv.Nx, kdv.dx, kdv.Nt, kdv.dt,
+                                       params_adjoint['c'], params_adjoint['alpha'], params_adjoint['omega'],
+                                       params_adjoint['gamma'], params_adjoint['nu'])
+
     f_opt__ = psi @ f_last_valid
     J_s_f__, J_ns_f__ = Calc_Cost(qs_opt_full__, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                   kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)

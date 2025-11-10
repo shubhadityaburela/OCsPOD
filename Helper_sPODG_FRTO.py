@@ -49,12 +49,12 @@ def C2(WTV, as_p, WTqs_tar, dx):   # We make use of the fact that WTV in the pre
 
 ################################################################################
 @njit
-def E11_kdvb(M1_dash, N, A1, eps1, lam1, z_dot, r):
-    return M1_dash * z_dot + A1 - N @ np.diag(np.repeat(z_dot, r)) - eps1 @ lam1
+def E11_kdvb(M1_dash, N, A1, nl_1, as_kron_Jac, z_dot, r):
+    return M1_dash * z_dot + A1 - N @ np.diag(np.repeat(z_dot, r)) + nl_1 @ as_kron_Jac
 
 
 @njit
-def E12_kdvb(M2, N, N_dash, A2, D, WTB, eps2, lam1, lam2, a_dot, z_dot, a_s, u, r):
+def E12_kdvb(M2, N, N_dash, A2, D, WTB, nl_2, as_kron, as_kron_Jac, a_dot, z_dot, a_s, u, r):
 
     mat1_comp = a_dot[None, :] @ N.T
     mat2_comp = D.T @ (N_dash.T * z_dot)
@@ -64,31 +64,27 @@ def E12_kdvb(M2, N, N_dash, A2, D, WTB, eps2, lam1, lam2, a_dot, z_dot, a_s, u, 
     mat6_comp = (A2.dot(a_s))[None, :]
     mat7_comp = D.T @ A2
     mat8_comp = (WTB.dot(u))[None, :]
-    mat9_comp = (eps2.dot(lam2))[None, :]
-    mat10_comp = D.T @ (eps2 @ lam1)
+    mat9_comp = (nl_2.dot(as_kron))[None, :]
+    mat10_comp = D.T @ (nl_2 @ as_kron_Jac)
 
     return mat1_comp + mat2_comp - mat3_comp - mat4_comp - mat5_comp \
-        + mat6_comp + mat7_comp + mat8_comp - mat9_comp - mat10_comp
+        + mat6_comp + mat7_comp + mat8_comp + mat9_comp + mat10_comp
 
 
 @njit
-def E21_kdvb(N, D, M1_dash, N_dash, A1_dash, VTdashB, eps1, eps2, eps1_dash, ST_U_dash, ST_U_inv,
-             lam2, lam3, lam4, a_dot, z_dot, a_s, u):
+def E21_kdvb(N, D, M1_dash, N_dash, A1_dash, VTdashB, a_dot, z_dot, a_s, u):
     mat1_comp = (N_dash * z_dot) @ D
     mat2_comp = N @ a_dot[:, None]
     mat3_comp = M1_dash.dot(a_dot)[:, None]
     mat4_comp = N_dash @ (D.dot(z_dot))[:, None]
     mat5_comp = A1_dash.dot(a_s)[:, None]
     mat6_comp = (VTdashB.dot(u))[:, None]
-    mat7_comp = (eps2.dot(lam2))[:, None]
-    mat8_comp = ((eps1_dash.dot(lam2)) - eps1.dot(ST_U_dash.dot(ST_U_inv.dot(lam2))) + eps1.dot(lam3 + lam4))[:, None]
 
-    return mat1_comp + mat2_comp - mat3_comp - mat4_comp + mat5_comp + mat6_comp - mat7_comp - mat8_comp
+    return mat1_comp + mat2_comp - mat3_comp - mat4_comp + mat5_comp + mat6_comp
 
 
 @njit
-def E22_kdvb(M2, M2_dash, N_dash, A2_dash, eps2, eps2_dash, eps3, ST_U_dash, ST_U_inv,
-             lam2, lam3, lam4, D, WTdashB, a_dot, z_dot, a_s, u):
+def E22_kdvb(M2, M2_dash, N_dash, A2_dash, D, WTdashB, a_dot, z_dot, a_s, u):
     mat1_comp = a_dot[None, :] @ (M2 @ D)
     mat2_comp = D.T @ ((M2_dash * z_dot) @ D)
     mat3_comp = D.T @ (M2 @ a_dot[:, None])
@@ -96,10 +92,8 @@ def E22_kdvb(M2, M2_dash, N_dash, A2_dash, eps2, eps2_dash, eps3, ST_U_dash, ST_
     mat5_comp = D.T @ (M2_dash @ (D.dot(z_dot))[:, None])
     mat6_comp = D.T @ (A2_dash.dot(a_s))[:, None]
     mat7_comp = D.T @ (WTdashB.dot(u))[:, None]
-    mat8_comp = D.T @ (eps3.dot(lam2))[:, None]
-    mat9_comp = D.T @ ((eps2_dash.dot(lam2)) - eps2.dot(ST_U_dash.dot(ST_U_inv.dot(lam2))) + eps2.dot(lam3 + lam4))[:, None]
 
-    return mat1_comp + mat2_comp + mat3_comp - mat4_comp - mat5_comp + mat6_comp + mat7_comp - mat8_comp - mat9_comp
+    return mat1_comp + mat2_comp + mat3_comp - mat4_comp - mat5_comp + mat6_comp + mat7_comp
 
 
 # ################################################################################

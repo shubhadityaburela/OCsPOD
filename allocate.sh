@@ -5,8 +5,8 @@ ENTRY_SERVER="cluster-g.math.tu-berlin.de"
 
 GPU_NAME="a100_pcie_80g"
 NUM_GPUS="0"
-MEM="10G"
-NUM_CPUS="1"
+MEM="64G"
+NUM_CPUS="4"
 
 echo "Login to entry server for allocation ( cluster PW )"
 ssh ${USER_NODE}@${ENTRY_SERVER} -t "

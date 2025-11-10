@@ -17,11 +17,12 @@ from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
 from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
 from Grads import Calc_Grad_smooth, Calc_Grad_mapping
-from Helper import ControlSelectionMatrix, L2norm_ROM, check_weak_divergence, L2inner_prod
+from Helper import ControlSelectionMatrix, L2norm_ROM, check_weak_divergence, L2inner_prod, calc_shift
+from Helper_sPODG import get_T
 from TI_schemes import DF_start_FOM
 from Update import get_BB_step, Update_Control_BB, Update_Control_TWBT
 from grid_params import advection
-from Plots import PlotFlow
+from Plots import PlotFlow, plot_normalized_singular_values
 
 np.random.seed(0)
 
@@ -124,7 +125,6 @@ if __name__ == "__main__":
     print(f"Type of problem = {args.type_of_problem}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
     print(f"Grid = {tuple(args.grid)}")
-
 
     # Unpack regularization parameters
     L1_reg, L2_reg = args.reg
@@ -294,6 +294,13 @@ if __name__ == "__main__":
 
             dL_du_norm_list.append(dL_du_norm)
 
+            if opt_step % 10 == 0:
+                z = calc_shift(qs, q0, wf.X, wf.t)
+                _, T = get_T(z, wf.X, wf.t, interp_order=5)
+                qs_adj_s = T.reverse(qs_adj)
+                _, _ = plot_normalized_singular_values(qs_adj_s, sv=300, semilogy=True, savepath="./",
+                                                       name=type_of_problem, id=str(opt_step))
+
             # ───── Gradient check with Finite differences ─────
             if kwargs['perform_grad_check']:
                 print("-------------GRAD CHECK-----------------")
@@ -328,7 +335,6 @@ if __name__ == "__main__":
 
             t1 = perf_counter()
             running_time.append(t1 - t0)
-            t0 = t1
 
             # Saving previous controls for Barzilai Borwein step
             fOld = f.copy()

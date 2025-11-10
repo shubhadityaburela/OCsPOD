@@ -17,7 +17,7 @@ from ast import literal_eval
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
 from FOM_solver import IC_primal_kdv, TI_primal_kdv_impl, IC_adjoint_kdv, \
-    TI_adjoint_kdv_impl
+    TI_adjoint_kdv_impl, TI_primal_kdv_expl, TI_adjoint_kdv_expl
 from Grads import Calc_Grad_PODG_smooth, Calc_Grad_mapping
 from Helper import compute_red_basis, L2norm_ROM, check_weak_divergence, \
     ControlSelectionMatrix_kdvb, compute_deim_basis, L2inner_prod
@@ -50,40 +50,28 @@ def parse_arguments():
                    help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
     p.add_argument("CTC_mask_activate", type=literal_eval, choices=[True, False],
                    help="Include CTC mask in the system? (True/False)")
-    p.add_argument("--modes", type=int, nargs=4,
-                   help="Modes for primal, primal DEIM, adjoint and adjoint DEIM (e.g. --modes 3 10 5 10)")
-    p.add_argument("--tol", type=float, nargs=2,
-                   help="Enter two tolerances: [ROM_tol DEIM_tol], e.g., --tol 1e-6 1e-4")
+    p.add_argument("--modes", type=int, nargs=2,
+                   help="Modes for primal and adjoint (e.g. --modes 3 5)")
+    p.add_argument("--tol", type=float, help="Tolerance level for fixed‐tol run")
     return p.parse_args()
 
 
 def decide_run_type(args):
-    if args.modes is not None and args.tol is not None:
+    if args.modes and args.tol is not None:
         print("Modes test takes precedence…")
-        TYPE = "modes"
-        rom_modes_primal, deim_modes_primal, rom_modes_adjoint, deim_modes_adjoint = args.modes
-        modes = (rom_modes_primal, deim_modes_primal, rom_modes_adjoint, deim_modes_adjoint)
-        tol = (None, None)
-        threshold = False
-        VAL = modes
-    # Only modes provided
-    elif args.modes is not None:
+        print(f"Modes provided: {args.modes}")
+        TYPE, VAL = "modes", args.modes
+        modes, tol, threshold = args.modes, None, False
+    elif args.modes:
         print("Modes test…")
-        TYPE = "modes"
-        rom_modes_primal, deim_modes_primal, rom_modes_adjoint, deim_modes_adjoint = args.modes
-        modes = (rom_modes_primal, deim_modes_primal, rom_modes_adjoint, deim_modes_adjoint)
-        tol = (None, None)
-        threshold = False
-        VAL = modes
-    # Only tolerance provided
+        print(f"Modes provided: {args.modes}")
+        TYPE, VAL = "modes", args.modes
+        modes, tol, threshold = args.modes, None, False
     elif args.tol is not None:
         print("Tolerance test…")
-        TYPE = "tol"
-        rom_tol, deim_tol = args.tol
-        modes = (None, None, None, None)
-        tol = (rom_tol, deim_tol)
-        threshold = True
-        VAL = tol
+        print(f"Tolerance provided: {args.tol}")
+        TYPE, VAL = "tol", args.tol
+        modes, tol, threshold = (None, None), args.tol, True
     else:
         print("ERROR: Must specify either --modes or --tol.")
         sys.exit(1)
@@ -93,10 +81,9 @@ def decide_run_type(args):
 
 
 def setup_kdv(Nx, Nt, cfl_fac):
-    kdv = Korteweg_de_Vries(Nx=Nx, timesteps=Nt, cfl=0.17 / cfl_fac, v_x=8 / 3, offset=20)
+    kdv = Korteweg_de_Vries(Nx=Nx, timesteps=Nt, cfl=0.0425 / cfl_fac, v_x=8 / 3, offset=20)
     kdv.Grid()
     return kdv
-
 
 
 def build_dirs(prefix, fully_nonlinear, common_basis, reg_tuple, CTC_mask, TYPE, VAL):
@@ -127,7 +114,6 @@ def write_checkpoint(data_dir, opt_step,
                      J_opt_list, J_opt_FOM_list,
                      dL_du_norm_list, running_time,
                      trunc_modes_list_p, trunc_modes_list_a,
-                     trunc_deim_modes_list_p, trunc_deim_modes_list_a,
                      basis_update_idx_list):
     """
     Overwrite checkpoint files. All variables are written with fixed names,
@@ -152,8 +138,6 @@ def write_checkpoint(data_dir, opt_step,
     np.save(os.path.join(ckpt_dir, "running_time.npy"), np.array(running_time))
     np.save(os.path.join(ckpt_dir, "trunc_modes_p.npy"), np.array(trunc_modes_list_p))
     np.save(os.path.join(ckpt_dir, "trunc_modes_a.npy"), np.array(trunc_modes_list_a))
-    np.save(os.path.join(ckpt_dir, "trunc_deim_modes_p.npy"), np.array(trunc_deim_modes_list_p))
-    np.save(os.path.join(ckpt_dir, "trunc_deim_modes_a.npy"), np.array(trunc_deim_modes_list_a))
     np.save(os.path.join(ckpt_dir, "basis_update_idx_list.npy"), np.array(basis_update_idx_list))
 
     print(f"Checkpoint overwritten → {ckpt_dir}")
@@ -176,7 +160,7 @@ if __name__ == "__main__":
     print(f"Using adjoint in basis: {args.primal_adjoint_common_basis}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
     print(f"Using CTC mask pseudo hyperreduction: {args.CTC_mask_activate}")
-
+    print(f"Grid = {tuple(args.grid)}")
 
     # Determine run type
     TYPE, VAL, modes, tol, threshold = decide_run_type(args)
@@ -213,14 +197,11 @@ if __name__ == "__main__":
         'opt_iter': args.N_iter,
         'beta': 1 / 2,  # for TWBT
         'verbose': True,
-        'base_tol': tol[0],
-        'deim_tol': tol[1],
+        'base_tol': tol,
         'omega_cutoff': 1e-10,
         'threshold': threshold,
         'Nm_p': modes[0],
-        'Nm_deim_p': modes[1],
-        'Nm_a': modes[2],
-        'Nm_deim_a': modes[3],
+        'Nm_a': modes[1],
         'common_basis': args.primal_adjoint_common_basis,
         'perform_grad_check': False,
         'offline_online_err_check': False
@@ -249,17 +230,21 @@ if __name__ == "__main__":
 
     if args.fully_nonlinear:
         # Nonlinear
-        target_params = {'c': kdv.v_x[0], 'alpha': 0.0, 'omega': 1.4, 'gamma': 1.4, 'nu': 0.06}
+        target_params = {'c': kdv.v_x_target[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
         shared_params = {'c': kdv.v_x[0], 'alpha': 0.0, 'omega': 1.0, 'gamma': 1.0, 'nu': 0.0}
     else:
         # Nearly linear
-        target_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
+        target_params = {'c': kdv.v_x_target[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.1}
         shared_params = {'c': kdv.v_x[0], 'alpha': 1.0, 'omega': 0.0, 'gamma': 0.0, 'nu': 0.0}
 
-    # Nonlinearity less prevalent
-    params_primal = {**shared_dynamics, **shared_params}
-    params_target = {**shared_dynamics, **target_params}
-    params_adjoint = {**common_params, 'CTC': CTC, **shared_params}
+    L_p = - shared_params['alpha'] * shared_params['c'] * D1 - shared_params['gamma'] * D3 + shared_params['nu'] * D2
+    L_t = - target_params['alpha'] * target_params['c'] * D1 - target_params['gamma'] * D3 + target_params['nu'] * D2
+    L_a = shared_params['alpha'] * shared_params['c'] * D1.T + shared_params['gamma'] * D3.T - shared_params[
+        'nu'] * D2.T
+
+    params_primal = {**shared_dynamics, 'L': L_p, **shared_params}
+    params_target = {**shared_dynamics, 'L': L_t, **target_params}
+    params_adjoint = {**common_params, 'CTC': CTC, 'L': L_a, **shared_params}
 
     J_l = scipy.sparse.identity(kdv.Nx, format='csc') - 0.5 * kdv.dt * (
             params_primal['alpha'] * (- params_primal['c']) * D1
@@ -273,8 +258,14 @@ if __name__ == "__main__":
 
     # Solve uncontrolled FOM once
     qs0 = IC_primal_kdv(kdv.X, kdv.Lx, kdv.c, kdv.offset)
-    qs_org = TI_primal_kdv_impl(qs0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
-    qs_target = TI_primal_kdv_impl(qs0, np.zeros_like(f), J_l_target, kdv.Nx, kdv.Nt, kdv.dt, **params_target)
+    qs_org = TI_primal_kdv_expl(qs0, f, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt, params_primal['c'],
+                                params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                params_primal['nu'])
+    qs_target = TI_primal_kdv_expl(qs0, np.zeros_like(f), params_target['D1'], params_target['D2'], params_target['D3'],
+                                   params_target['B'], params_target['L'], kdv.Nx, kdv.Nt, kdv.dt, params_target['c'],
+                                   params_target['alpha'], params_target['omega'], params_target['gamma'],
+                                   params_target['nu'])
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint_kdv(kdv.X))
 
@@ -292,11 +283,9 @@ if __name__ == "__main__":
     running_time = []
     trunc_modes_list_p = []
     trunc_modes_list_a = []
-    trunc_deim_modes_list_p = []
-    trunc_deim_modes_list_a = []
     basis_update_idx_list = []
     best_control = np.zeros_like(f)
-    best_details = {'J': np.inf, 'N_iter': None, 'Nm_p': None, 'Nm_a': None, 'Nm_deim_p': None, 'Nm_deim_a': None}
+    best_details = {'J': np.inf, 'N_iter': None, 'Nm_p': None, 'Nm_a': None}
     f_last_valid = None
 
     start_total = time.time()
@@ -320,9 +309,18 @@ if __name__ == "__main__":
                 basis_update_idx_list.append(opt_step)
 
                 # ───── Forward FOM: compute FOM state qs ─────
-                qs_full = TI_primal_kdv_impl(q0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
-                qs_adj_full = TI_adjoint_kdv_impl(q0_adj, qs_full, qs_target, J_l_adjoint, kdv.Nx, kdv.Nt, kdv.dx, kdv.dt,
-                                      **params_adjoint)
+                qs_full = TI_primal_kdv_expl(q0, f, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                             params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                             params_primal['c'],
+                                             params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                             params_primal['nu'])
+                qs_adj_full = TI_adjoint_kdv_expl(q0_adj, qs_full, qs_target,
+                                                  params_adjoint['D1'], params_adjoint['D2'], params_adjoint['D3'],
+                                                  params_adjoint['CTC'], params_adjoint['L'], kwargs['Nx'],
+                                                  kwargs['dx'],
+                                                  kwargs['Nt'], kwargs['dt'],
+                                                  params_adjoint['c'], params_adjoint['alpha'], params_adjoint['omega'],
+                                                  params_adjoint['gamma'], params_adjoint['nu'])
 
                 # Concatenate if common_basis, else keep separately
                 qs_norm = qs_full / np.linalg.norm(qs_full)
@@ -345,38 +343,15 @@ if __name__ == "__main__":
                 err_a = np.linalg.norm(snap_cat_a - qsPOD_a) / np.linalg.norm(snap_cat_a)
                 print(f"Adjoint basis: Nm_a={Nm_a}, err={err_a:.3e}")
 
-                # Compute the primal DEIM basis
-                qs_full_deim_primal = D1 @ (qs_full ** 2) + qs_full * (D1 @ qs_full)  # DEIM snapshot matrix
-                V_deim_p, qsPOD_deim = compute_deim_basis(qs_full_deim_primal, equation="primal", **kwargs)
-                Nm_deim_p = V_deim_p.shape[1]
-                err = np.linalg.norm(qs_full_deim_primal - qsPOD_deim) / np.linalg.norm(qs_full_deim_primal)
-                print(f"Primal DEIM basis: Nm_deim_p={Nm_deim_p}, err={err:.3e}")
-
-                # Compute the adjoint DEIM basis
-                qs_deim_adjoint = np.zeros((kdv.Nx, 6 * kdv.Nt))  # 6 because of the 6 banded structure
-                for i in range(kdv.Nt):
-                    M = np.diag(qs_full[:, i]) @ D1
-                    qs_deim_adjoint[:, 6 * i: 6 * (i + 1)] = np.vstack([np.pad(M.diagonal(k),
-                                                                               (max(-k, 0), max(k, 0)))
-                                                                        for k in (-3, -2, -1, 1, 2, 3)]).T
-                V_deim_a, qsPOD_deim = compute_deim_basis(qs_deim_adjoint, equation="adjoint", **kwargs)
-                Nm_deim_a = V_deim_a.shape[1]
-                err = np.linalg.norm(qs_deim_adjoint - qsPOD_deim) / np.linalg.norm(qs_deim_adjoint)
-                print(f"Adjoint DEIM basis: Nm_deim_a={Nm_deim_a}, err={err:.3e}")
-
                 # Initial conditions for ROM
                 a_p = IC_primal_PODG_FOTR_kdv(V_p, q0)
                 a_a = IC_adjoint_PODG_FOTR_kdv(Nm_a)
                 trunc_modes_list_p.append(Nm_p)
                 trunc_modes_list_a.append(Nm_a)
-                trunc_deim_modes_list_p.append(Nm_deim_p)
-                trunc_deim_modes_list_a.append(Nm_deim_a)
-
 
                 # Build ROM system matrices
-                primal_mat = mat_primal_PODG_FOTR_kdv(V_p, V_deim_p, **params_primal)
-                adjoint_mat = mat_adjoint_PODG_FOTR_kdv(V_a, V_deim_a, V_p, params_primal['B'], qs_target,
-                                                        **params_adjoint)
+                primal_mat = mat_primal_PODG_FOTR_kdv(V_p, **params_primal)
+                adjoint_mat = mat_adjoint_PODG_FOTR_kdv(V_a, V_p, params_primal['B'], qs_target, **params_adjoint)
 
                 # Prepare the linear parts of the Jacobian for the reduced order models
                 J_l_ROM_primal = np.eye(Nm_p) - 0.5 * kdv.dt * (
@@ -388,8 +363,9 @@ if __name__ == "__main__":
 
             # ───── Forward ROM: compute ROM state a_p → as_p ─────
             as_p = TI_primal_PODG_FOTR_kdv_expl(a_p, f, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                                primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                                primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                                primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                                primal_mat.B_r, primal_mat.L_r, params_primal['c'],
+                                                params_primal['alpha'],
                                                 params_primal['omega'], params_primal['gamma'],
                                                 params_primal['nu'], kwargs['Nt'], kwargs['dt'])
 
@@ -398,7 +374,10 @@ if __name__ == "__main__":
                                        kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_ROM = J_s + J_ns
 
-            qs_opt_full = TI_primal_kdv_impl(q0, f, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+            qs_opt_full = TI_primal_kdv_expl(q0, f, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                             params_primal['B'], params_primal['L'], kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                             params_primal['c'], params_primal['alpha'], params_primal['omega'],
+                                             params_primal['gamma'], params_primal['nu'])
             JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f, C, kwargs['dx'], kwargs['dt'],
                                     kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_FOM = JJ_s + JJ_ns
@@ -408,18 +387,18 @@ if __name__ == "__main__":
 
             # Track best control
             if J_FOM < best_details['J']:
-                best_details.update({'J': J_FOM, 'N_iter': opt_step, 'Nm_p': Nm_p, 'Nm_a': Nm_a,
-                                     'Nm_deim_p': Nm_deim_p, 'Nm_deim_a': Nm_deim_a})
+                best_details.update({'J': J_FOM, 'N_iter': opt_step, 'Nm_p': Nm_p, 'Nm_a': Nm_a})
                 best_control = f.copy()
 
             # ───── Backward ROM (adjoint) ─────
-            as_adj = TI_adjoint_PODG_FOTR_kdv_expl(a_a, as_p, adjoint_mat.VaT_CTC_qT, adjoint_mat.D_1r,
-                                                   adjoint_mat.D_2r, adjoint_mat.D_3r, adjoint_mat.prefactor,
-                                                   adjoint_mat.ST_Vp, adjoint_mat.ST_Va, adjoint_mat.ST_D1Vp,
-                                                   adjoint_mat.ST_D1Va, adjoint_mat.VaT_Vp,
+            as_adj = TI_adjoint_PODG_FOTR_kdv_expl(a_a, as_p, adjoint_mat.VaT_CTC_qT,
+                                                   adjoint_mat.D_1r, adjoint_mat.D_2r,
+                                                   adjoint_mat.D_3r, adjoint_mat.kron_1,
+                                                   adjoint_mat.kron_2, adjoint_mat.VaT_Vp, adjoint_mat.L_r,
                                                    params_adjoint['c'], params_adjoint['alpha'],
                                                    params_adjoint['omega'], params_adjoint['gamma'],
-                                                   params_adjoint['nu'], kwargs['dx'], kwargs['Nt'], kwargs['dt'])
+                                                   params_adjoint['nu'], kwargs['dx'], kwargs['Nt'],
+                                                   kwargs['dt'])
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
             dL_du_s = Calc_Grad_PODG_smooth(adjoint_mat.VaT_B, f, as_adj, kwargs['lamda_l2'])
@@ -433,7 +412,11 @@ if __name__ == "__main__":
                 print("-------------GRAD CHECK-----------------")
                 eps = 1e-5
                 f_rand = f + eps * df
-                qs_rand = TI_primal_kdv_impl(q0, f_rand, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+                qs_rand = TI_primal_kdv_expl(q0, f_rand, params_primal['D1'], params_primal['D2'], params_primal['D3'],
+                                             params_primal['B'], params_primal['L'], kwargs['Nx'], kwargs['Nt'],
+                                             kwargs['dt'],
+                                             params_primal['c'], params_primal['alpha'], params_primal['omega'],
+                                             params_primal['gamma'], params_primal['nu'])
                 JJ_s_eps, JJ_ns_eps = Calc_Cost(qs_rand, qs_target, f_rand, C, kwargs['dx'], kwargs['dt'],
                                                 kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM_eps = JJ_s_eps + JJ_ns_eps
@@ -454,8 +437,14 @@ if __name__ == "__main__":
                 err_online = np.linalg.norm(qs_opt_full - qs_POD_online) / np.linalg.norm(qs_opt_full)
                 print(f"Primal online error: err={err_online:.3e}")
 
-                qs_adj_opt_full = TI_adjoint_kdv_impl(q0_adj, qs_opt_full, qs_target, J_l_adjoint, kdv.Nx, kdv.Nt,
-                                                      kdv.dx, kdv.dt, **params_adjoint)
+                qs_adj_opt_full = TI_adjoint_kdv_expl(q0_adj, qs_opt_full, qs_target,
+                                                      params_adjoint['D1'], params_adjoint['D2'], params_adjoint['D3'],
+                                                      params_adjoint['CTC'], params_adjoint['L'], kwargs['Nx'],
+                                                      kwargs['dx'],
+                                                      kwargs['Nt'], kwargs['dt'],
+                                                      params_adjoint['c'], params_adjoint['alpha'],
+                                                      params_adjoint['omega'],
+                                                      params_adjoint['gamma'], params_adjoint['nu'])
                 _, qs_adj_POD_offline = compute_red_basis(qs_adj_opt_full, equation="adjoint", **kwargs)
                 err_offline = np.linalg.norm(qs_adj_opt_full - qs_adj_POD_offline) / np.linalg.norm(qs_adj_opt_full)
                 print(f"Adjoint offline error: err={err_offline:.3e}")
@@ -471,7 +460,6 @@ if __name__ == "__main__":
                 if omega_bb < 0:
                     print("WARNING: BB gave negative step size thus resorting to using TWBT")
                     fNew, omega_twbt, stag = Update_Control_PODG_FOTR_RA_TWBT_kdv(f, a_p, qs_target, V_p, primal_mat,
-                                                                                  J_l_ROM_primal,
                                                                                   J_s, omega_twbt, dL_du_s, C, adjust,
                                                                                   params_primal, **kwargs)
                     omega = omega_twbt
@@ -482,11 +470,9 @@ if __name__ == "__main__":
             else:
                 print("TWBT acting…")
                 fNew, omega_twbt, stag = Update_Control_PODG_FOTR_RA_TWBT_kdv(f, a_p, qs_target, V_p, primal_mat,
-                                                                              J_l_ROM_primal,
                                                                               J_s, omega_twbt, dL_du_s, C, adjust,
                                                                               params_primal, **kwargs)
                 omega = omega_twbt
-
 
             t1 = perf_counter()
             running_time.append(t1 - t0)
@@ -511,7 +497,12 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal_kdv_impl(q0, f_last_valid, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+                qs_opt_full = TI_primal_kdv_expl(q0, f_last_valid, params_primal['D1'], params_primal['D2'],
+                                                 params_primal['D3'],
+                                                 params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                                 params_primal['c'],
+                                                 params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                                 params_primal['nu'])
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -527,7 +518,12 @@ if __name__ == "__main__":
                     f"||dL_du||_0 = {ratio:.3e}"
                 )
                 f_last_valid = fNew.copy()
-                qs_opt_full = TI_primal_kdv_impl(q0, f_last_valid, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+                qs_opt_full = TI_primal_kdv_expl(q0, f_last_valid, params_primal['D1'], params_primal['D2'],
+                                                 params_primal['D3'],
+                                                 params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                                 params_primal['c'],
+                                                 params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                                 params_primal['nu'])
                 JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                         kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
                 J_FOM = JJ_s + JJ_ns
@@ -597,8 +593,6 @@ if __name__ == "__main__":
                     running_time=running_time,
                     trunc_modes_list_p=trunc_modes_list_p,
                     trunc_modes_list_a=trunc_modes_list_a,
-                    trunc_deim_modes_list_p=trunc_deim_modes_list_p,
-                    trunc_deim_modes_list_a=trunc_deim_modes_list_a,
                     basis_update_idx_list=basis_update_idx_list
                 )
 
@@ -613,7 +607,13 @@ if __name__ == "__main__":
 
                     # store last valid control and possibly update best_details
                     f_last_valid = f.copy()
-                    qs_cand = TI_primal_kdv_impl(q0, f_last_valid, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
+                    qs_cand = TI_primal_kdv_expl(q0, f_last_valid, params_primal['D1'], params_primal['D2'],
+                                                 params_primal['D3'],
+                                                 params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                                 params_primal['c'],
+                                                 params_primal['alpha'], params_primal['omega'],
+                                                 params_primal['gamma'],
+                                                 params_primal['nu'])
                     JJ_s_cand, JJ_ns_cand = Calc_Cost(
                         qs_cand, qs_target, f_last_valid, C,
                         kwargs['dx'], kwargs['dt'],
@@ -639,8 +639,6 @@ if __name__ == "__main__":
             "dL_du_norm_list_at_crash": dL_du_norm_list,
             "trunc_modes_list_p_at_crash": trunc_modes_list_p,
             "trunc_modes_list_a_at_crash": trunc_modes_list_a,
-            "trunc_deim_modes_list_p_at_crash": trunc_deim_modes_list_p,
-            "trunc_deim_modes_list_a_at_crash": trunc_deim_modes_list_a,
             "basis_update_idx_list_at_crash": basis_update_idx_list
         }
         if f_last_valid is not None:
@@ -656,7 +654,6 @@ if __name__ == "__main__":
         to_save_final = {"J_opt_list_final": J_opt_list, "J_opt_FOM_list_final": J_opt_FOM_list,
                          "running_time_final": running_time, "dL_du_norm_list_final": dL_du_norm_list,
                          "trunc_modes_list_p_final": trunc_modes_list_p, "trunc_modes_list_a_final": trunc_modes_list_a,
-                         "trunc_deim_modes_list_p_final": trunc_deim_modes_list_p, "trunc_deim_modes_list_a_final": trunc_deim_modes_list_a,
                          "basis_update_idx_list_final": basis_update_idx_list,
                          "best_control_final": best_control, "best_details_final": best_details,
                          "last_valid_control_final": f_last_valid}
@@ -665,18 +662,36 @@ if __name__ == "__main__":
 
     # ─────────────────────────────────────────────────────────────────────
     # Compute best control based cost
-    qs_opt_full = TI_primal_kdv_impl(q0, best_control, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
-    qs_adj_opt = TI_adjoint_kdv_impl(q0_adj, qs_opt_full, qs_target, J_l_adjoint,
-                                     kdv.Nx, kdv.Nt, kdv.dx, kdv.dt, **params_adjoint)
+    qs_opt_full = TI_primal_kdv_expl(q0, best_control, params_primal['D1'], params_primal['D2'],
+                                     params_primal['D3'],
+                                     params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                     params_primal['c'],
+                                     params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                     params_primal['nu'])
+    qs_adj_opt = TI_adjoint_kdv_expl(q0_adj, qs_opt_full, qs_target, params_adjoint['D1'], params_adjoint['D2'],
+                                     params_adjoint['D3'],
+                                     params_adjoint['CTC'], params_adjoint['L'], kdv.Nx, kdv.dx, kdv.Nt, kdv.dt,
+                                     params_adjoint['c'], params_adjoint['alpha'], params_adjoint['omega'],
+                                     params_adjoint['gamma'], params_adjoint['nu'])
+
     f_opt = psi @ best_control
     J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
     J_final = J_s_f + J_ns_f
 
     # Compute last valid control based cost
-    qs_opt_full__ = TI_primal_kdv_impl(q0, f_last_valid, J_l, kdv.Nx, kdv.Nt, kdv.dt, **params_primal)
-    qs_adj_opt__ = TI_adjoint_kdv_impl(q0_adj, qs_opt_full__, qs_target, J_l_adjoint,
-                                       kdv.Nx, kdv.Nt, kdv.dx, kdv.dt, **params_adjoint)
+    qs_opt_full__ = TI_primal_kdv_expl(q0, f_last_valid, params_primal['D1'], params_primal['D2'],
+                                       params_primal['D3'],
+                                       params_primal['B'], params_primal['L'], kdv.Nx, kdv.Nt, kdv.dt,
+                                       params_primal['c'],
+                                       params_primal['alpha'], params_primal['omega'], params_primal['gamma'],
+                                       params_primal['nu'])
+    qs_adj_opt__ = TI_adjoint_kdv_expl(q0_adj, qs_opt_full__, qs_target, params_adjoint['D1'], params_adjoint['D2'],
+                                       params_adjoint['D3'],
+                                       params_adjoint['CTC'], params_adjoint['L'], kdv.Nx, kdv.dx, kdv.Nt, kdv.dt,
+                                       params_adjoint['c'], params_adjoint['alpha'], params_adjoint['omega'],
+                                       params_adjoint['gamma'], params_adjoint['nu'])
+
     f_opt__ = psi @ f_last_valid
     J_s_f__, J_ns_f__ = Calc_Cost(qs_opt_full__, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                   kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -698,4 +713,3 @@ if __name__ == "__main__":
     pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=plot_dir)
     pf.plot1D(f_opt, name="f_opt", immpath=plot_dir)
     pf.plot1D_ROM_converg(J_opt_list, J_opt_FOM_list, name="J", immpath=plot_dir)
-

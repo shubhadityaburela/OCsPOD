@@ -286,7 +286,7 @@ if __name__ == "__main__":
             print(f"\n==============================")
             print(f"Optimization step: {opt_step}")
 
-            if stag or (type_of_problem == "Constant_shift" and opt_step % 50 == 0) or (type_of_problem == "Shifting" and opt_step == 0):
+            if stag or (type_of_problem == "Constant_shift" and opt_step % 20 == 0) or (type_of_problem == "Shifting" and opt_step == 0):
                 basis_update_idx_list.append(opt_step)
 
                 # ───── Forward FOM: compute FOM state qs ─────
@@ -436,7 +436,6 @@ if __name__ == "__main__":
 
             t1 = perf_counter()
             running_time.append(t1 - t0)
-            t0 = t1
 
             # Saving previous controls for Barzilai Borwein step
             fOld = f.copy()

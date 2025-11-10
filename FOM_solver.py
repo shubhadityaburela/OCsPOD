@@ -6,8 +6,6 @@ from scipy import sparse
 from scipy.sparse import csc_matrix, diags
 from tqdm import tqdm
 
-# from tqdm import tqdm
-
 from TI_schemes import rk4_FOM_adj, rk4_FOM, rk4_FOM_targ, implicit_midpoint_FOM_adj, DIRK_FOM_adj, \
     poly_interp_FOM_adj, bdf4_FOM_adj, bdf2_FOM_adj, bdf3_FOM_adj, rk4_FOM_kdvb, rk4_FOM_adj_kdvb, \
     implicit_midpoint_FOM_primal_kdvb, implicit_midpoint_FOM_adjoint_kdvb

@@ -1,5 +1,5 @@
 from Costs import *
-from FOM_solver import TI_primal, TI_primal_kdv_impl
+from FOM_solver import TI_primal, TI_primal_kdv_impl, TI_primal_kdv_expl
 from Grads import *
 from Helper import *
 from PODG_solver import TI_primal_PODG_FOTR, TI_primal_PODG_FRTO, \
@@ -336,7 +336,10 @@ def Update_Control_TWBT_kdv(f, q0, qs_target, J_s_prev, omega_prev, dL_du_s, C, 
 
     # Checking the Armijo condition
     f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-    qs = TI_primal_kdv_impl(q0, f_new, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'], **params)
+    qs = TI_primal_kdv_expl(q0, f_new, params['D1'], params['D2'], params['D3'],
+                            params['B'], params['L'], kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                            params['c'], params['alpha'], params['omega'], params['gamma'],
+                            params['nu'])
     J_s, _ = Calc_Cost(qs, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'],
                        adjust)
     dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
@@ -348,7 +351,10 @@ def Update_Control_TWBT_kdv(f, q0, qs_target, J_s_prev, omega_prev, dL_du_s, C, 
             f_new_final = np.copy(f_new)
             omega = omega / beta
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            qs = TI_primal_kdv_impl(q0, f_new, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'], **params)
+            qs = TI_primal_kdv_expl(q0, f_new, params['D1'], params['D2'], params['D3'],
+                                    params['B'], params['L'], kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                    params['c'], params['alpha'], params['omega'], params['gamma'],
+                                    params['nu'])
             J_s, _ = Calc_Cost(qs, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'],
                                kwargs['lamda_l2'], adjust)
             dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
@@ -365,7 +371,10 @@ def Update_Control_TWBT_kdv(f, q0, qs_target, J_s_prev, omega_prev, dL_du_s, C, 
         while True:
             omega = beta * omega
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            qs = TI_primal_kdv_impl(q0, f_new, J_l, kwargs['Nx'], kwargs['Nt'], kwargs['dt'], **params)
+            qs = TI_primal_kdv_expl(q0, f_new, params['D1'], params['D2'], params['D3'],
+                                    params['B'], params['L'], kwargs['Nx'], kwargs['Nt'], kwargs['dt'],
+                                    params['c'], params['alpha'], params['omega'], params['gamma'],
+                                    params['nu'])
             J_s, _ = Calc_Cost(qs, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'],
                                kwargs['lamda_l2'], adjust)
             dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
@@ -391,7 +400,7 @@ def Update_Control_BB_kdv(fNew, dL_du_New, omega, lamda1):  # Barzilai Borwein
     return f_bb_new
 
 
-def Update_Control_PODG_FOTR_RA_TWBT_kdv(f, a0_primal, qs_target, V_p, primal_mat, J_l_ROM_primal, J_s_prev,
+def Update_Control_PODG_FOTR_RA_TWBT_kdv(f, a0_primal, qs_target, V_p, primal_mat, J_s_prev,
                                          omega_prev, dL_du_s, C, adjust, params_primal, **kwargs):
     # Choosing the step size for two-way backtracking
     beta = kwargs['beta']
@@ -400,8 +409,9 @@ def Update_Control_PODG_FOTR_RA_TWBT_kdv(f, a0_primal, qs_target, V_p, primal_ma
     # Checking the Armijo condition
     f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
     as_ = TI_primal_PODG_FOTR_kdv_expl(a0_primal, f_new, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                       primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                       primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                       primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                       primal_mat.B_r, primal_mat.L_r, params_primal['c'],
+                                       params_primal['alpha'],
                                        params_primal['omega'], params_primal['gamma'],
                                        params_primal['nu'], kwargs['Nt'], kwargs['dt'])
     J_s, _ = Calc_Cost_PODG(V_p, as_, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'],
@@ -416,8 +426,9 @@ def Update_Control_PODG_FOTR_RA_TWBT_kdv(f, a0_primal, qs_target, V_p, primal_ma
             omega = omega / beta
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
             as_ = TI_primal_PODG_FOTR_kdv_expl(a0_primal, f_new, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                               primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                               primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                               primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                               primal_mat.B_r, primal_mat.L_r, params_primal['c'],
+                                               params_primal['alpha'],
                                                params_primal['omega'], params_primal['gamma'],
                                                params_primal['nu'], kwargs['Nt'], kwargs['dt'])
             J_s, _ = Calc_Cost_PODG(V_p, as_, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'],
@@ -437,8 +448,9 @@ def Update_Control_PODG_FOTR_RA_TWBT_kdv(f, a0_primal, qs_target, V_p, primal_ma
             omega = beta * omega
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
             as_ = TI_primal_PODG_FOTR_kdv_expl(a0_primal, f_new, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                               primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                               primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                               primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                               primal_mat.B_r, primal_mat.L_r, params_primal['c'],
+                                               params_primal['alpha'],
                                                params_primal['omega'], params_primal['gamma'],
                                                params_primal['nu'], kwargs['Nt'], kwargs['dt'])
             J_s, _ = Calc_Cost_PODG(V_p, as_, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'],
@@ -460,7 +472,7 @@ def Update_Control_PODG_FOTR_RA_TWBT_kdv(f, a0_primal, qs_target, V_p, primal_ma
             k = k + 1
 
 
-def Update_Control_PODG_FRTO_TWBT_kdv(f, primal_mat, J_l_ROM_primal, V, a_p, qs_target, J_s_prev,
+def Update_Control_PODG_FRTO_TWBT_kdv(f, primal_mat, V, a_p, qs_target, J_s_prev,
                                       omega_prev, dL_du_s, C, adjust, params_primal, **kwargs):
     # Choosing the step size for two-way backtracking
     beta = kwargs['beta']
@@ -469,8 +481,9 @@ def Update_Control_PODG_FRTO_TWBT_kdv(f, primal_mat, J_l_ROM_primal, V, a_p, qs_
     # Checking the Armijo condition
     f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
     as_ = TI_primal_PODG_FRTO_kdv_expl(a_p, f_new, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                       primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                       primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                       primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                       primal_mat.B_r, primal_mat.L_r, params_primal['c'],
+                                       params_primal['alpha'],
                                        params_primal['omega'], params_primal['gamma'],
                                        params_primal['nu'], kwargs['Nt'], kwargs['dt'])
     J_s, _ = Calc_Cost_PODG(V, as_, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'],
@@ -485,8 +498,9 @@ def Update_Control_PODG_FRTO_TWBT_kdv(f, primal_mat, J_l_ROM_primal, V, a_p, qs_
             omega = omega / beta
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
             as_ = TI_primal_PODG_FRTO_kdv_expl(a_p, f_new, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                               primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                               primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                               primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                               primal_mat.B_r, primal_mat.L_r, params_primal['c'],
+                                               params_primal['alpha'],
                                                params_primal['omega'], params_primal['gamma'],
                                                params_primal['nu'], kwargs['Nt'], kwargs['dt'])
             J_s, _ = Calc_Cost_PODG(V, as_, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'],
@@ -506,8 +520,9 @@ def Update_Control_PODG_FRTO_TWBT_kdv(f, primal_mat, J_l_ROM_primal, V, a_p, qs_
             omega = beta * omega
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
             as_ = TI_primal_PODG_FRTO_kdv_expl(a_p, f_new, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                                               primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                                               primal_mat.B_r, params_primal['c'], params_primal['alpha'],
+                                               primal_mat.kron_1, primal_mat.kron_2, primal_mat.kron_3,
+                                               primal_mat.B_r, primal_mat.L_r, params_primal['c'],
+                                               params_primal['alpha'],
                                                params_primal['omega'], params_primal['gamma'],
                                                params_primal['nu'], kwargs['Nt'], kwargs['dt'])
             J_s, _ = Calc_Cost_PODG(V, as_, qs_target, f_new, C, kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'],
@@ -537,9 +552,8 @@ def Update_Control_sPODG_FOTR_RA_TWBT_kdv(f, lhs, rhs, deim, c, a0_primal, qs_ta
 
     # Checking the Armijo condition
     f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-    as_p, intIds, weights = TI_primal_sPODG_FOTR_kdv_expl(lhs, rhs, deim, c, a0_primal, f_new, delta_s, modes,
-                                                          kwargs['Nt'],
-                                                          kwargs['dt'])
+    as_p, intIds, weights = TI_primal_sPODG_FOTR_kdv_expl(lhs, rhs, rhs_nl, c, a0_primal, f_new, delta_s, modes,
+                                                          kwargs['Nt'], kwargs['dt'])
     J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, C, intIds, weights,
                                    kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
     dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
@@ -551,10 +565,9 @@ def Update_Control_sPODG_FOTR_RA_TWBT_kdv(f, lhs, rhs, deim, c, a0_primal, qs_ta
             f_new_final = np.copy(f_new)
             omega = omega / beta
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            as_p, intIds_n, weights_n = TI_primal_sPODG_FOTR_kdv_expl(lhs, rhs, deim, c, a0_primal, f_new, delta_s,
+            as_p, intIds_n, weights_n = TI_primal_sPODG_FOTR_kdv_expl(lhs, rhs, rhs_nl, c, a0_primal, f_new, delta_s,
                                                                       modes,
-                                                                      kwargs['Nt'],
-                                                                      kwargs['dt'])
+                                                                      kwargs['Nt'], kwargs['dt'])
             J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, C, intIds_n, weights_n,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
@@ -571,10 +584,9 @@ def Update_Control_sPODG_FOTR_RA_TWBT_kdv(f, lhs, rhs, deim, c, a0_primal, qs_ta
         while True:
             omega = beta * omega
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            as_p, intIds_k, weights_k = TI_primal_sPODG_FOTR_kdv_expl(lhs, rhs, deim, c, a0_primal, f_new, delta_s,
+            as_p, intIds_k, weights_k = TI_primal_sPODG_FOTR_kdv_expl(lhs, rhs, rhs_nl, c, a0_primal, f_new, delta_s,
                                                                       modes,
-                                                                      kwargs['Nt'],
-                                                                      kwargs['dt'])
+                                                                      kwargs['Nt'], kwargs['dt'])
             J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, C, intIds_k, weights_k,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
@@ -594,7 +606,7 @@ def Update_Control_sPODG_FOTR_RA_TWBT_kdv(f, lhs, rhs, deim, c, a0_primal, qs_ta
             k = k + 1
 
 
-def Update_Control_sPODG_FRTO_TWBT_kdv(f, lhs_p, rhs_p, deim_p, deim_p_hl, c_p, Vd_p, a_p, qs_target, delta_s,
+def Update_Control_sPODG_FRTO_TWBT_kdv(f, lhs_p, rhs_p, rhs_nl_p, c_p, Vd_p, a_p, qs_target, delta_s,
                                        J_s_prev,
                                        omega_prev, modes, dL_du_s, C, adjust, **kwargs):
     # Choosing the step size for two-way backtracking
@@ -603,7 +615,7 @@ def Update_Control_sPODG_FRTO_TWBT_kdv(f, lhs_p, rhs_p, deim_p, deim_p_hl, c_p, 
 
     # Checking the Armijo condition
     f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-    as_p, _, intIds, weights = TI_primal_sPODG_FRTO_kdv_expl(lhs_p, rhs_p, deim_p, c_p, a_p, f_new,
+    as_p, _, intIds, weights = TI_primal_sPODG_FRTO_kdv_expl(lhs_p, rhs_p, rhs_nl_p, c_p, a_p, f_new,
                                                              delta_s, modes, kwargs['Nt'], kwargs['dt'])
     J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, C, intIds, weights,
                                    kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -616,7 +628,7 @@ def Update_Control_sPODG_FRTO_TWBT_kdv(f, lhs_p, rhs_p, deim_p, deim_p_hl, c_p, 
             f_new_final = np.copy(f_new)
             omega = omega / beta
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            as_p, _, intIds_n, weights_n = TI_primal_sPODG_FRTO_kdv_expl(lhs_p, rhs_p, deim_p, c_p, a_p, f_new,
+            as_p, _, intIds_n, weights_n = TI_primal_sPODG_FRTO_kdv_expl(lhs_p, rhs_p, rhs_nl_p, c_p, a_p, f_new,
                                                                          delta_s, modes, kwargs['Nt'], kwargs['dt'])
             J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, C, intIds_n, weights_n,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -634,8 +646,7 @@ def Update_Control_sPODG_FRTO_TWBT_kdv(f, lhs_p, rhs_p, deim_p, deim_p_hl, c_p, 
         while True:
             omega = beta * omega
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            as_p, _, intIds_k, weights_k = TI_primal_sPODG_FRTO_kdv_impl(lhs_p, rhs_p, deim_p, deim_p_hl, c_p, a_p,
-                                                                         f_new,
+            as_p, _, intIds_k, weights_k = TI_primal_sPODG_FRTO_kdv_expl(lhs_p, rhs_p, rhs_nl_p, c_p, a_p, f_new,
                                                                          delta_s, modes, kwargs['Nt'], kwargs['dt'])
             J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, C, intIds_k, weights_k,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)

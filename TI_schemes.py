@@ -531,16 +531,16 @@ def rk4_sPODG_prim_kdvb(RHS: callable,
                         dt,
                         lhs,
                         rhs,
-                        deim,
+                        rhs_nl,
                         c,
                         delta_s,
                         modes):
     u_mid = (u1 + u2) / 2
 
-    k1, i, w = RHS(q0, u1, lhs, rhs, deim, c, delta_s, modes)
-    k2, _, _ = RHS(q0 + dt / 2 * k1, u_mid, lhs, rhs, deim, c, delta_s, modes)
-    k3, _, _ = RHS(q0 + dt / 2 * k2, u_mid, lhs, rhs, deim, c, delta_s, modes)
-    k4, _, _ = RHS(q0 + dt * k3, u2, lhs, rhs, deim, c, delta_s, modes)
+    k1, i, w = RHS(q0, u1, lhs, rhs, rhs_nl, c, delta_s, modes)
+    k2, _, _ = RHS(q0 + dt / 2 * k1, u_mid, lhs, rhs, rhs_nl, c, delta_s, modes)
+    k3, _, _ = RHS(q0 + dt / 2 * k2, u_mid, lhs, rhs, rhs_nl, c, delta_s, modes)
+    k4, _, _ = RHS(q0 + dt * k3, u2, lhs, rhs, rhs_nl, c, delta_s, modes)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -686,19 +686,19 @@ def rk4_sPODG_adj_kdvb(RHS: callable,
                        b1: np.ndarray,
                        b2: np.ndarray,
                        dt,
-                       lhs, rhs, deim, deim_mix,
+                       lhs, rhs, rhs_nl,
                        tar, CTC, Vda, Wda,
                        modes_a, modes_p,
                        delta_s, dx):
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, a1, b1, lhs, rhs, deim, deim_mix, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
-    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, lhs, rhs, deim, deim_mix, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s,
+    k1 = RHS(q0, a1, b1, lhs, rhs, rhs_nl, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
+    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, lhs, rhs, rhs_nl, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s,
              dx)
-    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, lhs, rhs, deim, deim_mix, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s,
+    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, lhs, rhs, rhs_nl, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s,
              dx)
-    k4 = RHS(q0 + dt * k3, a2, b2, lhs, rhs, deim, deim_mix, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
+    k4 = RHS(q0 + dt * k3, a2, b2, lhs, rhs, rhs_nl, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -807,12 +807,8 @@ def rk4_PODG_adj_kdvb(RHS: callable,
                       b1: np.ndarray,
                       b2: np.ndarray,
                       dt,
-                      D_1r,
-                      D_2r,
-                      D_3r,
-                      prefactor,
-                      ST_V,
-                      ST_D1V,
+                      L_r,
+                      kron_3,
                       c,
                       alpha,
                       omega,
@@ -822,10 +818,10 @@ def rk4_PODG_adj_kdvb(RHS: callable,
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, a1, b1, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, c, alpha, omega, gamma, nu, dx)
-    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, c, alpha, omega, gamma, nu, dx)
-    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, c, alpha, omega, gamma, nu, dx)
-    k4 = RHS(q0 + dt * k3, a2, b2, D_1r, D_2r, D_3r, prefactor, ST_V, ST_D1V, c, alpha, omega, gamma, nu, dx)
+    k1 = RHS(q0, a1, b1, L_r, kron_3, c, alpha, omega, gamma, nu, dx)
+    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, L_r, kron_3, c, alpha, omega, gamma, nu, dx)
+    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, L_r, kron_3, c, alpha, omega, gamma, nu, dx)
+    k4 = RHS(q0 + dt * k3, a2, b2, L_r, kron_3, c, alpha, omega, gamma, nu, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -1234,8 +1230,8 @@ def implicit_midpoint_PODG_FRTO_adjoint_kdvb(
         J_l: np.ndarray,
         dx: float,
         dt: float,
-        primal_mat,
-        **params_primal) -> np.ndarray:
+        adjoint_mat,
+        **params_adjoint) -> np.ndarray:
     # Initialize Newton iterate
     p_k = p0.copy()
 
@@ -1245,13 +1241,12 @@ def implicit_midpoint_PODG_FRTO_adjoint_kdvb(
     b_mid = 0.5 * (b1 + b2)
 
     # Compute the residual
-    R_k = p_k - p0 + dt * RHS(p_mid, a_mid, b_mid, dx, primal_mat.D_1r, primal_mat.D_2r, primal_mat.D_3r,
-                              primal_mat.prefactor, primal_mat.ST_V, primal_mat.ST_D1V,
-                              params_primal['c'], params_primal['alpha'], params_primal['omega'],
-                              params_primal['gamma'], params_primal['nu'])
+    R_k = p_k - p0 + dt * RHS(p_mid, a_mid, b_mid, dx, adjoint_mat.L_r, adjoint_mat.kron_3,
+                              params_adjoint['c'], params_adjoint['alpha'], params_adjoint['omega'],
+                              params_adjoint['gamma'], params_adjoint['nu'])
 
     # Assemble Jacobian: J_l + J_nl
-    J_k = J_l.copy()  # + J_nl(a_mid, primal_mat.prefactor, primal_mat.ST_D1V, primal_mat.ST_V, params_primal['omega'], dt).T
+    J_k = J_l + J_nl(a_mid, adjoint_mat.kron_3, params_adjoint['omega'], dt)
 
     # Solve linear system
     delq = np.linalg.solve(J_k, -R_k)
@@ -1272,8 +1267,7 @@ def implicit_midpoint_sPODG_FRTO_adjoint_kdvb(
         a_dot: np.ndarray,
         LHS_matrix: np.ndarray,
         RHS_matrix: np.ndarray,
-        DEIM_matrix: np.ndarray,
-        DEIM_mat: np.ndarray,
+        RHS_NL_matrix: np.ndarray,
         C_matrix: np.ndarray,
         TAR_matrix: np.ndarray,
         Vdp: np.ndarray,
@@ -1295,8 +1289,8 @@ def implicit_midpoint_sPODG_FRTO_adjoint_kdvb(
     u_mid = 0.5 * (u1 + u2)  # control
 
     # Residual: R = M(a_mid) * (p0 - p_k) / dt - F(p_mid, a_mid, b_mid, u_mid)
-    # (a_dot[2] if RK4 and a_dot[0] if implicit midpoint)
-    M, E, T = RHS(LHS_matrix, RHS_matrix, DEIM_matrix, DEIM_mat, C_matrix, TAR_matrix, CTC, Vdp, Wdp,
+    # (a_dot[2] if primal is RK4 and a_dot[0] if primal is implicit midpoint)
+    M, E, T = RHS(LHS_matrix, RHS_matrix, RHS_NL_matrix, C_matrix, TAR_matrix, CTC, Vdp, Wdp,
                   a_mid, a_dot[2], u_mid, b_mid, delta_samples, dx, num_modes)
 
     R_k = M @ (p0 - p_k) / dt + E @ p_mid + T

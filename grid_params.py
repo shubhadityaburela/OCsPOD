@@ -113,6 +113,7 @@ class Korteweg_de_Vries:
         self.firstderivativeOrder = "6thOrder"
 
         self.v_x = v_x * np.ones(self.Nt)
+        self.v_x_target = v_x * np.ones(self.Nt)
         self.c = 2 / 3
         self.C = 1.0
 

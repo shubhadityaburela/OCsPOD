@@ -1,36 +1,33 @@
 #!/bin/bash
+
+fully_nonlinear="True"   # e.g. True for nonlinear problem and False for fully linear
+CTC_mask="False"            # "True" or "False"
+grid_str="1000 120000 16"
+
 mode_sets=(
-  "2 2 2 2"
-  "5 5 5 5"
-  "8 8 8 8"
-  "10 10 10 10"
-  "12 12 12 12"
-  "15 15 15 15"
-  "20 20 20 20"
-  "25 25 25 25"
-  "30 30 30 30"
-  "35 35 35 35"
-  "40 40 40 40"
-  "45 45 45 45"
-  "50 50 50 50"
+  "2 2"
+  "5 5"
+  "8 8"
+  "10 10"
+  "12 12"
+  "15 15"
+  "20 20"
+  "25 25"
+  "30 30"
+  "35 35"
+  "40 40"
+  "45 45"
+  "50 50"
 )
 
 for script_type in fixed adaptive; do
   for common_basis in True False; do
     for ms in "${mode_sets[@]}"; do
-      # unpack the four modes
-      read -r mode1 mode2 mode3 mode4 <<< "$ms"
-
-      echo "Submitting job: script_type=$script_type, common_basis=$common_basis, modes=($mode1,$mode2,$mode3,$mode4)"
-      sbatch run_cluster_sPODG_inner_FOTR.sh \
-        "$common_basis" \
-        "modes" \
-        "$mode1" "$mode2" "$mode3" "$mode4" \
-        "$script_type"
+      read -r mode1 mode2 <<< "$ms"
+      echo "Submitting modes: fully_nonlinear=$fully_nonlinear, script_type=$script_type, common_basis=$common_basis, CTC_mask=$CTC_mask modes=($mode1,$mode2), grid=\"$grid_str\""
+      sbatch run_cluster_sPODG_inner_FOTR.sh "$fully_nonlinear" "$common_basis" "modes" "$CTC_mask" "$mode1" "$mode2" "$script_type" "$grid_str"
     done
   done
 done
-
-
 
 

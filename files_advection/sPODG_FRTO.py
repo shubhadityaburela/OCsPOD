@@ -462,7 +462,6 @@ if __name__ == "__main__":
 
             t1 = perf_counter()
             running_time.append(t1 - t0)
-            t0 = t1
 
             # Saving previous controls for Barzilai Borwein step
             fOld = f.copy()
