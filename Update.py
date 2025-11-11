@@ -544,7 +544,7 @@ def Update_Control_PODG_FRTO_TWBT_kdv(f, primal_mat, V, a_p, qs_target, J_s_prev
             k = k + 1
 
 
-def Update_Control_sPODG_FOTR_RA_TWBT_kdv(f, lhs, rhs, deim, c, a0_primal, qs_target, delta_s, Vdp, J_s_prev,
+def Update_Control_sPODG_FOTR_RA_TWBT_kdv(f, lhs, rhs, rhs_nl, c, a0_primal, qs_target, delta_s, Vdp, J_s_prev,
                                           omega_prev, modes, dL_du_s, C, adjust, **kwargs):
     # Choosing the step size for two-way backtracking
     beta = kwargs['beta']

@@ -720,19 +720,9 @@ def RHS_adjoint_sPODG_FRTO_kdv_impl(LHS_matrix, RHS_matrix, RHS_NL_matrix, C_mat
 
     Da_p = as_.reshape(-1, 1)
 
-    M1 = np.add(weight * LHS_matrix[0, intervalIdx], (1 - weight) * LHS_matrix[0, intervalIdx + 1])
-    N = np.add(weight * LHS_matrix[1, intervalIdx], (1 - weight) * LHS_matrix[1, intervalIdx + 1])
-    M2 = np.add(weight * LHS_matrix[2, intervalIdx], (1 - weight) * LHS_matrix[2, intervalIdx + 1])
-    A1 = np.add(weight * RHS_matrix[0, intervalIdx], (1 - weight) * RHS_matrix[0, intervalIdx + 1])
-    A2 = np.add(weight * RHS_matrix[1, intervalIdx], (1 - weight) * RHS_matrix[1, intervalIdx + 1])
     VT_B = np.add(weight * C_matrix[0, intervalIdx], (1 - weight) * C_matrix[0, intervalIdx + 1])
     WT_B = np.add(weight * C_matrix[1, intervalIdx], (1 - weight) * C_matrix[1, intervalIdx + 1])
     UT_B = np.add(weight * C_matrix[2, intervalIdx], (1 - weight) * C_matrix[2, intervalIdx + 1])
-    M1_dash = np.add(weight * LHS_matrix[3, intervalIdx], (1 - weight) * LHS_matrix[3, intervalIdx + 1])
-    N_dash = np.add(weight * LHS_matrix[4, intervalIdx], (1 - weight) * LHS_matrix[4, intervalIdx + 1])
-    M2_dash = np.add(weight * LHS_matrix[5, intervalIdx], (1 - weight) * LHS_matrix[5, intervalIdx + 1])
-    A1_dash = np.add(weight * RHS_matrix[2, intervalIdx], (1 - weight) * RHS_matrix[2, intervalIdx + 1])
-    A2_dash = np.add(weight * RHS_matrix[3, intervalIdx], (1 - weight) * RHS_matrix[3, intervalIdx + 1])
 
     VT = np.add(weight * Vdp[intervalIdx], (1 - weight) * Vdp[intervalIdx + 1]).T
     WT = np.add(weight * Wdp[intervalIdx], (1 - weight) * Wdp[intervalIdx + 1]).T
@@ -743,25 +733,21 @@ def RHS_adjoint_sPODG_FRTO_kdv_impl(LHS_matrix, RHS_matrix, RHS_NL_matrix, C_mat
     WTV = np.add(weight * TAR_matrix[1, intervalIdx], (1 - weight) * TAR_matrix[1, intervalIdx + 1])
 
     # Assemble the M matrix
-    M[:modes, :modes] = M1.T
-    M[:modes, modes:] = N @ Da_p
+    M[:modes, :modes] = LHS_matrix[0].T
+    M[:modes, modes:] = LHS_matrix[1] @ Da_p
     M[modes:, :modes] = M[:modes, modes:].T
-    M[modes:, modes:] = Da_p.T @ (M2.T @ Da_p)
-
-    # Nonlinear terms
-    nl_1 = np.add(weight * RHS_NL_matrix[0, intervalIdx], (1 - weight) * RHS_NL_matrix[0, intervalIdx + 1])
-    nl_2 = np.add(weight * RHS_NL_matrix[1, intervalIdx], (1 - weight) * RHS_NL_matrix[1, intervalIdx + 1])
+    M[modes:, modes:] = Da_p.T @ (LHS_matrix[2].T @ Da_p)
 
     # Assemble the E matrix
     # Da_p is used instead of as_ because as_needs to be reshaped into [:, None]
     # and Da_p is already present in that shape
     as_kron_Jac = np.kron(Da_p, np.eye(modes)) + np.kron(np.eye(modes), Da_p)
     as_kron = np.kron(as_, as_)
-    E[:modes, :modes] = E11_kdvb(M1_dash, N, A1, nl_1, as_kron_Jac, z_dot, modes).T
-    E[:modes, modes:] = E12_kdvb(M2, N, N_dash, A2, Da_p, WT_B, nl_2, as_kron, as_kron_Jac, as_dot, z_dot, as_, f,
-                                 modes).T
-    E[modes:, :modes] = E21_kdvb(N, Da_p, M1_dash, N_dash, A1_dash, WT_B, as_dot, z_dot, as_, f).T
-    E[modes:, modes:] = E22_kdvb(M2, M2_dash, N_dash, A2_dash, Da_p, UT_B, as_dot, z_dot, as_, f).T
+    E[:modes, :modes] = E11_kdvb(LHS_matrix[1], RHS_matrix[0], RHS_NL_matrix[0], as_kron_Jac, z_dot, modes).T
+    E[:modes, modes:] = E12_kdvb(LHS_matrix[2], LHS_matrix[1], RHS_matrix[1], Da_p, WT_B, RHS_NL_matrix[1], as_kron,
+                                 as_kron_Jac, as_dot, z_dot, as_, f, modes).T
+    E[modes:, :modes] = E21_kdvb(LHS_matrix[1], Da_p, WT_B, as_dot, z_dot, as_, f).T
+    E[modes:, modes:] = E22_kdvb(LHS_matrix[2], Da_p, UT_B, as_dot, z_dot, as_, f).T
 
     # Assemble the T vector
     T[:modes] = C1(VTV, as_, VTqs_tar, dx)

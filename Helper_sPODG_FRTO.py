@@ -49,15 +49,14 @@ def C2(WTV, as_p, WTqs_tar, dx):   # We make use of the fact that WTV in the pre
 
 ################################################################################
 @njit
-def E11_kdvb(M1_dash, N, A1, nl_1, as_kron_Jac, z_dot, r):
-    return M1_dash * z_dot + A1 - N @ np.diag(np.repeat(z_dot, r)) + nl_1 @ as_kron_Jac
+def E11_kdvb(N, A1, nl_1, as_kron_Jac, z_dot, r):
+    return A1 - N @ np.diag(np.repeat(z_dot, r)) + nl_1 @ as_kron_Jac
 
 
 @njit
-def E12_kdvb(M2, N, N_dash, A2, D, WTB, nl_2, as_kron, as_kron_Jac, a_dot, z_dot, a_s, u, r):
+def E12_kdvb(M2, N, A2, D, WTB, nl_2, as_kron, as_kron_Jac, a_dot, z_dot, a_s, u, r):
 
     mat1_comp = a_dot[None, :] @ N.T
-    mat2_comp = D.T @ (N_dash.T * z_dot)
     mat3_comp = (N.T.dot(a_dot))[None, :]
     mat4_comp = (M2 @ (D.dot(z_dot)))[None, :]
     mat5_comp = D.T @ (M2 @ np.diag(np.repeat(z_dot, r)))
@@ -67,33 +66,25 @@ def E12_kdvb(M2, N, N_dash, A2, D, WTB, nl_2, as_kron, as_kron_Jac, a_dot, z_dot
     mat9_comp = (nl_2.dot(as_kron))[None, :]
     mat10_comp = D.T @ (nl_2 @ as_kron_Jac)
 
-    return mat1_comp + mat2_comp - mat3_comp - mat4_comp - mat5_comp \
+    return mat1_comp - mat3_comp - mat4_comp - mat5_comp \
         + mat6_comp + mat7_comp + mat8_comp + mat9_comp + mat10_comp
 
 
 @njit
-def E21_kdvb(N, D, M1_dash, N_dash, A1_dash, VTdashB, a_dot, z_dot, a_s, u):
-    mat1_comp = (N_dash * z_dot) @ D
+def E21_kdvb(N, D, VTdashB, a_dot, z_dot, a_s, u):
     mat2_comp = N @ a_dot[:, None]
-    mat3_comp = M1_dash.dot(a_dot)[:, None]
-    mat4_comp = N_dash @ (D.dot(z_dot))[:, None]
-    mat5_comp = A1_dash.dot(a_s)[:, None]
     mat6_comp = (VTdashB.dot(u))[:, None]
 
-    return mat1_comp + mat2_comp - mat3_comp - mat4_comp + mat5_comp + mat6_comp
+    return mat2_comp + mat6_comp
 
 
 @njit
-def E22_kdvb(M2, M2_dash, N_dash, A2_dash, D, WTdashB, a_dot, z_dot, a_s, u):
+def E22_kdvb(M2, D, WTdashB, a_dot, z_dot, a_s, u):
     mat1_comp = a_dot[None, :] @ (M2 @ D)
-    mat2_comp = D.T @ ((M2_dash * z_dot) @ D)
     mat3_comp = D.T @ (M2 @ a_dot[:, None])
-    mat4_comp = D.T @ (N_dash.T @ a_dot[:, None])
-    mat5_comp = D.T @ (M2_dash @ (D.dot(z_dot))[:, None])
-    mat6_comp = D.T @ (A2_dash.dot(a_s))[:, None]
     mat7_comp = D.T @ (WTdashB.dot(u))[:, None]
 
-    return mat1_comp + mat2_comp + mat3_comp - mat4_comp - mat5_comp + mat6_comp + mat7_comp
+    return mat1_comp + mat3_comp + mat7_comp
 
 
 # ################################################################################

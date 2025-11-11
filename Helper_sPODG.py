@@ -212,17 +212,12 @@ def LHS_offline_primal_FOTR(V_delta, W_delta, modes):
     return np.ascontiguousarray(LHS_mat)
 
 
-@njit(parallel=True)
 def LHS_offline_primal_FOTR_kdv(V_delta, W_delta, U_delta, num_sample, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
-    LHS_mat = np.zeros((6, num_sample, modes, modes))
-    for it in prange(num_sample):
-        LHS_mat[0, it, ...] = V_delta[it].T @ V_delta[it]  # M1
-        LHS_mat[1, it, ...] = V_delta[it].T @ W_delta[it]  # N
-        LHS_mat[2, it, ...] = W_delta[it].T @ W_delta[it]  # M2
-        LHS_mat[3, it, ...] = LHS_mat[1, it, ...].T + LHS_mat[1, it, ...]  # M1'
-        LHS_mat[4, it, ...] = LHS_mat[2, it, ...] + V_delta[it].T @ U_delta[it]  # N'
-        LHS_mat[5, it, ...] = U_delta[it].T @ W_delta[it] + W_delta[it].T @ U_delta[it]  # M2'
+    LHS_mat = np.zeros((3, modes, modes))
+    LHS_mat[0, ...] = oe.contract('ij,jk->ik', V_delta[0].T, V_delta[0])
+    LHS_mat[1, ...] = oe.contract('ij,jk->ik', V_delta[0].T, W_delta[0])
+    LHS_mat[2, ...] = oe.contract('ij,jk->ik', W_delta[0].T, W_delta[0])
 
     return np.ascontiguousarray(LHS_mat)
 
@@ -236,25 +231,21 @@ def RHS_offline_primal_FOTR(V_delta, W_delta, A, modes):
 
 
 def RHS_offline_primal_FOTR_kdv(V_delta, W_delta, U_delta, A, num_sample, modes):
-    RHS_mat = np.zeros((4, num_sample, modes, modes))
-    for it in range(num_sample):
-        RHS_mat[0, it, ...] = V_delta[it].T @ A @ V_delta[it]  # A1
-        RHS_mat[1, it, ...] = W_delta[it].T @ A @ V_delta[it]  # A2
-        RHS_mat[2, it, ...] = RHS_mat[1, it, ...] + V_delta[it].T @ A @ W_delta[it]  # A1'
-        RHS_mat[3, it, ...] = U_delta[it].T @ A @ V_delta[it] + W_delta[it].T @ A @ W_delta[it]  # A2'
+    RHS_mat = np.zeros((2, modes, modes))
+    RHS_mat[0, ...] = V_delta[0].T @ A @ V_delta[0]
+    RHS_mat[1, ...] = W_delta[0].T @ A @ V_delta[0]
 
     return np.ascontiguousarray(RHS_mat)
 
 
 def RHS_NL_primal_FOTR_kdv(T_delta, D1, V_delta_primal, W_delta_primal,
                            omega, num_sample, N, Nm, delta_s):
-    RHS_NL_mat = np.zeros((2, num_sample, Nm, Nm ** 2))
+    RHS_NL_mat = np.zeros((2, Nm, Nm ** 2))
 
-    for it in range(num_sample):
-        common_factor = D1 @ np.einsum('ij,ik->ijk', V_delta_primal[it], V_delta_primal[it]).reshape(N, Nm ** 2) + \
-                        np.einsum('ij,ik->ijk', V_delta_primal[it], D1 @ V_delta_primal[it]).reshape(N, Nm ** 2)
-        RHS_NL_mat[0, it, ...] = - (omega / 3) * V_delta_primal[it].T @ common_factor
-        RHS_NL_mat[1, it, ...] = - (omega / 3) * W_delta_primal[it].T @ common_factor
+    common_factor = D1 @ np.einsum('ij,ik->ijk', V_delta_primal[0], V_delta_primal[0]).reshape(N, Nm ** 2) + \
+                    np.einsum('ij,ik->ijk', V_delta_primal[0], D1 @ V_delta_primal[0]).reshape(N, Nm ** 2)
+    RHS_NL_mat[0, ...] = - (omega / 3) * V_delta_primal[0].T @ common_factor
+    RHS_NL_mat[1, ...] = - (omega / 3) * W_delta_primal[0].T @ common_factor
 
     return RHS_NL_mat
 
@@ -298,12 +289,11 @@ def Control_offline_primal_FOTR(V_delta, W_delta, psi, samples, modes):
 
 def RHS_NL_adjoint_FOTR_kdv(T_delta, D1, V_delta_adjoint, W_delta_adjoint, U_delta_adjoint,
                             V_delta_primal, W_delta_primal, omega, num_sample, N, Nm_p, Nm_a):
-    RHS_NL_mat = np.zeros((2, num_sample, Nm_a, Nm_p * Nm_a))
+    RHS_NL_mat = np.zeros((2, Nm_a, Nm_p * Nm_a))
 
-    for it in range(num_sample):
-        common_factor = np.einsum('ij,ik->ijk', V_delta_primal[it], D1 @ V_delta_adjoint[it]).reshape(N, Nm_p * Nm_a)
-        RHS_NL_mat[0, it, ...] = - omega * V_delta_adjoint[it].T @ common_factor
-        RHS_NL_mat[1, it, ...] = - omega * W_delta_adjoint[it].T @ common_factor
+    common_factor = np.einsum('ij,ik->ijk', V_delta_primal[0], D1 @ V_delta_adjoint[0]).reshape(N, Nm_p * Nm_a)
+    RHS_NL_mat[0, ...] = - omega * V_delta_adjoint[0].T @ common_factor
+    RHS_NL_mat[1, ...] = - omega * W_delta_adjoint[0].T @ common_factor
 
     return RHS_NL_mat
 
@@ -432,26 +422,19 @@ def Matrices_online_primal_FOTR_kdv_expl(LHS_matrix, RHS_matrix, RHS_NL_matrix, 
 
     Da = as_.reshape(-1, 1)
 
-    M1 = np.add(weight * LHS_matrix[0, intervalIdx], (1 - weight) * LHS_matrix[0, intervalIdx + 1])
-    N = np.add(weight * LHS_matrix[1, intervalIdx], (1 - weight) * LHS_matrix[1, intervalIdx + 1])
-    M2 = np.add(weight * LHS_matrix[2, intervalIdx], (1 - weight) * LHS_matrix[2, intervalIdx + 1])
-    A1 = np.add(weight * RHS_matrix[0, intervalIdx], (1 - weight) * RHS_matrix[0, intervalIdx + 1])
-    A2 = np.add(weight * RHS_matrix[1, intervalIdx], (1 - weight) * RHS_matrix[1, intervalIdx + 1])
     VT_B = np.add(weight * C_matrix[0, intervalIdx], (1 - weight) * C_matrix[0, intervalIdx + 1])
     WT_B = np.add(weight * C_matrix[1, intervalIdx], (1 - weight) * C_matrix[1, intervalIdx + 1])
 
-    M[:modes, :modes] = M1
-    M[:modes, modes:] = N @ Da
+    M[:modes, :modes] = LHS_matrix[0].copy()
+    M[:modes, modes:] = LHS_matrix[1] @ Da
     M[modes:, :modes] = M[:modes, modes:].T
-    M[modes:, modes:] = Da.T @ (M2 @ Da)
+    M[modes:, modes:] = Da.T @ (LHS_matrix[2] @ Da)
 
     # Nonlinear term
-    nl_1 = np.add(weight * RHS_NL_matrix[0, intervalIdx], (1 - weight) * RHS_NL_matrix[0, intervalIdx + 1])
-    nl_2 = np.add(weight * RHS_NL_matrix[1, intervalIdx], (1 - weight) * RHS_NL_matrix[1, intervalIdx + 1])
     as_kron = np.kron(as_, as_)
 
-    A[:modes] = A1 @ as_ + nl_1 @ as_kron + VT_B @ f
-    A[modes:] = Da.T @ (A2 @ as_ + nl_2 @ as_kron + WT_B @ f)
+    A[:modes] = RHS_matrix[0] @ as_ + RHS_NL_matrix[0] @ as_kron + VT_B @ f
+    A[modes:] = Da.T @ (RHS_matrix[1] @ as_ + RHS_NL_matrix[1] @ as_kron + WT_B @ f)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A), intervalIdx, weight
 
@@ -473,29 +456,21 @@ def Matrices_online_adjoint_FOTR_kdv_expl(LHS_matrix, RHS_matrix, RHS_NL_matrix,
 
     Da = as_adj_.reshape(-1, 1)
 
-    M1 = np.add(weight * LHS_matrix[0, intervalIdx], (1 - weight) * LHS_matrix[0, intervalIdx + 1])
-    N = np.add(weight * LHS_matrix[1, intervalIdx], (1 - weight) * LHS_matrix[1, intervalIdx + 1])
-    M2 = np.add(weight * LHS_matrix[2, intervalIdx], (1 - weight) * LHS_matrix[2, intervalIdx + 1])
-    A1 = np.add(weight * RHS_matrix[0, intervalIdx], (1 - weight) * RHS_matrix[0, intervalIdx + 1])
-    A2 = np.add(weight * RHS_matrix[1, intervalIdx], (1 - weight) * RHS_matrix[1, intervalIdx + 1])
-
     tar11 = np.add(weight * Tar_matrix[0, intervalIdx], (1 - weight) * Tar_matrix[0, intervalIdx + 1])
     tar12 = np.add(weight * Vda[intervalIdx], (1 - weight) * Vda[intervalIdx + 1])[CTC, :].T
     tar21 = np.add(weight * Tar_matrix[1, intervalIdx], (1 - weight) * Tar_matrix[1, intervalIdx + 1])
     tar22 = np.add(weight * Wda[intervalIdx], (1 - weight) * Wda[intervalIdx + 1])[CTC, :].T
 
     # Nonlinear term
-    nl_1 = np.add(weight * RHS_NL_matrix[0, intervalIdx], (1 - weight) * RHS_NL_matrix[0, intervalIdx + 1])
-    nl_2 = np.add(weight * RHS_NL_matrix[1, intervalIdx], (1 - weight) * RHS_NL_matrix[1, intervalIdx + 1])
     a_kron = np.kron(as_p, as_adj_)
 
-    M[:modes_a, :modes_a] = M1
-    M[:modes_a, modes_a:] = N @ Da
+    M[:modes_a, :modes_a] = LHS_matrix[0].copy()
+    M[:modes_a, modes_a:] = LHS_matrix[1] @ Da
     M[modes_a:, :modes_a] = M[:modes_a, modes_a:].T
-    M[modes_a:, modes_a:] = Da.T @ (M2 @ Da)
+    M[modes_a:, modes_a:] = Da.T @ (LHS_matrix[2] @ Da)
 
-    A[:modes_a] = - A1 @ as_adj_ + nl_1 @ a_kron - dx * (tar11 @ as_p - tar12 @ qs_target[CTC])
-    A[modes_a:] = - Da.T @ (A2 @ as_adj_ - nl_2 @ a_kron + dx * (tar21 @ as_p - tar22 @ qs_target[CTC]))
+    A[:modes_a] = - RHS_matrix[0] @ as_adj_ + RHS_NL_matrix[0] @ a_kron - dx * (tar11 @ as_p - tar12 @ qs_target[CTC])
+    A[modes_a:] = - Da.T @ (RHS_matrix[1] @ as_adj_ - RHS_NL_matrix[1] @ a_kron + dx * (tar21 @ as_p - tar22 @ qs_target[CTC]))
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A)
 
@@ -588,17 +563,12 @@ def LHS_offline_primal_FRTO(V_delta, W_delta, modes):
     return np.ascontiguousarray(LHS_mat)
 
 
-@njit(parallel=True)
 def LHS_offline_primal_FRTO_kdv(V_delta, W_delta, U_delta, num_sample, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
-    LHS_mat = np.zeros((6, num_sample, modes, modes))
-    for it in prange(num_sample):
-        LHS_mat[0, it, ...] = V_delta[it].T @ V_delta[it]  # M1
-        LHS_mat[1, it, ...] = V_delta[it].T @ W_delta[it]  # N
-        LHS_mat[2, it, ...] = W_delta[it].T @ W_delta[it]  # M2
-        LHS_mat[3, it, ...] = LHS_mat[1, it, ...].T + LHS_mat[1, it, ...]  # M1'
-        LHS_mat[4, it, ...] = LHS_mat[2, it, ...] + V_delta[it].T @ U_delta[it]  # N'
-        LHS_mat[5, it, ...] = U_delta[it].T @ W_delta[it] + W_delta[it].T @ U_delta[it]  # M2'
+    LHS_mat = np.zeros((3, modes, modes))
+    LHS_mat[0, ...] = oe.contract('ij,jk->ik', V_delta[0].T, V_delta[0])
+    LHS_mat[1, ...] = oe.contract('ij,jk->ik', V_delta[0].T, W_delta[0])
+    LHS_mat[2, ...] = oe.contract('ij,jk->ik', W_delta[0].T, W_delta[0])
 
     return np.ascontiguousarray(LHS_mat)
 
@@ -612,32 +582,22 @@ def RHS_offline_primal_FRTO(V_delta, W_delta, A, modes):
 
 
 def RHS_offline_primal_FRTO_kdv(V_delta, W_delta, U_delta, A, num_sample, modes):
-    RHS_mat = np.zeros((4, num_sample, modes, modes))
-    for it in range(num_sample):
-        RHS_mat[0, it, ...] = V_delta[it].T @ A @ V_delta[it]  # A1
-        RHS_mat[1, it, ...] = W_delta[it].T @ A @ V_delta[it]  # A2
-        RHS_mat[2, it, ...] = RHS_mat[1, it, ...] + V_delta[it].T @ A @ W_delta[it]  # A1'
-        RHS_mat[3, it, ...] = U_delta[it].T @ A @ V_delta[it] + W_delta[it].T @ A @ W_delta[it]  # A2'
+    RHS_mat = np.zeros((2, modes, modes))
+    RHS_mat[0, ...] = V_delta[0].T @ A @ V_delta[0]
+    RHS_mat[1, ...] = W_delta[0].T @ A @ V_delta[0]
 
     return np.ascontiguousarray(RHS_mat)
 
 
 def RHS_NL_primal_FRTO_kdv(T_delta, D1, V_delta_primal, W_delta_primal, U_delta_primal,
                            omega, num_sample, N, Nm, delta_s):
-    RHS_NL_mat = np.zeros((4, num_sample, Nm, Nm ** 2))
+    RHS_NL_mat = np.zeros((2, Nm, Nm ** 2))
 
-    for it in range(num_sample):
-        common_factor_1 = D1 @ np.einsum('ij,ik->ijk', V_delta_primal[it], V_delta_primal[it]).reshape(N, Nm ** 2) + \
-                          np.einsum('ij,ik->ijk', V_delta_primal[it], D1 @ V_delta_primal[it]).reshape(N, Nm ** 2)
-        # common_factor_2 = np.einsum('ij,ik->ijk', U_delta_primal[it], V_delta_primal[it]).reshape(N, Nm ** 2) \
-        #                   + 2.0 * np.einsum('ij,ik->ijk', V_delta_primal[it], U_delta_primal[it]).reshape(N, Nm ** 2) \
-        #                   + 3.0 * np.einsum('ij,ik->ijk', W_delta_primal[it], W_delta_primal[it]).reshape(N, Nm ** 2)
-        RHS_NL_mat[0, it, ...] = - (omega / 3) * V_delta_primal[it].T @ common_factor_1
-        RHS_NL_mat[1, it, ...] = - (omega / 3) * W_delta_primal[it].T @ common_factor_1
-        # RHS_NL_mat[2, it, ...] = - (omega / 3) * (W_delta_primal[it].T @ common_factor_1
-        #                                           + V_delta_primal[it].T @ common_factor_2)
-        # RHS_NL_mat[3, it, ...] = - (omega / 3) * (U_delta_primal[it].T @ common_factor_1
-        #                                           + W_delta_primal[it].T @ common_factor_2)
+    common_factor_1 = D1 @ np.einsum('ij,ik->ijk', V_delta_primal[0], V_delta_primal[0]).reshape(N, Nm ** 2) + \
+                      np.einsum('ij,ik->ijk', V_delta_primal[0], D1 @ V_delta_primal[0]).reshape(N, Nm ** 2)
+    RHS_NL_mat[0, ...] = - (omega / 3) * V_delta_primal[0].T @ common_factor_1
+    RHS_NL_mat[1, ...] = - (omega / 3) * W_delta_primal[0].T @ common_factor_1
+
     return RHS_NL_mat
 
 
@@ -750,22 +710,19 @@ def Matrices_online_primal_FRTO_kdv_expl(LHS_matrix, RHS_matrix, RHS_NL_matrix, 
 
     Da = as_.reshape(-1, 1)
 
-    M[:modes, :modes] = np.add(weight * LHS_matrix[0, intervalIdx], (1 - weight) * LHS_matrix[0, intervalIdx + 1])
-    M[:modes, modes:] = np.add(weight * LHS_matrix[1, intervalIdx], (1 - weight) * LHS_matrix[1, intervalIdx + 1]) @ Da
+    M[:modes, :modes] = LHS_matrix[0].copy()
+    M[:modes, modes:] = LHS_matrix[1] @ Da
     M[modes:, :modes] = M[:modes, modes:].T
-    M[modes:, modes:] = Da.T @ (
-            np.add(weight * LHS_matrix[2, intervalIdx], (1 - weight) * LHS_matrix[2, intervalIdx + 1]) @ Da)
+    M[modes:, modes:] = Da.T @ (LHS_matrix[2] @ Da)
 
     # Nonlinear term
-    nl_1 = np.add(weight * RHS_NL_matrix[0, intervalIdx], (1 - weight) * RHS_NL_matrix[0, intervalIdx + 1])
-    nl_2 = np.add(weight * RHS_NL_matrix[1, intervalIdx], (1 - weight) * RHS_NL_matrix[1, intervalIdx + 1])
     as_kron = np.kron(as_, as_)
 
-    A[:modes] = np.add(weight * RHS_matrix[0, intervalIdx], (1 - weight) * RHS_matrix[0, intervalIdx + 1]) @ as_ \
-                + nl_1 @ as_kron + \
+    A[:modes] = RHS_matrix[0] @ as_ \
+                + RHS_NL_matrix[0] @ as_kron + \
                 np.add(weight * C_matrix[0, intervalIdx], (1 - weight) * C_matrix[0, intervalIdx + 1]) @ f
-    A[modes:] = Da.T @ (np.add(weight * RHS_matrix[1, intervalIdx], (1 - weight) * RHS_matrix[1, intervalIdx + 1]) @ as_
-                        + nl_2 @ as_kron
+    A[modes:] = Da.T @ (RHS_matrix[1] @ as_
+                        + RHS_NL_matrix[1] @ as_kron
                         + np.add(weight * C_matrix[1, intervalIdx], (1 - weight) * C_matrix[1, intervalIdx + 1]) @ f)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A), intervalIdx, weight
