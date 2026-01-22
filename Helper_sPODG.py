@@ -54,6 +54,21 @@ def central_FDMatrix(order, Nx, dx):
             if k > 0:
                 D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(
                     np.diag(np.ones(abs(k)), -Nx + k))
+    elif order == "Upwind":
+        Coeffs = np.array([0, -1, 1, 0, 0])
+        diagonalLow = int(-(len(Coeffs) - 1) / 2)
+        diagonalUp = int(-diagonalLow)
+
+        D_1 = sparse.csr_matrix(np.zeros((Nx, Nx), dtype=float))
+
+        for k in range(diagonalLow, diagonalUp + 1):
+            D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(np.diag(np.ones(Nx - abs(k)), k))
+            if k < 0:
+                D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(
+                    np.diag(np.ones(abs(k)), Nx + k))
+            if k > 0:
+                D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(
+                    np.diag(np.ones(abs(k)), -Nx + k))
 
     return D_1 * (1 / dx)
 
@@ -65,6 +80,21 @@ def central_FD2Matrix(order, Nx, dx):
         pass
     elif order == 6:
         Coeffs = np.array([2, -27, 270, -490, 270, -27, 2]) / 180
+        diagonalLow = int(-(len(Coeffs) - 1) / 2)
+        diagonalUp = int(-diagonalLow)
+
+        D_1 = sparse.csr_matrix(np.zeros((Nx, Nx), dtype=float))
+
+        for k in range(diagonalLow, diagonalUp + 1):
+            D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(np.diag(np.ones(Nx - abs(k)), k))
+            if k < 0:
+                D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(
+                    np.diag(np.ones(abs(k)), Nx + k))
+            if k > 0:
+                D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(
+                    np.diag(np.ones(abs(k)), -Nx + k))
+    elif order == "Upwind":
+        Coeffs = np.array([1, -2, 1, 0, 0])
         diagonalLow = int(-(len(Coeffs) - 1) / 2)
         diagonalUp = int(-diagonalLow)
 

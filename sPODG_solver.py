@@ -17,7 +17,7 @@ from Helper_sPODG import make_V_W_delta, LHS_offline_primal_FOTR, RHS_offline_pr
 from Helper_sPODG_FRTO import E11, E12, E21, E22, E11_kdvb, E12_kdvb, E21_kdvb, E22_kdvb, C1, C2
 from TI_schemes import rk4_sPODG_prim, rk4_sPODG_adj, implicit_midpoint_sPODG_adj, DIRK_sPODG_adj, bdf2_sPODG_adj, \
     rk4_sPODG_adj_, rk4_sPODG_prim_kdvb, implicit_midpoint_sPODG_FRTO_primal_kdvb, \
-    implicit_midpoint_sPODG_FRTO_adjoint_kdvb, rk4_sPODG_adj_kdvb
+    implicit_midpoint_sPODG_FRTO_adjoint_kdvb, rk4_sPODG_adj_kdvb, explicit_euler_sPODG_prim, explicit_euler_sPODG_adj
 
 
 #############
@@ -247,7 +247,16 @@ def TI_adjoint_sPODG_FRTO(at_adj, f0, a_, qs_target, a_dot, lhsp, rhsp, C, tara,
     A1 = rhsp[0]
     A2 = rhsp[1]
 
-    if scheme == "RK4":
+    if scheme == "Explicit_Euler":
+        for n in range(1, Nt):
+            as_adj[:, -(n + 1)] = explicit_euler_sPODG_adj(RHS_adjoint_sPODG_FRTO_expl, as_adj[:, -n], f0[:, -n],
+                                                           f0[:, -(n + 1)],
+                                                           a_[:, -n], a_[:, -(n + 1)], qs_target[:, -n],
+                                                           qs_target[:, -(n + 1)],
+                                                           a_dot[..., -n], - dt,
+                                                           M1, M2, N, A1, A2, C, tara, CTC,
+                                                           Vdp, Wdp, modes, delta_s, dx)
+    elif scheme == "RK4":
         for n in range(1, Nt):
             as_adj[:, -(n + 1)] = rk4_sPODG_adj(RHS_adjoint_sPODG_FRTO_expl, as_adj[:, -n], f0[:, -n],
                                                 f0[:, -(n + 1)],
@@ -502,7 +511,8 @@ def TI_primal_sPODG_FRTO_kdv_expl(lhs, rhs, rhs_nl, c, a, f0, delta_s, modes, Nt
         as_[:, n], as_dot[..., n], IntIds[n - 1], weights[n - 1] = rk4_sPODG_prim_kdvb(RHS_primal_sPODG_FRTO_kdv_expl,
                                                                                        as_[:, n - 1],
                                                                                        f0[:, n - 1],
-                                                                                       f0[:, n], dt, lhs, rhs, rhs_nl, c,
+                                                                                       f0[:, n], dt, lhs, rhs, rhs_nl,
+                                                                                       c,
                                                                                        delta_s,
                                                                                        modes)
 

@@ -9,20 +9,23 @@ from time import perf_counter
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy import sparse
 from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
+from sklearn.utils.extmath import randomized_svd
 
 from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost
 from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
 from Grads import Calc_Grad_smooth, Calc_Grad_mapping
-from Helper import ControlSelectionMatrix, L2norm_ROM, check_weak_divergence, L2inner_prod, calc_shift
+from Helper import ControlSelectionMatrix, L2norm_ROM, check_weak_divergence, L2inner_prod, calc_shift, \
+    compute_red_basis
 from Helper_sPODG import get_T
 from TI_schemes import DF_start_FOM
 from Update import get_BB_step, Update_Control_BB, Update_Control_TWBT
-from grid_params import advection
-from Plots import PlotFlow, plot_normalized_singular_values
+from grid_params import advection, advection_3
+from Plots import PlotFlow, plot_normalized_singular_values, plot_control_shape_functions, save_fig
 
 np.random.seed(0)
 
@@ -30,17 +33,16 @@ np.random.seed(0)
 # ───────────────────────────────────────────────────────────────────────
 def parse_arguments():
     p = argparse.ArgumentParser(description="Input the variables for running the script.")
-    p.add_argument("type_of_problem", type=str, choices=["Shifting", "Constant_shift"],
+    p.add_argument("type_of_problem", type=str, choices=["Shifting", "Shifting_3"],
                    help="Choose the problem type")
     p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
                    help="Enter the grid resolution and the cfl factor")
     p.add_argument("N_iter", type=int, help="Number of optimization iterations")
     p.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
                    help="Directory prefix for I/O")
-    p.add_argument("CTC_mask_activate", type=literal_eval, choices=[True, False],
-                   help="Include CTC mask in the system? (True/False)")
     p.add_argument("reg", type=float, nargs=2, metavar=("L1", "L2"),
                    help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
+    p.add_argument("num_controls", type=int, help="Number of controls (2 * n_c + 1). So input n_c here.")
     return p.parse_args()
 
 
@@ -48,13 +50,13 @@ def setup_advection(Nx, Nt, cfl_fac, type):
     if type == "Shifting":
         wf = advection(Lx=100, Nx=Nx, timesteps=Nt,
                        cfl=(8 / 6) / cfl_fac, tilt_from=3 * Nt // 4,
-                       v_x=0.5, v_x_t=1.0,
-                       variance=7, offset=12)
-    elif type == "Constant_shift":
-        wf = advection(Lx=80, Nx=Nx, timesteps=Nt,
-                       cfl=0.0425 / cfl_fac, tilt_from=0,
-                       v_x=8 / 3, v_x_t=8 / 3,
-                       variance=7, offset=20)
+                       v_x=0.55, v_x_t=0.9,
+                       variance=1, offset=20)
+    elif type == "Shifting_3":
+        wf = advection_3(Lx=100, Nx=Nx, timesteps=Nt,
+                         cfl=(8 / 6) / cfl_fac, tilt_from=1 * Nt // 4,
+                         v_x=0.55, v_x_t=0.95,
+                         variance=1, offset=20)
     else:
         print("Please choose the correct problem type!!")
         exit()
@@ -63,10 +65,10 @@ def setup_advection(Nx, Nt, cfl_fac, type):
     return wf
 
 
-def build_dirs(prefix, reg_tuple, CTC_mask):
+def build_dirs(prefix, type_of_problem, reg_tuple, num_controls):
     reg_str = f"L1={reg_tuple[0]}_L2={reg_tuple[1]}"
-    data_dir = os.path.join(prefix, "data/FOM", reg_str, f"CTC_mask={CTC_mask}")
-    plot_dir = os.path.join(prefix, "plots/FOM", reg_str, f"CTC_mask={CTC_mask}")
+    data_dir = os.path.join(prefix, "data", type_of_problem, "FOM", reg_str, f"n_c={num_controls}")
+    plot_dir = os.path.join(prefix, "plots", type_of_problem, "FOM", reg_str, f"n_c={num_controls}")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
     return data_dir, plot_dir
@@ -125,6 +127,7 @@ if __name__ == "__main__":
     print(f"Type of problem = {args.type_of_problem}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
     print(f"Grid = {tuple(args.grid)}")
+    print(f"Number of controls = {2 * args.num_controls + 1}")
 
     # Unpack regularization parameters
     L1_reg, L2_reg = args.reg
@@ -132,31 +135,41 @@ if __name__ == "__main__":
     type_of_problem = args.type_of_problem
 
     # Set up WF and control matrix
+    old_shapes = False
     wf = setup_advection(Nx, Nt, cfl_fac, type_of_problem)
-    if type_of_problem == "Shifting":
+    if type_of_problem == "Shifting" or type_of_problem == "Shifting_3":
         if L1_reg != 0 and L2_reg == 0:  # Purely L1
             n_c_init = wf.Nx
-            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Indicator", gaussian_mask_sigma=0.5)
             adjust = 1.0
         else:  # Mix type
-            n_c_init = 40
-            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
-            adjust = wf.dx
+            if old_shapes:
+                n_c_init = 40
+                psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Gaussian", gaussian_mask_sigma=0.5)
+                adjust = wf.dx
+            else:
+                n_c_init = args.num_controls
+                psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Sin+Cos", gaussian_mask_sigma=0.5)
+                adjust = wf.dx
     elif type_of_problem == "Constant_shift":
         if L1_reg != 0 and L2_reg == 0:  # Purely L1
             n_c_init = wf.Nx
-            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Indicator", gaussian_mask_sigma=0.5)
             adjust = 1.0
         else:  # Mix type
-            n_c_init = 100
-            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
-            adjust = wf.dx
+            if old_shapes:
+                n_c_init = 100
+                psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Indicator", gaussian_mask_sigma=0.5)
+                adjust = wf.dx
+            else:
+                n_c_init = 50
+                psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Sin+Cos", gaussian_mask_sigma=0.5)
+                adjust = wf.dx
 
     n_c = psi.shape[1]
 
     f = np.zeros((n_c, wf.Nt))  # initial control guess
     df = np.random.randn(*f.shape)
-    psi = scipy.sparse.csc_matrix(psi)
 
     # Build coefficient matrices
     Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder,
@@ -170,16 +183,20 @@ if __name__ == "__main__":
     # Solve uncontrolled FOM once
     qs0 = IC_primal(wf.X, wf.Lx, wf.offset, wf.variance, type_of_problem=type_of_problem)
     qs_org = TI_primal(qs0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
-    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt,
+    Mat_target = CoefficientMatrix(orderDerivative="6thOrder",
+                                   Nxi=wf.Nx, Neta=1,
+                                   periodicity='Periodic',
+                                   dx=wf.dx, dy=0)
+    qs_target = TI_primal_target(qs0, Mat_target.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt,
                                  wf.dt, nu=0.1 if type_of_problem == "Constant_shift" else 0.0)
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
 
     # Calculate the CTC matrix/array  (CTC and C are exactly the same)
-    C = C_matrix(wf.Nx, wf.CTC_end_index, apply_CTC_mask=args.CTC_mask_activate)
+    C = C_matrix(wf.Nx, wf.CTC_end_index, apply_CTC_mask=False)
 
     # Prepare directories
-    data_dir, plot_dir = build_dirs(args.dir_prefix, args.reg, args.CTC_mask_activate)
+    data_dir, plot_dir = build_dirs(args.dir_prefix, args.type_of_problem, args.reg, n_c)
 
     # Prepare kwargs
     kwargs = {
@@ -190,18 +207,18 @@ if __name__ == "__main__":
         'n_c': n_c,
         'lamda_l1': L1_reg,
         'lamda_l2': L2_reg,
-        'delta_conv': 1e-4,
+        'delta_conv': 1e-5,
         'delta': 1 / 2,  # Armijo constant  USE 1.01 with L1_reg=0 for getting the older results
         'opt_iter': args.N_iter,
         'beta': 1 / 2,  # for TWBT
         'verbose': True,
         'omega_cutoff': 1e-10,
-        'adjoint_scheme': "RK4",
+        'adjoint_scheme': "Explicit_Euler",
         'perform_grad_check': False,
     }
 
     # Select the LU pre-factors for the inverse of mass matrix for linear solve of adjoint equation
-    if kwargs['adjoint_scheme'] == "RK4":
+    if kwargs['adjoint_scheme'] == "RK4" or kwargs['adjoint_scheme'] == "Explicit_Euler":
         M_f = None
         A_f = A_a.copy()
         LU_M_f = None
@@ -255,6 +272,8 @@ if __name__ == "__main__":
     stag = False
     stag_cntr = 0
 
+    # svd = []
+
     # ─────────────────────────────────────────────────────────────────────
     # Main “optimize‐step” loop wrapped in try/except/finally
     # ─────────────────────────────────────────────────────────────────────
@@ -265,6 +284,18 @@ if __name__ == "__main__":
 
             # ───── Forward FOM:  ─────
             qs = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+
+            # if opt_step % 10 == 0:
+            #     Q_stat = np.zeros_like(qs)
+            #     for i in range(wf.Nt):
+            #         Q_stat[:, i] = np.roll(qs[:, i], -i)
+            #     U2, S2, VT2 = randomized_svd(Q_stat, n_components=20, random_state=42)
+            #     svd.append(S2 / S2[0])
+            #     # # --- Boilerplate setup ---
+            #     # fig, axes = plt.subplots(1, 1, figsize=(10, 8), constrained_layout=True)
+            #     # axes.plot(S2 / S2[0], marker="o", linestyle="--")
+            #     # axes.semilogy()
+            #     # plt.show()
 
             # ───── Compute costs ─────
             J_s, J_ns = Calc_Cost(qs, qs_target, f, C, kwargs['dx'], kwargs['dt'],
@@ -293,13 +324,6 @@ if __name__ == "__main__":
             dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
 
             dL_du_norm_list.append(dL_du_norm)
-
-            if opt_step % 10 == 0:
-                z = calc_shift(qs, q0, wf.X, wf.t)
-                _, T = get_T(z, wf.X, wf.t, interp_order=5)
-                qs_adj_s = T.reverse(qs_adj)
-                _, _ = plot_normalized_singular_values(qs_adj_s, sv=300, semilogy=True, savepath="./",
-                                                       name=type_of_problem, id=str(opt_step))
 
             # ───── Gradient check with Finite differences ─────
             if kwargs['perform_grad_check']:
@@ -484,7 +508,7 @@ if __name__ == "__main__":
     # Compute best control based cost
     qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nx, wf.Nt, wf.dt)
     qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
-                            scheme="RK4")
+                            scheme="Explicit_Euler")
     f_opt = psi @ best_control
     J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -493,7 +517,7 @@ if __name__ == "__main__":
     # Compute last valid control based cost
     qs_opt_full__ = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
     qs_adj_opt__ = TI_adjoint(q0_adj, qs_opt_full__, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
-                              scheme="RK4")
+                              scheme="Explicit_Euler")
     f_opt__ = psi @ f_last_valid
     J_s_f__, J_ns_f__ = Calc_Cost(qs_opt_full__, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                   kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -503,9 +527,10 @@ if __name__ == "__main__":
     print(f"\nLast valid FOM cost: {J_final__:.3e}")
     print(f"\nTotal elapsed time: {time.time() - start_total:.3f}s")
 
-    # # Save convergence lists and final states:
-    # np.save(os.path.join(data_dir, "qs_opt_final.npy"), qs_opt_full)
-    # np.save(os.path.join(data_dir, "qs_adj_opt_final.npy"), qs_adj_opt)
+    # # # Save convergence lists and final states:
+    # np.save(os.path.join(data_dir, "qs_org.npy"), qs_org)
+    # np.save(os.path.join(data_dir, "qs_target.npy"), qs_target)
+    # np.save(os.path.join(data_dir, "svd.npy"), svd, allow_pickle=True)
 
     # Plot results
     pf = PlotFlow(wf.X, wf.t)
@@ -515,3 +540,101 @@ if __name__ == "__main__":
     pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=plot_dir)
     pf.plot1D(f_opt, name="f_opt", immpath=plot_dir)
     pf.plot1D_FOM_converg(J_opt_list, name="J", immpath=plot_dir)
+
+
+
+
+
+
+
+
+
+
+
+    # # Addition !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    # eigV, eigvecs = np.linalg.eig(A_p.todense())
+    # order = np.argsort(np.abs(eigV))
+    # eigV = eigV[order]
+    # print(eigV)
+    # eigvecs = eigvecs[:, order]
+    # # snap_cat_p_s = np.concatenate([q0[:, None], np.concatenate(
+    # #     [eigvecs.real[:, :1]] + [a for j in range(1, n_c, 2) for a in
+    # #                              (eigvecs.real[:, j:j + 1], eigvecs.imag[:, j:j + 1])], axis=1)], axis=1)
+    # snap_cat_p_s = np.concatenate([q0[:, None], np.concatenate(
+    #     [eigvecs.real[:, :1]] + [psi], axis=1)], axis=1)
+
+    # m, n = eigvecs.shape
+    # x = np.arange(m)
+    # plt.figure(figsize=(10, 6))
+    # # Plot the first column (user requested "plot the first column")
+    # # This plots the real part of column 0. If you want the complex trajectory,
+    # # plot real and imag separately or use absolute/angle.
+    # plt.plot(eigvecs.real[:, 0], linestyle='-', label='col 0 (real)')
+    # # For columns 1..n-1: plot real and imag parts on the same axes
+    # for j in range(1, 4):
+    #     plt.plot(eigvecs.real[:, j], linestyle='-', label=f'col {j} (real)')
+    #     plt.plot(eigvecs.imag[:, j], linestyle='--', label=f'col {j} (imag)')
+    # plt.title('First column, then real and imaginary parts of remaining columns (all on same axes)')
+    # plt.xlabel('entry index')
+    # plt.ylabel('value (real / imag)')
+    # plt.grid(True)
+    # plt.legend(loc='best', fontsize='small', ncol=2)
+    # plt.tight_layout()
+    # plt.show()
+    # exit()
+    #
+
+
+    # kwargs['Nm_p'] = snap_cat_p_s.shape[1]
+    # kwargs['threshold'] = None
+    # V, qs_sPOD = compute_red_basis(snap_cat_p_s, equation="primal", **kwargs)
+    # Nm = V.shape[1]
+    # err = np.linalg.norm(snap_cat_p_s - qs_sPOD) / np.linalg.norm(snap_cat_p_s)
+    # print(f"Primal basis: Nm_p={Nm}, err={err:.3e}")
+    # # Addition !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    # Q_stat = np.zeros_like(qs_org)
+    # Q_stat_2 = np.zeros_like(qs_org)
+    # for i in range(wf.Nt):
+    #     Q_stat[:, i] = np.roll(qs_org[:, i], -i)
+    #     Q_stat_2[:, i] = q0
+    # print(np.linalg.norm(Q_stat - Q_stat_2) / np.linalg.norm(Q_stat))
+    # exit()
+
+# # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# Q_stat = np.zeros_like(qs)
+# for i in range(wf.Nt):
+#     Q_stat[:, i] = np.roll(qs[:, i], -i)
+#
+# print(np.linalg.norm(Q_stat - (V @ V.T) @ Q_stat) / np.linalg.norm(Q_stat))
+#
+# U1, S1, VT1 = randomized_svd(qs, n_components=50, random_state=42)
+# U2, S2, VT2 = randomized_svd(Q_stat, n_components=50, random_state=42)
+#
+# # --- Boilerplate setup ---
+# fig, axes = plt.subplots(2, 2, figsize=(10, 8), constrained_layout=True)
+# axes = axes.ravel()  # axes[0], axes[1], axes[2], axes[3]
+#
+# # --- First two: pcolormesh ---
+# pcm1 = axes[0].pcolormesh(qs.T, shading="auto")
+# fig.colorbar(pcm1, ax=axes[0])
+#
+# pcm2 = axes[1].pcolormesh(Q_stat.T, shading="auto")
+# fig.colorbar(pcm2, ax=axes[1])
+#
+# # --- Next two: line plots ---
+# axes[2].plot(S1 / S1[0], marker="+", linestyle="-")
+# axes[2].plot(S2 / S2[0], marker="o", linestyle="--")
+# axes[2].semilogy()
+#
+# plt.show()
+#
+# fig, axes = plt.subplots(n_c, 1, figsize=(10, 10), sharex=True, constrained_layout=True)
+# for i in range(n_c):
+#     axes[i].plot(f[i, :], marker="o", linestyle="-")
+#     axes[i].set_ylabel(f"q[{i}]")
+#     axes[i].grid(True)
+# axes[-1].set_xlabel("Index")  # or "Time", "x", etc.
+# plt.show()
+#
+# # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

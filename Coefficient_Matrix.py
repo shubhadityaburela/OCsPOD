@@ -120,6 +120,14 @@ class CoefficientMatrix:
         elif orderDerivative == '7thOrder':
             self.__GradCoef = np.array([3, -28, 126, -420, 105, 252, -42, 4, 0]) / (140 * 3)
             self.__DivCoef = np.array([0, -4, 42, -252, -105, 420, -126, 28, -3]) / (140 * 3)
+        elif orderDerivative == '8thOrder':  # This is a central finite difference stencil
+            self.__GradCoef = np.array([3, -32, 168, -672, 0, 672, -168, 32, -3]) / 840
+            self.__DivCoef = np.array([0, 0, 0, 0, 0, 0, 0]) / 60
+            self.__LaplaceCoeff = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0]) / 180
+        elif orderDerivative == 'Upwind':
+            self.__GradCoef = np.array([0, -1, 1, 0, 0])
+            self.__DivCoef = np.array([0, 0, 0, 0, 0])
+            self.__LaplaceCoeff = np.array([0, 0, 0, 0, 0])
         else:
             raise NotImplemented("Please select the derivative order from the list already implemented")
 
@@ -130,15 +138,15 @@ class CoefficientMatrix:
         diagonalLow = int(-(len(Coeffs) - 1) / 2)
         diagonalUp = int(-diagonalLow)
 
-        D_1 = sparse.csr_matrix(np.zeros((N, N)))
+        D_1 = sparse.csc_matrix(np.zeros((N, N)))
 
         for k in range(diagonalLow, diagonalUp + 1):
-            D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(np.diag(np.ones(N - abs(k)), k))
+            D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csc_matrix(np.diag(np.ones(N - abs(k)), k))
             if k < 0:
-                D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(
+                D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csc_matrix(
                     np.diag(np.ones(abs(k)), N + k))
             if k > 0:
-                D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csr_matrix(
+                D_1 = D_1 + Coeffs[k - diagonalLow] * sparse.csc_matrix(
                     np.diag(np.ones(abs(k)), -N + k))
 
         return D_1 / h

@@ -15,6 +15,7 @@ import numpy as np
 import scipy
 import scipy.sparse as sp
 from matplotlib import pyplot as plt
+from sklearn.utils.extmath import randomized_svd
 
 # Add local sPOD library to path
 sys.path.append('../sPOD/lib/')
@@ -41,7 +42,7 @@ from Update import (
     Update_Control_sPODG_FRTO_TWBT,
     get_BB_step, Update_Control_BB,
 )
-from grid_params import advection
+from grid_params import advection, advection_3
 from Plots import PlotFlow
 from Costs import Calc_Cost_sPODG, Calc_Cost
 
@@ -77,10 +78,8 @@ np.random.seed(0)
 # ───────────────────────────────────────────────────────────────────────
 def parse_arguments():
     p = argparse.ArgumentParser(description="Input the variables for running the script.")
-    p.add_argument("type_of_problem", type=str, choices=["Shifting", "Constant_shift"],
+    p.add_argument("type_of_problem", type=str, choices=["Shifting", "Shifting_3"],
                    help="Choose the problem type")
-    p.add_argument("primal_adjoint_common_basis", type=literal_eval, choices=[True, False],
-                   help="Include adjoint in basis computation? (True/False)")
     p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
                    help="Enter the grid resolution and the cfl factor")
     p.add_argument("N_iter", type=int, help="Number of optimization iterations")
@@ -88,47 +87,21 @@ def parse_arguments():
                    help="Directory prefix for I/O")
     p.add_argument("reg", type=float, nargs=2, metavar=("L1", "L2"),
                    help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
-    p.add_argument("CTC_mask_activate", type=literal_eval, choices=[True, False],
-                   help="Include CTC mask in the system? (True/False)")
-    p.add_argument("--modes", type=int, nargs=1,
-                   help="Enter the modes e.g., --modes 3")
-    p.add_argument("--tol", type=float, help="Tolerance level for fixed‐tol run")
+    p.add_argument("num_controls", type=int, help="Number of controls (2 * n_c + 1). So input n_c here.")
     return p.parse_args()
-
-
-def decide_run_type(args):
-    if args.modes and args.tol is not None:
-        print("Modes test takes precedence…")
-        print(f"Modes provided: {args.modes}")
-        TYPE, VAL = "modes", args.modes
-        modes, tol, threshold = args.modes, None, False
-    elif args.modes:
-        print("Modes test…")
-        print(f"Modes provided: {args.modes}")
-        TYPE, VAL = "modes", args.modes
-        modes, tol, threshold = args.modes, None, False
-    elif args.tol is not None:
-        print("Tolerance test…")
-        print(f"Tolerance provided: {args.tol}")
-        TYPE, VAL = "tol", args.tol
-        modes, tol, threshold = (None, None), args.tol, True
-    else:
-        print("ERROR: Must specify either --modes or --tol.")
-        sys.exit(1)
-    return TYPE, VAL, modes, tol, threshold
 
 
 def setup_advection(Nx, Nt, cfl_fac, type):
     if type == "Shifting":
         wf = advection(Lx=100, Nx=Nx, timesteps=Nt,
                        cfl=(8 / 6) / cfl_fac, tilt_from=3 * Nt // 4,
-                       v_x=0.5, v_x_t=1.0,
+                       v_x=0.55, v_x_t=0.9,
                        variance=7, offset=12)
-    elif type == "Constant_shift":
-        wf = advection(Lx=80, Nx=Nx, timesteps=Nt,
-                       cfl=0.0425 / cfl_fac, tilt_from=0,
-                       v_x=8 / 3, v_x_t=8 / 3,
-                       variance=7, offset=20)
+    elif type == "Shifting_3":
+        wf = advection_3(Lx=100, Nx=Nx, timesteps=Nt,
+                         cfl=(8 / 6) / cfl_fac, tilt_from=1 * Nt // 4,
+                         v_x=0.55, v_x_t=0.95,
+                         variance=7, offset=12)
     else:
         print("Please choose the correct problem type!!")
         exit()
@@ -137,13 +110,10 @@ def setup_advection(Nx, Nt, cfl_fac, type):
     return wf
 
 
-def build_dirs(prefix, common_basis, reg_tuple, CTC_mask, TYPE, VAL):
-    cb_str = "primal+adjoint_common_basis" if common_basis else "primal_basis"
+def build_dirs(prefix, type_of_problem, reg_tuple, num_controls):
     reg_str = f"L1={reg_tuple[0]}_L2={reg_tuple[1]}"
-    data_dir = os.path.join(prefix, "data/sPODG_FRTO", cb_str, reg_str, f"CTC_mask={CTC_mask}",
-                            f"{TYPE}={VAL}")
-    plot_dir = os.path.join(prefix, "plots/sPODG_FRTO", cb_str, reg_str, f"CTC_mask={CTC_mask}",
-                            f"{TYPE}={VAL}")
+    data_dir = os.path.join(prefix, "data", type_of_problem, "sPODG_FRTO", reg_str, f"n_c={num_controls}")
+    plot_dir = os.path.join(prefix, "plots", type_of_problem, "sPODG_FRTO", reg_str, f"n_c={num_controls}")
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
     return data_dir, plot_dir
@@ -205,13 +175,9 @@ if __name__ == "__main__":
 
     print(f"Type of problem = {args.type_of_problem}")
     print("Type of basis computation: fixed")
-    print(f"Using adjoint in basis: {args.primal_adjoint_common_basis}")
-    print(f"Using CTC mask pseudo hyperreduction: {args.CTC_mask_activate}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
     print(f"Grid = {tuple(args.grid)}")
-
-    # Determine run type
-    TYPE, VAL, modes, tol, threshold = decide_run_type(args)
+    print(f"Number of controls = {2 * args.num_controls + 1}")
 
     # Unpack regularization parameters
     L1_reg, L2_reg = args.reg
@@ -219,31 +185,41 @@ if __name__ == "__main__":
     type_of_problem = args.type_of_problem
 
     # Set up WF and control matrix
+    old_shapes = False
     wf = setup_advection(Nx, Nt, cfl_fac, type_of_problem)
-    if type_of_problem == "Shifting":
+    if type_of_problem == "Shifting" or type_of_problem == "Shifting_3":
         if L1_reg != 0 and L2_reg == 0:  # Purely L1
             n_c_init = wf.Nx
-            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Indicator", gaussian_mask_sigma=0.5)
             adjust = 1.0
         else:  # Mix type
-            n_c_init = 40
-            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)
-            adjust = wf.dx
+            if old_shapes:
+                n_c_init = 40
+                psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Gaussian", gaussian_mask_sigma=0.5)
+                adjust = wf.dx
+            else:
+                n_c_init = args.num_controls
+                psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Sin+Cos", gaussian_mask_sigma=0.5)
+                adjust = wf.dx
     elif type_of_problem == "Constant_shift":
         if L1_reg != 0 and L2_reg == 0:  # Purely L1
             n_c_init = wf.Nx
-            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
+            psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Indicator", gaussian_mask_sigma=0.5)
             adjust = 1.0
         else:  # Mix type
-            n_c_init = 100
-            psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=False, gaussian_mask_sigma=0.5)
-            adjust = wf.dx
+            if old_shapes:
+                n_c_init = 100
+                psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Indicator", gaussian_mask_sigma=0.5)
+                adjust = wf.dx
+            else:
+                n_c_init = 50
+                psi = ControlSelectionMatrix(wf, n_c_init, type_of_shape="Sin+Cos", gaussian_mask_sigma=0.5)
+                adjust = wf.dx
 
     n_c = psi.shape[1]
 
     f = np.zeros((n_c, wf.Nt))  # initial control guess
     df = np.random.randn(*f.shape)
-    psi = scipy.sparse.csc_matrix(psi)
 
     # Build coefficient matrices
     Mat = CoefficientMatrix(orderDerivative=wf.firstderivativeOrder,
@@ -256,19 +232,22 @@ if __name__ == "__main__":
     # Solve uncontrolled FOM once
     qs0 = IC_primal(wf.X, wf.Lx, wf.offset, wf.variance, type_of_problem=type_of_problem)
     qs_org = TI_primal(qs0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
-    qs_target = TI_primal_target(qs0, Mat.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt,
+    Mat_target = CoefficientMatrix(orderDerivative="6thOrder",
+                                   Nxi=wf.Nx, Neta=1,
+                                   periodicity='Periodic',
+                                   dx=wf.dx, dy=0)
+    qs_target = TI_primal_target(qs0, Mat_target.Grad_Xi_kron, wf.v_x_target, wf.Nx, wf.Nt,
                                  wf.dt, nu=0.1 if type_of_problem == "Constant_shift" else 0.0)
     q0 = np.ascontiguousarray(qs0)
     q0_adj = np.ascontiguousarray(IC_adjoint(wf.X))
 
     # Calculate the CTC matrix/array  (CTC and C are exactly the same)
-    C = C_matrix(wf.Nx, wf.CTC_end_index, apply_CTC_mask=args.CTC_mask_activate)
+    C = C_matrix(wf.Nx, wf.CTC_end_index, apply_CTC_mask=False)
 
     # Prepare directories
     data_dir, plot_dir = build_dirs(args.dir_prefix,
-                                    args.primal_adjoint_common_basis,
-                                    args.reg, args.CTC_mask_activate,
-                                    TYPE, VAL)
+                                    args.type_of_problem,
+                                    args.reg, n_c)
 
     # Prepare kwargs
     kwargs = {
@@ -279,54 +258,52 @@ if __name__ == "__main__":
         'n_c': n_c,
         'lamda_l1': L1_reg,
         'lamda_l2': L2_reg,
-        'delta_conv': 1e-4,  # Convergence criteria
+        'delta_conv': 1e-5,  # Convergence criteria
         'delta': 1 / 2,  # Armijo constant
         'opt_iter': args.N_iter,  # Total iterations
         'shift_sample': (
             wf.Nx if type_of_problem == "Constant_shift"
-            else 800 if type_of_problem == "Shifting"
+            else 800 if type_of_problem == "Shifting" or type_of_problem == "Shifting_3"
             else wf.Nx
         ),
         'beta': 1 / 2,  # Beta factor for two-way backtracking line search
         'verbose': True,  # Print options
-        'base_tol': tol,  # Base tolerance for selecting number of modes (main variable for truncation)
+        'base_tol': None,  # Base tolerance for selecting number of modes (main variable for truncation)
         'omega_cutoff': 1e-10,  # Below this cutoff the Armijo and Backtracking should exit the update loop
-        'threshold': threshold,
+        'threshold': None,
         # Variable for selecting threshold based truncation or mode based. "TRUE" for threshold based
         # "FALSE" for mode based.
-        'Nm_p': modes[0],  # Number of modes for truncation if threshold selected to False.
+        'Nm_p': n_c + 1,  # Number of modes for truncation if threshold selected to False.
         'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
         'adjoint_scheme': "DIRK",  # Time integration scheme for adjoint equation
-        'common_basis': args.primal_adjoint_common_basis,  # True if primal + adjoint in basis else False
         'perform_grad_check': False,
         'offline_online_err_check': False
     }
 
-    D = central_FDMatrix(order=6, Nx=wf.Nx, dx=wf.dx)
-    D2 = central_FD2Matrix(order=6, Nx=wf.Nx, dx=wf.dx)
+    D = central_FDMatrix(order="Upwind", Nx=wf.Nx, dx=wf.dx)
+    D2 = central_FD2Matrix(order="Upwind", Nx=wf.Nx, dx=wf.dx)
     delta_s = subsample(wf.X, num_sample=kwargs['shift_sample'])
     # Extract transformation operators based on sub-sampled delta
     T_delta, _ = get_T(delta_s, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
 
-
     # Basis computation (fixed upfront)
     # Compute FOM trajectories
     qs_full = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
-    qs_adj_full = TI_adjoint(q0_adj, qs_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt, scheme="RK4")
+    qs_adj_full = TI_adjoint(q0_adj, qs_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
+                             scheme="Explicit_Euler")
 
     # Compute shifts and (re)interpolate
     z = calc_shift(qs_full, q0, wf.X, wf.t)
-
     _, T = get_T(z, wf.X, wf.t, interp_order=kwargs['trafo_interp_order'])
-    # Primal: reverse‐transform (and normalize if shared‐basis)
-    if kwargs['common_basis']:
-        qs_norm = qs_full / np.linalg.norm(qs_full)
-        qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
-        qs_norm_s = T.reverse(qs_norm)
-        qs_adj_norm_s = T.reverse(qs_adj_norm)
-        snap_cat_p_s = np.concatenate([qs_norm_s, qs_adj_norm_s], axis=1)
-    else:
-        snap_cat_p_s = T.reverse(qs_full).copy()
+
+    # Compute stationary basis
+    eigV, eigvecs = np.linalg.eig(A_p.todense())
+    order = np.argsort(np.abs(eigV))
+    eigV = eigV[order]
+    eigvecs = eigvecs[:, order]
+    snap_cat_p_s = np.concatenate([q0[:, None], np.concatenate(
+        [eigvecs.real[:, :1]] + [a for j in range(1, n_c, 2) for a in
+                                 (eigvecs.real[:, j:j + 1], eigvecs.imag[:, j:j + 1])], axis=1)], axis=1)
 
     # Compute reduced bases
     V, qs_sPOD = compute_red_basis(snap_cat_p_s, equation="primal", **kwargs)
@@ -340,7 +317,6 @@ if __name__ == "__main__":
 
     # Construct the primal system matrices for the sPOD-Galerkin approach
     Vd_p, Wd_p, Ud_p = make_V_W_U_delta(V, T_delta, D, D2, kwargs['shift_sample'], kwargs['Nx'], Nm)
-
     # Construct the primal and adjoint system matrices for the sPOD-Galerkin approach
     lhs_p, rhs_p, c_p, tar_a = mat_primal_sPODG_FRTO(Vd_p, Wd_p, Ud_p, C, A_p, psi, samples=kwargs['shift_sample'],
                                                      modes=Nm)
@@ -355,14 +331,13 @@ if __name__ == "__main__":
     best_details = {'J': np.inf, 'N_iter': None, 'Nm': Nm}
     f_last_valid = None
 
-    start_total = time.time()
-    t0 = perf_counter()
-
     omega_twbt = 1.0
     omega_bb = 1.0
     omega = 1.0
     stag = False
     stag_cntr = 0
+
+    start_total = time.time()
 
     # ─────────────────────────────────────────────────────────────────────
     # Main “optimize‐step” loop wrapped in try/except/finally
@@ -372,14 +347,18 @@ if __name__ == "__main__":
             print(f"\n==============================")
             print(f"Optimization step: {opt_step}")
 
+            t_start = perf_counter()
             # ───── Forward ROM: compute ROM state a_p → as_p ─────
-            as_p, as_dot, intIds, weights = TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f, delta_s, modes=Nm,
+            as_p, as_dot, intIds, weights = TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f, delta_s,
+                                                                 modes=Nm,
                                                                  Nt=kwargs['Nt'],
                                                                  dt=kwargs['dt'])
-
+            t_1 = perf_counter()
             # ───── Compute costs ─────
             J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f, C, intIds, weights,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
+            t_2 = perf_counter()
+
             J_ROM = J_s + J_ns
 
             qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
@@ -395,15 +374,20 @@ if __name__ == "__main__":
                 best_details.update({'J': J_FOM, 'N_iter': opt_step, 'Nm': Nm})
                 best_control = f.copy()
 
+            t_3 = perf_counter()
             # ───── Backward ROM (adjoint) ─────
             as_adj = TI_adjoint_sPODG_FRTO(a_a, f, as_p, qs_target, as_dot, lhs_p, rhs_p, c_p, tar_a, C, Vd_p, Wd_p,
                                            Nm, delta_s, Nt=kwargs['Nt'], dt=kwargs['dt'], dx=kwargs['dx'],
                                            scheme=kwargs['adjoint_scheme'])
+            t_4 = perf_counter()
+
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
             dL_du_s = Calc_Grad_sPODG_FRTO_smooth(f, c_p, as_adj, as_p, intIds, weights, kwargs['lamda_l2'])
             dL_du_g = Calc_Grad_mapping(f, dL_du_s, omega, kwargs['lamda_l1'])
             dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
+            t_5 = perf_counter()
+
 
             dL_du_norm_list.append(dL_du_norm)
 
@@ -435,7 +419,7 @@ if __name__ == "__main__":
                 err_online = np.linalg.norm(qs_opt_full - qs_sPOD_online) / np.linalg.norm(qs_opt_full)
                 print(f"Primal online error: err={err_online:.3e}")
 
-
+            t_6 = perf_counter()
             # ───── Step‐size: BB vs. TWBT, including Armijo‐stagnation logic ─────
             ratio = dL_du_norm / dL_du_norm_list[0]
             if ratio < 5e-3:
@@ -460,8 +444,13 @@ if __name__ == "__main__":
                                                                         **kwargs)
                 omega = omega_twbt
 
-            t1 = perf_counter()
-            running_time.append(t1 - t0)
+            t_end = perf_counter()
+            running_time.append([t_start - t_end,
+                                 t_1 - t_start,
+                                 t_2 - t_1,
+                                 t_4 - t_3,
+                                 t_5 - t_4,
+                                 t_end - t_6])
 
             # Saving previous controls for Barzilai Borwein step
             fOld = f.copy()
@@ -615,7 +604,7 @@ if __name__ == "__main__":
     # Compute best control based cost
     qs_opt_full = TI_primal(q0, best_control, A_p, psi, wf.Nx, wf.Nt, wf.dt)
     qs_adj_opt = TI_adjoint(q0_adj, qs_opt_full, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
-                            scheme="RK4")
+                            scheme="Explicit_Euler")
     f_opt = psi @ best_control
     J_s_f, J_ns_f = Calc_Cost(qs_opt_full, qs_target, best_control, C, kwargs['dx'], kwargs['dt'],
                               kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -624,7 +613,7 @@ if __name__ == "__main__":
     # Compute last valid control based cost
     qs_opt_full__ = TI_primal(q0, f_last_valid, A_p, psi, wf.Nx, wf.Nt, wf.dt)
     qs_adj_opt__ = TI_adjoint(q0_adj, qs_opt_full__, qs_target, None, A_a, None, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
-                              scheme="RK4")
+                              scheme="Explicit_Euler")
     f_opt__ = psi @ f_last_valid
     J_s_f__, J_ns_f__ = Calc_Cost(qs_opt_full__, qs_target, f_last_valid, C, kwargs['dx'], kwargs['dt'],
                                   kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -644,3 +633,40 @@ if __name__ == "__main__":
     pf.plot1D(qs_adj_opt, name="qs_adj_opt", immpath=plot_dir)
     pf.plot1D(f_opt, name="f_opt", immpath=plot_dir)
     pf.plot1D_ROM_converg(J_opt_list, J_opt_FOM_list, name="J", immpath=plot_dir)
+
+
+
+
+
+
+
+
+
+
+
+    # # Primal: reverse‐transform (and normalize if shared‐basis)
+    # if kwargs['common_basis']:
+    #     qs_norm = qs_full / np.linalg.norm(qs_full)
+    #     qs_adj_norm = qs_adj_full / np.linalg.norm(qs_adj_full)
+    #     qs_norm_s = T.reverse(qs_norm)
+    #     qs_adj_norm_s = T.reverse(qs_adj_norm)
+    #     snap_cat_p_s = np.concatenate([qs_norm_s, qs_adj_norm_s], axis=1)
+    # else:
+    #     snap_cat_p_s = T.reverse(qs_full).copy()
+
+
+
+    # qs_org_stat = np.zeros_like(qs_org)
+    # for i in range(wf.Nt):
+    #     qs_org_stat[:, i] = np.roll(qs_org[:, i], - i)
+    # plt.pcolormesh(qs_org.T)
+    # plt.show()
+    # plt.pcolormesh(qs_target.T)
+    # plt.show()
+    # plt.pcolormesh(qs_org_stat.T)
+    # plt.show()
+    # U, S, VT = randomized_svd(qs_org_stat, n_components=1, random_state=42)
+    # Nm = U.shape[1]
+    # err = np.linalg.norm(qs_org_stat - np.ascontiguousarray(U @ np.diag(S) @ VT)) / np.linalg.norm(qs_org_stat)
+    # print(f"Primal basis: Nm_p={Nm}, err={err:.3e}")
+    # exit()

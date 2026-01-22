@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import os
 import matplotlib.animation as animation
 from matplotlib import cm
+from matplotlib.collections import LineCollection
+from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.ticker import MaxNLocator
 import glob
@@ -14,8 +16,8 @@ plt.rcParams.update({
     "font.family": "serif",
     "font.serif": ["Computer Modern"]})
 
-import matplotlib as mpl
-mpl.rcParams.update(mpl.rcParamsDefault)
+# import matplotlib as mpl
+# mpl.rcParams.update(mpl.rcParamsDefault)
 
 SMALL_SIZE = 16
 MEDIUM_SIZE = 18
@@ -172,8 +174,47 @@ def plot_normalized_singular_values(X, sv, semilogy=False, savepath=None, name=N
     ax.grid(True, linestyle='--', alpha=0.6)
 
     fig.tight_layout()
+    plt.show()
 
     if savepath:
         fig.savefig(savepath + name + '_' + str(id), dpi=300, bbox_inches='tight')
 
     return s, s_norm
+
+
+
+def plot_control_shape_functions(X, psi):
+    n_c = psi.shape[1]
+    segments = [np.column_stack((X, psi[:, i])) for i in range(n_c)]
+    colors = plt.cm.plasma(np.linspace(0, 1, n_c))
+
+    lc = LineCollection(segments, colors=colors, linewidths=0.8, alpha=0.7)
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    ax.add_collection(lc)
+    ax.set_xlim(X.min(), X.max())
+    ax.set_ylim(psi.min() - 0.05, psi.max() + 0.05)
+    ax.set_xlabel(r"space $x$")
+    ax.set_ylabel(r"$b_k(x)$")
+    ax.set_title('Control shape functions')
+
+    # --- create legend entries ---
+    # custom labels (adjust to whatever you want)
+    labels = [r"$b_1(x) = 1$",
+              r"$b_2(x) = \mathrm{sin}\left(\frac{2\pi x}{l}\right)$",
+              r"$b_3(x) = -\mathrm{cos}\left(\frac{2\pi x}{l}\right)$",
+              r"$b_4(x) = \mathrm{sin}\left(\frac{4\pi x}{l}\right)$",
+              r"$b_5(x) = - \mathrm{cos}\left(\frac{4\pi x}{l}\right)$"
+              ]
+
+    # proxy artists with matching color/linewidth/alpha
+    handles = [
+        Line2D([0], [0], color=colors[i], lw=0.8, alpha=0.7)
+        for i in range(n_c)
+    ]
+
+    # add legend (tune loc, ncol, fontsize as needed)
+    ax.legend(handles, labels, loc='upper right', ncol=1, fontsize=12, frameon=False)
+
+    plt.tight_layout()
+    fig.savefig("Control_shapes.pdf", format="pdf")

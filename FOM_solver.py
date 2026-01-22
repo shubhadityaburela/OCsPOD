@@ -8,7 +8,8 @@ from tqdm import tqdm
 
 from TI_schemes import rk4_FOM_adj, rk4_FOM, rk4_FOM_targ, implicit_midpoint_FOM_adj, DIRK_FOM_adj, \
     poly_interp_FOM_adj, bdf4_FOM_adj, bdf2_FOM_adj, bdf3_FOM_adj, rk4_FOM_kdvb, rk4_FOM_adj_kdvb, \
-    implicit_midpoint_FOM_primal_kdvb, implicit_midpoint_FOM_adjoint_kdvb
+    implicit_midpoint_FOM_primal_kdvb, implicit_midpoint_FOM_adjoint_kdvb, implicit_euler_FOM, explicit_euler_FOM, \
+    explicit_euler_FOM_targ, explicit_euler_FOM_adj
 
 
 def IC_primal(X, Lx, offset, variance, type_of_problem):
@@ -17,7 +18,7 @@ def IC_primal(X, Lx, offset, variance, type_of_problem):
         mu = (Lx - 0) / offset
         x_t = np.mod(X - 0, Lx - 0) + 0 - mu
         q = A / np.cosh(np.sqrt(3 * A) / 6 * x_t) ** 2
-    elif type_of_problem == "Shifting":
+    elif type_of_problem == "Shifting" or type_of_problem == "Shifting_3":
         q = np.exp(-((X - Lx / offset) ** 2) / variance)
     else:
         print("Choose a proper initial condition...")
@@ -35,7 +36,7 @@ def TI_primal(q, f, A, psi, Nx, Nt, dt):
     qs = np.zeros((Nx, Nt))
     qs[:, 0] = q
     for n in range(1, Nt):
-        qs[:, n] = rk4_FOM(RHS_primal, qs[:, n - 1], f[:, n - 1], f[:, n], dt, A, psi)
+        qs[:, n] = explicit_euler_FOM(RHS_primal, qs[:, n - 1], f[:, n - 1], f[:, n], dt, A, psi)
     return qs
 
 
@@ -85,7 +86,11 @@ def TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, CTC, Nxi, dx, Nt, dt, sc
     qs_adj = np.zeros((Nxi, Nt))
     qs_adj[:, -1] = q0_adj
 
-    if scheme == "RK4":
+    if scheme == "Explicit_Euler":
+        for n in range(1, Nt):
+            qs_adj[:, -(n + 1)] = explicit_euler_FOM_adj(RHS_adjoint_expl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
+                                                         qs_target[:, -n], qs_target[:, -(n + 1)], - dt, A_f, CTC, dx)
+    elif scheme == "RK4":
         for n in range(1, Nt):
             qs_adj[:, -(n + 1)] = rk4_FOM_adj(RHS_adjoint_expl, qs_adj[:, -n], qs[:, -n], qs[:, -(n + 1)],
                                               qs_target[:, -n], qs_target[:, -(n + 1)], - dt, A_f, CTC, dx)
@@ -132,7 +137,7 @@ def TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, CTC, Nxi, dx, Nt, dt, sc
 
 def RHS_primal_target(q, Grad, v_x, nu):
     DT = v_x * Grad
-    qdot = - DT.dot(q) + nu * (Grad @ Grad).dot(q)
+    qdot = - DT.dot(q)  # + nu * (Grad @ Grad).dot(q)
     return qdot
 
 
@@ -379,25 +384,23 @@ def TI_adjoint_kdv_impl(q0_adj, qs, qs_target, J_l, Nx, Nt, dx, dt, **kwargs):
 #     print("||finite_diff - JF_action|| / ||finite_diff|| = ", np.linalg.norm(finite_diff - J_k) / np.linalg.norm(finite_diff))
 
 
-
-
 # eps_list = [1e-8, 1e-6, 1e-4]  # avoid astronomically small eps
-    # for eps in eps_list:
-    #     p_mid = (qs_adj[:, 10] + qs_adj[:, 11]) / 2  # pick a midpoint state from a forward trajectory
-    #     a_mid = (qs[:, 10] + qs[:, 11]) / 2
-    #     b_mid = (qs_target[:, 10] + qs_target[:, 11]) / 2
-    #     w = np.random.randn(*p_mid.shape)
-    #
-    #     R_plus = RHS_adjoint_kdv_impl(p_mid + eps * w, a_mid, b_mid, dx, **kwargs)
-    #     R = RHS_adjoint_kdv_impl(p_mid, a_mid, b_mid, dx, **kwargs)
-    #     finite_diff = (R_plus - R) / eps  # vector
-    #
-    #     # Compute the action of Jacobian on w
-    #     J_l = (- kwargs['A'].T + kwargs['gamma'] * kwargs['D3'].T - kwargs['nu'] * kwargs['D2'].T)
-    #     J_nl = J_nl_primal_kdv(a_mid, kwargs['D1'], kwargs['omega'], dt).T * 2 / dt
-    #     J_k = (J_l + J_nl).dot(w)
-    #
-    #     print(eps)
-    #     print("||finite_diff - JF_action|| = ", np.linalg.norm(finite_diff - J_k))
-    #     print("||finite_diff|| = ", np.linalg.norm(finite_diff))
-    #     print("||finite_diff - JF_action|| / ||finite_diff|| = ", np.linalg.norm(finite_diff - J_k) / np.linalg.norm(finite_diff))
+# for eps in eps_list:
+#     p_mid = (qs_adj[:, 10] + qs_adj[:, 11]) / 2  # pick a midpoint state from a forward trajectory
+#     a_mid = (qs[:, 10] + qs[:, 11]) / 2
+#     b_mid = (qs_target[:, 10] + qs_target[:, 11]) / 2
+#     w = np.random.randn(*p_mid.shape)
+#
+#     R_plus = RHS_adjoint_kdv_impl(p_mid + eps * w, a_mid, b_mid, dx, **kwargs)
+#     R = RHS_adjoint_kdv_impl(p_mid, a_mid, b_mid, dx, **kwargs)
+#     finite_diff = (R_plus - R) / eps  # vector
+#
+#     # Compute the action of Jacobian on w
+#     J_l = (- kwargs['A'].T + kwargs['gamma'] * kwargs['D3'].T - kwargs['nu'] * kwargs['D2'].T)
+#     J_nl = J_nl_primal_kdv(a_mid, kwargs['D1'], kwargs['omega'], dt).T * 2 / dt
+#     J_k = (J_l + J_nl).dot(w)
+#
+#     print(eps)
+#     print("||finite_diff - JF_action|| = ", np.linalg.norm(finite_diff - J_k))
+#     print("||finite_diff|| = ", np.linalg.norm(finite_diff))
+#     print("||finite_diff - JF_action|| / ||finite_diff|| = ", np.linalg.norm(finite_diff - J_k) / np.linalg.norm(finite_diff))

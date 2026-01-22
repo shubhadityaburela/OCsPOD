@@ -83,23 +83,32 @@ def L2inner_prod(qq1, qq2, dt):
 
 
 # Other Helper functions
-def ControlSelectionMatrix(wf, n_c, Gaussian=False, trim_first_n=0, gaussian_mask_sigma=1,
+def ControlSelectionMatrix(wf, n_c, type_of_shape, trim_first_n=0, gaussian_mask_sigma=1,
                            start_controlling_from=0):
     if trim_first_n >= n_c:
         print("Number of controls should always be more than the number which you want to trim out. "
               "Set it accordingly. Exiting !!!!!!!")
         exit()
-    psi = np.zeros((wf.Nx, n_c - trim_first_n), order="F")
-    if Gaussian:
+
+    if type_of_shape == "Gaussian":
+        psi = np.zeros((wf.Nx, n_c - trim_first_n), order="F")
         for i in range(n_c - trim_first_n):
             psi[:, i] = func(wf.X - wf.Lx / n_c - (trim_first_n + i) * wf.Lx / n_c,
                              sigma=gaussian_mask_sigma)  # Could also divide the middle quantity by 2 for similar non-overlapping gaussians
-    else:
+    elif type_of_shape == "Indicator":
+        psi = np.zeros((wf.Nx, n_c - trim_first_n), order="F")
         control_index = np.array_split(np.arange(start_controlling_from, wf.Nx), n_c)
         for i in range(n_c - trim_first_n):
             psi[control_index[trim_first_n + i], i] = 1.0
+    elif type_of_shape == "Sin+Cos":
+        psi = np.zeros((wf.Nx, 2 * n_c + 1), order="F")
+        for i in range(1, n_c + 1):
+            psi[:, 2*i - 1] = np.sin(2 * i * np.pi * wf.X / wf.Lx)
+            psi[:, 2*i] = - np.cos(2 * i * np.pi * wf.X / wf.Lx)
+        psi[:, 0] = 1.0
 
     return np.ascontiguousarray(psi)
+
 
 
 def ControlSelectionMatrix_kdvb(wf, n_c, Gaussian=False, trim_first_n=0, gaussian_mask_sigma=1,

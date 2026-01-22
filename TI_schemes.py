@@ -24,6 +24,48 @@ def rk4_FOM(RHS: callable,
     return q1
 
 
+def explicit_euler_FOM(RHS: callable,
+                       q0: np.ndarray,
+                       u1: np.ndarray,
+                       u2: np.ndarray,
+                       dt: float,
+                       A: np.ndarray,
+                       psi: np.ndarray) -> np.ndarray:
+    """
+    Explicit (forward) Euler one-step integrator.
+
+    By convention this implementation uses the control sampled at the left endpoint (u1).
+    Signature mirrors rk4_FOM so it can be swapped into existing time loops.
+    """
+    k1 = RHS(q0, u1, A, psi)
+    q1 = q0 + dt * k1
+    return q1
+
+
+def implicit_euler_FOM(RHS: callable,
+                       q0: np.ndarray,
+                       u1: np.ndarray,
+                       u2: np.ndarray,
+                       dt,
+                       A,
+                       psi) -> np.ndarray:
+    from scipy.sparse import identity
+    from scipy.sparse.linalg import spsolve
+    """
+    Implicit (backward) Euler step for linear RHS = A @ q + psi @ u.
+    Solves: (I - dt*A) q1 = q0 + dt * psi @ u2
+    """
+    # sparse identity
+    I = identity(A.shape[0], format="csr")
+
+    # right-hand side
+    rhs = q0 + dt * (psi @ u2)
+
+    # sparse linear solve
+    q1 = spsolve(I - dt * A, rhs)
+    return q1
+
+
 def rk4_FOM_targ(RHS: callable,
                  q0: np.ndarray,
                  dt,
@@ -37,6 +79,21 @@ def rk4_FOM_targ(RHS: callable,
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
+    return q1
+
+
+def explicit_euler_FOM_targ(RHS: callable,
+                            q0: np.ndarray,
+                            dt: float,
+                            Grad,
+                            v_x_t,
+                            diffusion) -> np.ndarray:
+    """
+    Explicit (forward) Euler one-step integrator with the same calling convention
+    as rk4_FOM_targ. Uses the provided v_x_t (assumed evaluated at the current time).
+    """
+    k1 = RHS(q0, Grad, v_x_t, diffusion)
+    q1 = q0 + dt * k1
     return q1
 
 
@@ -60,6 +117,25 @@ def rk4_FOM_adj(RHS: callable,
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
+    return q1
+
+
+def explicit_euler_FOM_adj(RHS: callable,
+                           q0: np.ndarray,
+                           a1: np.ndarray,
+                           a2: np.ndarray,
+                           b1: np.ndarray,
+                           b2: np.ndarray,
+                           dt: float,
+                           A,
+                           CTC,
+                           dx) -> np.ndarray:
+    """
+    Explicit (forward) Euler one-step integrator mirroring rk4_FOM_adj signature.
+    By convention this uses the left-time samples a1, b1 (consistent with a forward Euler step).
+    """
+    k1 = RHS(q0, a1, b1, A, CTC, dx)
+    q1 = q0 + dt * k1
     return q1
 
 
@@ -289,6 +365,39 @@ def rk4_PODG_prim(RHS: callable,
 
 
 @njit
+def explicit_euler_PODG_prim(RHS: callable,
+                             q0: np.ndarray,
+                             u1: np.ndarray,
+                             u2: np.ndarray,
+                             dt,
+                             Ar_p,
+                             psir_p) -> np.ndarray:
+    k1 = RHS(q0, u1, Ar_p, psir_p)
+    q1 = q0 + dt * k1
+    return q1
+
+
+def DIRK_PODG_prim(RHS: callable,
+                   q0: np.ndarray,
+                   a1: np.ndarray,
+                   a2: np.ndarray,
+                   dt,
+                   M,
+                   A,
+                   LU_M,
+                   psi_r):
+    a_onefourth = 0.25 * a1 + 0.75 * a2
+    a_threefourth = 0.75 * a1 + 0.25 * a2
+
+    k1 = RHS(q0, a_onefourth, M, A, LU_M, psi_r)
+    k2 = RHS(q0 + dt / 2 * k1, a_threefourth, M, A, LU_M, psi_r)
+
+    q1 = q0 + dt / 2 * (k1 + k2)
+
+    return q1
+
+
+@njit
 def rk4_PODG_adj(RHS: callable,
                  q0: np.ndarray,
                  a1: np.ndarray,
@@ -306,6 +415,22 @@ def rk4_PODG_adj(RHS: callable,
     k4 = RHS(q0 + dt * k3, a2, b2, Ar_a, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+    return q1
+
+
+@njit
+def explicit_euler_PODG_adj(RHS: callable,
+                            q0: np.ndarray,
+                            a1: np.ndarray,
+                            a2: np.ndarray,
+                            b1: np.ndarray,
+                            b2: np.ndarray,
+                            dt,
+                            Ar_a,
+                            dx) -> np.ndarray:
+    k1 = RHS(q0, a1, b1, Ar_a, dx)
+    q1 = q0 + dt * k1
 
     return q1
 
@@ -524,6 +649,39 @@ def rk4_sPODG_prim(RHS: callable,
 
 
 @njit
+def explicit_euler_sPODG_prim(RHS: callable,
+                              q0: np.ndarray,
+                              u1: np.ndarray,
+                              u2: np.ndarray,
+                              dt,
+                              lhs,
+                              rhs,
+                              c,
+                              delta_s,
+                              modes):
+    """
+    Explicit (forward) Euler variant of rk4_sPODG_prim with identical signature.
+    Uses the left-time control sample `u1` (consistent with forward Euler).
+    Returns: q1, q_dot, i, w (same layout as the RK4 version).
+    """
+    # single RHS evaluation (left-point / explicit Euler)
+    k1, i, w = RHS(q0, u1, lhs, rhs, c, delta_s, modes)
+
+    # forward Euler update
+    q1 = q0 + dt * k1
+
+    # populate q_dot in the same shape as the RK4 routine; fill with k1
+    q_dot = np.zeros((5, (modes + 1)))
+    q_dot[0, :] = k1
+    q_dot[1, :] = k1
+    q_dot[2, :] = k1
+    q_dot[3, :] = k1
+    q_dot[4, :] = k1
+
+    return q1, q_dot, i, w
+
+
+@njit
 def rk4_sPODG_prim_kdvb(RHS: callable,
                         q0: np.ndarray,
                         u1: np.ndarray,
@@ -581,6 +739,33 @@ def rk4_sPODG_adj(RHS: callable,
              Vdp, Wdp, modes, delta_s, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+    return q1
+
+
+@njit
+def explicit_euler_sPODG_adj(RHS: callable,
+                             q0: np.ndarray,
+                             u1: np.ndarray,
+                             u2: np.ndarray,
+                             a1: np.ndarray,
+                             a2: np.ndarray,
+                             b1: np.ndarray,
+                             b2: np.ndarray,
+                             q_dot: np.ndarray,
+                             dt,
+                             M1, M2, N, A1, A2, C, tara, CTC,
+                             Vdp, Wdp, modes, delta_s, dx):
+    """
+    Explicit (forward) Euler one-step integrator mirroring rk4_sPODG_adj signature.
+    Uses left-time samples (u1, a1, b1) and q_dot[4] consistent with the RK4 k1 call.
+    """
+    # single RHS evaluation at left time sample (discrete-forward convention)
+    k1 = RHS(q0, u1, a1, b1, q_dot[4], M1, M2, N, A1, A2, C, tara, CTC,
+             Vdp, Wdp, modes, delta_s, dx)
+
+    # forward Euler update
+    q1 = q0 + dt * k1
 
     return q1
 
@@ -894,13 +1079,17 @@ def rk4_PODG_adj_kdvb__(RHS: callable,
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, a1, b1, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, delta_s, c, alpha, omega, gamma,
+    k1 = RHS(q0, a1, b1, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, delta_s, c, alpha, omega,
+             gamma,
              nu, dx)
-    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, delta_s, c,
+    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp,
+             delta_s, c,
              alpha, omega, gamma, nu, dx)
-    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, delta_s, c,
+    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp,
+             delta_s, c,
              alpha, omega, gamma, nu, dx)
-    k4 = RHS(q0 + dt * k3, a2, b2, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, delta_s, c, alpha, omega,
+    k4 = RHS(q0 + dt * k3, a2, b2, D_1r, D_2r, D_3r, prefactor, ST_Vp, ST_Va, ST_D1Vp, ST_D1Va, VaT_Vp, delta_s, c,
+             alpha, omega,
              gamma, nu, dx)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)

@@ -4,6 +4,7 @@ import numpy as np
 from Helper import compute_state
 
 
+@njit
 def Calc_Grad_smooth(mask, f, qs_adj, lamda2):
     dL_du = lamda2 * f + mask.T @ qs_adj
 

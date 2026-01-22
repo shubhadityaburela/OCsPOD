@@ -13,7 +13,7 @@ from TI_schemes import rk4_PODG_prim, rk4_PODG_adj, implicit_midpoint_PODG_adj, 
     rk4_PODG_adj_, implicit_midpoint_PODG_adj_, DIRK_PODG_adj_, bdf2_PODG_adj_, rk4_PODG_prim_kdvb, rk4_PODG_adj_kdvb, \
     implicit_midpoint_PODG_FRTO_primal_kdvb, implicit_midpoint_PODG_FRTO_adjoint_kdvb, \
     implicit_midpoint_PODG_FOTR_primal_kdvb, implicit_midpoint_PODG_FOTR_adjoint_kdvb, rk4_PODG_adj_kdvb_, \
-    rk4_PODG_adj__, rk4_PODG_adj_kdvb__
+    rk4_PODG_adj__, rk4_PODG_adj_kdvb__, DIRK_PODG_prim, explicit_euler_PODG_prim, explicit_euler_PODG_adj
 
 
 #############
@@ -170,6 +170,10 @@ def RHS_primal_PODG_FRTO(a, f, Ar_p, psir_p):
     return Ar_p @ a + psir_p @ f
 
 
+def RHS_primal_PODG_FRTO_impl(a, f, M_f, A_f, LU_M_F, psir_p):
+    return scipy.linalg.lu_solve((LU_M_F[0], LU_M_F[1]), A_f @ a + psir_p @ f)
+
+
 @njit
 def TI_primal_PODG_FRTO(a, f0, Ar_p, psir_p, Nt, dt):
     # Time loop
@@ -177,7 +181,20 @@ def TI_primal_PODG_FRTO(a, f0, Ar_p, psir_p, Nt, dt):
     as_[:, 0] = a
 
     for n in range(1, Nt):
-        as_[:, n] = rk4_PODG_prim(RHS_primal_PODG_FRTO, as_[:, n - 1], f0[:, n - 1], f0[:, n], dt, Ar_p, psir_p)
+        as_[:, n] = explicit_euler_PODG_prim(RHS_primal_PODG_FRTO, as_[:, n - 1], f0[:, n - 1], f0[:, n], dt, Ar_p, psir_p)
+
+    return as_
+
+
+def TI_primal_PODG_FRTO_impl(a, f0, M_f, A_f, LU_M_f, psir_p, Nt, dt):
+    # Time loop
+    as_ = np.zeros((a.shape[0], Nt))
+    as_[:, 0] = a
+
+    for n in range(1, Nt):
+        as_[:, n] = DIRK_PODG_prim(RHS_primal_PODG_FRTO_impl, as_[:, n - 1],
+                                   f0[:, n - 1], f0[:, n], dt, M_f, A_f,
+                                   LU_M_f, psir_p)
 
     return as_
 
@@ -214,7 +231,11 @@ def TI_adjoint_PODG_FRTO(at_adj, as_, M_f, A_f, LU_M_f, Tarr_a, Nx, dx, Nt, dt, 
     as_adj = np.zeros((at_adj.shape[0], Nt))
     as_adj[:, -1] = at_adj
 
-    if scheme == "RK4":
+    if scheme == "Explicit_Euler":
+        for n in range(1, Nt):
+            as_adj[:, -(n + 1)] = explicit_euler_PODG_adj(RHS_adjoint_PODG_FRTO_expl, as_adj[:, -n], as_[:, -n], as_[:, -(n + 1)],
+                                               Tarr_a[:, -n], Tarr_a[:, -(n + 1)], - dt, A_f, dx)
+    elif scheme == "RK4":
         for n in range(1, Nt):
             as_adj[:, -(n + 1)] = rk4_PODG_adj(RHS_adjoint_PODG_FRTO_expl, as_adj[:, -n], as_[:, -n], as_[:, -(n + 1)],
                                                Tarr_a[:, -n], Tarr_a[:, -(n + 1)], - dt, A_f, dx)
@@ -785,7 +806,7 @@ def J_nl_PODG_FRTO_kdv(a: np.ndarray,
                        omega: float,
                        dt: float) -> np.ndarray:
     r = len(a)
-    a_kron = np.einsum('i,jk->ijk', a, np.eye(r)).reshape(r*r, r)
+    a_kron = np.einsum('i,jk->ijk', a, np.eye(r)).reshape(r * r, r)
     return 0.5 * omega * dt * kron_3 @ a_kron
 
 

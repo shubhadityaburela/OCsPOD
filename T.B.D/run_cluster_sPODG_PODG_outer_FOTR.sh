@@ -1,46 +1,48 @@
 #!/bin/bash
 
-# Loop over the two script types: "adaptive" and "fixed"
-for script_type in adaptive fixed; do
-    for problem in 1 2 3; do
-        for conv_accel in True False; do
-            for target_for_basis in False True; do
-                for interp_scheme in "CubSpl" "Lagr"; do
-                    # Define an array of mode pairs (each pair represents --modes value1 value2)
-                    mode_values=( "5 155" "10 160" "15 165" "20 170" "25 175" "30 180" "35 185" "40 190" "45 195" "50 200" "55 205" "60 210")
+type_of_problem="Constant_shift"   # "Constant_shift" => mode study; anything else => tol study
+CTC_mask="False"                   # used only for tol study
+grid_str="1000 8000 1"             # 1000 8000 1   or     3200 3360 1
 
-                    if [ "$script_type" = "adaptive" ]; then
-                        # For adaptive, also loop over refine_acc_cost values
-                        for refine_acc_cost in True False; do
-                            # Submit jobs using --modes values
-#                            for mode_pair in "${mode_values[@]}"; do
-#                                echo "Submitting job: script_type=$script_type, problem=$problem, convergence_acceleration=$conv_accel, include_target_for_basis=$target_for_basis, interpolation_scheme=$interp_scheme, type_of_study=modes, values=($mode_pair), refine_acc_cost=$refine_acc_cost"
-#                                sbatch run_cluster_sPODG_PODG_inner_FOTR.sh $problem $conv_accel $target_for_basis $interp_scheme modes $mode_pair $script_type $refine_acc_cost
-#                            done
-                            # Submit jobs using --tol values
-                            for tol in 1e-2 7e-3 5e-3 3e-3 1e-3 7e-4 5e-4 3e-4 1e-4; do
-                                echo "Submitting job: script_type=$script_type, problem=$problem, convergence_acceleration=$conv_accel, include_target_for_basis=$target_for_basis, interpolation_scheme=$interp_scheme, type_of_study=tol, value=$tol, refine_acc_cost=$refine_acc_cost"
-                                sbatch run_cluster_sPODG_PODG_inner_FOTR.sh $problem $conv_accel $target_for_basis $interp_scheme tol $tol $script_type $refine_acc_cost
-                            done
-                        done
-                    else
-                        # For fixed, do not include the refine_acc_cost parameter
-#                        for mode_pair in "${mode_values[@]}"; do
-#                            echo "Submitting job: script_type=$script_type, problem=$problem, convergence_acceleration=$conv_accel, include_target_for_basis=$target_for_basis, interpolation_scheme=$interp_scheme, type_of_study=modes, values=($mode_pair)"
-#                            sbatch run_cluster_sPODG_PODG_inner_FOTR.sh $problem $conv_accel $target_for_basis $interp_scheme modes $mode_pair $script_type
-#                        done
-                        # Submit jobs using --tol values
-                        for tol in 1e-2 7e-3 5e-3 3e-3 1e-3 7e-4 5e-4 3e-4 1e-4; do
-                            echo "Submitting job: script_type=$script_type, problem=$problem, convergence_acceleration=$conv_accel, include_target_for_basis=$target_for_basis, interpolation_scheme=$interp_scheme, type_of_study=tol, value=$tol"
-                            sbatch run_cluster_sPODG_PODG_inner_FOTR.sh $problem $conv_accel $target_for_basis $interp_scheme tol $tol $script_type
-                        done
-                    fi
 
-                done
-            done
-        done
-    done
+mode_sets=(
+  "2 500"
+  "5 500"
+  "8 500"
+  "10 500"
+  "12 500"
+  "15 500"
+  "20 500"
+  "25 500"
+  "30 500"
+  "35 500"
+  "40 500"
+  "45 500"
+  "50 500"
+)
+
+tolerances=(
+  "1e-2" "5e-3" "1e-3" "5e-4" "1e-4"
+  "5e-5" "1e-5" "5e-6" "1e-6" "5e-7" "1e-7"
+)
+
+for script_type in fixed adaptive; do
+  for common_basis in True False; do
+
+    if [ "$type_of_problem" = "Constant_shift" ]; then
+      for ms in "${mode_sets[@]}"; do
+        read -r mode1 mode2 <<< "$ms"
+        echo "Submitting modes: type_of_problem=$type_of_problem, script_type=$script_type, common_basis=$common_basis, CTC_mask=$CTC_mask modes=($mode1,$mode2), grid=\"$grid_str\""
+        sbatch run_cluster_sPODG_PODG_inner_FOTR.sh "$type_of_problem" "$common_basis" "modes" "$CTC_mask" "$mode1" "$mode2" "$script_type" "$grid_str"
+      done
+    else
+      for tol in "${tolerances[@]}"; do
+        echo "Submitting tol: type_of_problem=$type_of_problem, script_type=$script_type, common_basis=$common_basis, CTC_mask=$CTC_mask, tol=$tol, grid=\"$grid_str\""
+        sbatch run_cluster_sPODG_PODG_inner_FOTR.sh "$type_of_problem" "$common_basis" "tol" "$CTC_mask" "$tol" "$script_type" "$grid_str"
+      done
+    fi
+
+  done
 done
-
 
 

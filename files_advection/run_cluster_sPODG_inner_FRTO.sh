@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=sPODG_FOTR       # Job name
+#SBATCH --job-name=sPODG_FRTO       # Job name
 #SBATCH --ntasks=1            # Run on a single CPU
 #SBATCH --mem=48gb            # Job memory request
 #SBATCH --time=150:00:00       # Time limit
 #SBATCH --output=/work/burela/sPODG_%j.log  # Standard output log
-#SBATCH --partition=gbr
-#SBATCH --nodelist=node748
+##SBATCH --partition=gbr
+##SBATCH --nodelist=node748
 #SBATCH --chdir=/homes/math/burela/KDV_burgers
 
 export PYTHONUNBUFFERED=1
@@ -20,37 +20,13 @@ echo "sPODG run FRTO"
 
 # Common command-line arguments
 type_of_problem=$1
-common_basis=$2
-param_type=$3    # Should be either "modes" or "tol"
-CTC_mask=$4
-
-# Depending on the parameter type, capture the proper values
-if [ "$param_type" = "tol" ]; then
-    tol_value=$5      # Single tolerance value
-    script_type=$6    # "adaptive" or "fixed"
-else
-    mode=$5         # mode value
-    script_type=$6    # "adaptive" or "fixed"
-fi
+num_controls=$2
 
 grid_str="${@: -1}"
 read -r -a grid_params <<< "$grid_str"
 
 
-# Decide which Python script to run based on the script_type parameter
-if [ "$script_type" = "adaptive" ]; then
-    if [ "$param_type" = "tol" ]; then
-        python3 files_advection/sPODG_FRTO_adaptive.py $type_of_problem $common_basis "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $CTC_mask --tol $tol_value
-    else
-        python3 files_advection/sPODG_FRTO_adaptive.py $type_of_problem $common_basis "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $CTC_mask --modes $mode
-    fi
-else
-    if [ "$param_type" = "tol" ]; then
-        python3 files_advection/sPODG_FRTO.py $type_of_problem $common_basis "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $CTC_mask --tol $tol_value
-    else
-        python3 files_advection/sPODG_FRTO.py $type_of_problem $common_basis "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $CTC_mask --modes $mode
-    fi
-fi
+python3 files_advection/sPODG_FRTO.py $type_of_problem "${grid_params[@]:0:3}" 20000 "/work/burela" 0 1e-3 $num_controls
 
 date
 
