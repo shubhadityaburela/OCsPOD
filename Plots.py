@@ -186,9 +186,9 @@ def plot_normalized_singular_values(X, sv, semilogy=False, savepath=None, name=N
 def plot_control_shape_functions(X, psi):
     n_c = psi.shape[1]
     segments = [np.column_stack((X, psi[:, i])) for i in range(n_c)]
-    colors = plt.cm.plasma(np.linspace(0, 1, n_c))
+    colors = plt.cm.tab10(np.linspace(0, 1, n_c))
 
-    lc = LineCollection(segments, colors=colors, linewidths=0.8, alpha=0.7)
+    lc = LineCollection(segments, colors=colors, linewidths=2.5, alpha=1.0)
 
     fig, ax = plt.subplots(figsize=(11, 6))
     ax.add_collection(lc)
@@ -209,12 +209,12 @@ def plot_control_shape_functions(X, psi):
 
     # proxy artists with matching color/linewidth/alpha
     handles = [
-        Line2D([0], [0], color=colors[i], lw=0.8, alpha=0.7)
+        Line2D([0], [0], color=colors[i], lw=2.5, alpha=1.0)
         for i in range(n_c)
     ]
 
     # add legend (tune loc, ncol, fontsize as needed)
-    ax.legend(handles, labels, loc='upper right', ncol=1, fontsize=12, frameon=False)
+    ax.legend(handles, labels, loc='upper right', ncol=1, fontsize=15, frameon=False)
 
     plt.tight_layout()
     fig.savefig("Control_shapes.pdf", format="pdf")

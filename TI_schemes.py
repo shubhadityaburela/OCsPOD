@@ -625,16 +625,16 @@ def rk4_sPODG_prim(RHS: callable,
                    u2: np.ndarray,
                    dt,
                    lhs,
-                   rhs,
                    c,
                    delta_s,
-                   modes):
+                   modes,
+                   v):
     u_mid = (u1 + u2) / 2
 
-    k1, i, w = RHS(q0, u1, lhs, rhs, c, delta_s, modes)
-    k2, _, _ = RHS(q0 + dt / 2 * k1, u_mid, lhs, rhs, c, delta_s, modes)
-    k3, _, _ = RHS(q0 + dt / 2 * k2, u_mid, lhs, rhs, c, delta_s, modes)
-    k4, _, _ = RHS(q0 + dt * k3, u2, lhs, rhs, c, delta_s, modes)
+    k1, i, w = RHS(q0, u1, lhs, c, delta_s, modes, v)
+    k2, _, _ = RHS(q0 + dt / 2 * k1, u_mid, lhs, c, delta_s, modes, v)
+    k3, _, _ = RHS(q0 + dt / 2 * k2, u_mid, lhs, c, delta_s, modes, v)
+    k4, _, _ = RHS(q0 + dt * k3, u2, lhs, c, delta_s, modes, v)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -655,17 +655,17 @@ def explicit_euler_sPODG_prim(RHS: callable,
                               u2: np.ndarray,
                               dt,
                               lhs,
-                              rhs,
                               c,
                               delta_s,
-                              modes):
+                              modes,
+                              v):
     """
     Explicit (forward) Euler variant of rk4_sPODG_prim with identical signature.
     Uses the left-time control sample `u1` (consistent with forward Euler).
     Returns: q1, q_dot, i, w (same layout as the RK4 version).
     """
     # single RHS evaluation (left-point / explicit Euler)
-    k1, i, w = RHS(q0, u1, lhs, rhs, c, delta_s, modes)
+    k1, i, w = RHS(q0, u1, lhs, c, delta_s, modes, v)
 
     # forward Euler update
     q1 = q0 + dt * k1
@@ -723,20 +723,20 @@ def rk4_sPODG_adj(RHS: callable,
                   b2: np.ndarray,
                   q_dot: np.ndarray,
                   dt,
-                  M1, M2, N, A1, A2, C, tara, CTC,
-                  Vdp, Wdp, modes, delta_s, dx):
+                  M2, N, C,
+                  Vdp, Wdp, modes, delta_s, dx, v):
     u_mid = (u1 + u2) / 2
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, u1, a1, b1, q_dot[4], M1, M2, N, A1, A2, C, tara, CTC,
-             Vdp, Wdp, modes, delta_s, dx)
-    k2 = RHS(q0 + dt / 2 * k1, u_mid, a_mid, b_mid, q_dot[2], M1, M2, N, A1, A2, C, tara, CTC,
-             Vdp, Wdp, modes, delta_s, dx)
-    k3 = RHS(q0 + dt / 2 * k2, u_mid, a_mid, b_mid, q_dot[2], M1, M2, N, A1, A2, C, tara, CTC,
-             Vdp, Wdp, modes, delta_s, dx)
-    k4 = RHS(q0 + dt * k3, u2, a2, b2, q_dot[0], M1, M2, N, A1, A2, C, tara, CTC,
-             Vdp, Wdp, modes, delta_s, dx)
+    k1 = RHS(q0, u1, a1, b1, q_dot[4], M2, N, C,
+             Vdp, Wdp, modes, delta_s, dx, v)
+    k2 = RHS(q0 + dt / 2 * k1, u_mid, a_mid, b_mid, q_dot[2], M2, N, C,
+             Vdp, Wdp, modes, delta_s, dx, v)
+    k3 = RHS(q0 + dt / 2 * k2, u_mid, a_mid, b_mid, q_dot[2], M2, N, C,
+             Vdp, Wdp, modes, delta_s, dx, v)
+    k4 = RHS(q0 + dt * k3, u2, a2, b2, q_dot[0], M2, N, C,
+             Vdp, Wdp, modes, delta_s, dx, v)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
@@ -754,15 +754,15 @@ def explicit_euler_sPODG_adj(RHS: callable,
                              b2: np.ndarray,
                              q_dot: np.ndarray,
                              dt,
-                             M1, M2, N, A1, A2, C, tara, CTC,
-                             Vdp, Wdp, modes, delta_s, dx):
+                             M2, N, C,
+                             Vdp, Wdp, modes, delta_s, dx, v):
     """
     Explicit (forward) Euler one-step integrator mirroring rk4_sPODG_adj signature.
     Uses left-time samples (u1, a1, b1) and q_dot[4] consistent with the RK4 k1 call.
     """
     # single RHS evaluation at left time sample (discrete-forward convention)
-    k1 = RHS(q0, u1, a1, b1, q_dot[4], M1, M2, N, A1, A2, C, tara, CTC,
-             Vdp, Wdp, modes, delta_s, dx)
+    k1 = RHS(q0, u1, a1, b1, q_dot[4], M2, N, C,
+             Vdp, Wdp, modes, delta_s, dx, v)
 
     # forward Euler update
     q1 = q0 + dt * k1
@@ -780,18 +780,19 @@ def implicit_midpoint_sPODG_adj(RHS: callable,
                                 b2: np.ndarray,
                                 q_dot: np.ndarray,
                                 dt,
-                                M1, M2, N, A1, A2, C, tara, CTC,
-                                Vdp, Wdp, modes, delta_s, dx, scheme):
+                                M1, M2, N, C,
+                                Vdp, Wdp, modes, delta_s, dx, scheme, v):
     u_mid = (u1 + u2) / 2
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    q1 = RHS(q0, u_mid, a_mid, b_mid, q_dot[2], dt, M1, M2, N, A1, A2, C, tara, CTC,
-             Vdp, Wdp, modes, delta_s, dx, scheme)
+    q1 = RHS(q0, u_mid, a_mid, b_mid, q_dot[2], dt, M1, M2, N, C,
+             Vdp, Wdp, modes, delta_s, dx, scheme, v)
 
     return q1
 
 
+@njit
 def DIRK_sPODG_adj(RHS: callable,
                    q0: np.ndarray,
                    u1: np.ndarray,
@@ -802,8 +803,8 @@ def DIRK_sPODG_adj(RHS: callable,
                    b2: np.ndarray,
                    q_dot: np.ndarray,
                    dt,
-                   M1, M2, N, A1, A2, C, tara, CTC,
-                   Vdp, Wdp, modes, delta_s, dx, scheme):
+                   M2, N, C,
+                   Vdp, Wdp, modes, delta_s, dx, scheme, v):
     u_threefourth = 0.75 * u1 + 0.25 * u2
     u_onefourth = 0.25 * u1 + 0.75 * u2
     a_threefourth = 0.75 * a1 + 0.25 * a2
@@ -811,10 +812,10 @@ def DIRK_sPODG_adj(RHS: callable,
     b_threefourth = 0.75 * b1 + 0.25 * b2
     b_onefourth = 0.25 * b1 + 0.75 * b2
 
-    k1 = RHS(q0, u_threefourth, a_threefourth, b_threefourth, q_dot[3], dt, M1, M2, N, A1, A2, C, tara, CTC,
-             Vdp, Wdp, modes, delta_s, dx, scheme)
-    k2 = RHS(q0 + dt / 2 * k1, u_onefourth, a_onefourth, b_onefourth, q_dot[1], dt, M1, M2, N, A1, A2, C, tara, CTC,
-             Vdp, Wdp, modes, delta_s, dx, scheme)
+    k1 = RHS(q0, u_threefourth, a_threefourth, b_threefourth, q_dot[3], dt, M2, N, C,
+             Vdp, Wdp, modes, delta_s, dx, scheme, v)
+    k2 = RHS(q0 + dt / 2 * k1, u_onefourth, a_onefourth, b_onefourth, q_dot[1], dt, M2, N, C,
+             Vdp, Wdp, modes, delta_s, dx, scheme, v)
 
     q1 = q0 + dt / 2 * (k1 + k2)
 

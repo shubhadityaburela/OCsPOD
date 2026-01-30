@@ -83,7 +83,7 @@ def parse_arguments():
     p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
                    help="Enter the grid resolution and the cfl factor")
     p.add_argument("N_iter", type=int, help="Number of optimization iterations")
-    p.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
+    p.add_argument("dir_prefix", type=str,
                    help="Directory prefix for I/O")
     p.add_argument("reg", type=float, nargs=2, metavar=("L1", "L2"),
                    help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
@@ -96,12 +96,12 @@ def setup_advection(Nx, Nt, cfl_fac, type):
         wf = advection(Lx=100, Nx=Nx, timesteps=Nt,
                        cfl=(8 / 6) / cfl_fac, tilt_from=3 * Nt // 4,
                        v_x=0.55, v_x_t=0.9,
-                       variance=7, offset=12)
+                       variance=1, offset=12)
     elif type == "Shifting_3":
         wf = advection_3(Lx=100, Nx=Nx, timesteps=Nt,
                          cfl=(8 / 6) / cfl_fac, tilt_from=1 * Nt // 4,
                          v_x=0.55, v_x_t=0.95,
-                         variance=7, offset=12)
+                         variance=1, offset=12)
     else:
         print("Please choose the correct problem type!!")
         exit()
@@ -275,7 +275,7 @@ if __name__ == "__main__":
         # "FALSE" for mode based.
         'Nm_p': n_c + 1,  # Number of modes for truncation if threshold selected to False.
         'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
-        'adjoint_scheme': "DIRK",  # Time integration scheme for adjoint equation
+        'adjoint_scheme': "Explicit_Euler",  # Time integration scheme for adjoint equation
         'perform_grad_check': False,
         'offline_online_err_check': False
     }
@@ -318,8 +318,9 @@ if __name__ == "__main__":
     # Construct the primal system matrices for the sPOD-Galerkin approach
     Vd_p, Wd_p, Ud_p = make_V_W_U_delta(V, T_delta, D, D2, kwargs['shift_sample'], kwargs['Nx'], Nm)
     # Construct the primal and adjoint system matrices for the sPOD-Galerkin approach
-    lhs_p, rhs_p, c_p, tar_a = mat_primal_sPODG_FRTO(Vd_p, Wd_p, Ud_p, C, A_p, psi, samples=kwargs['shift_sample'],
-                                                     modes=Nm)
+    lhs_p, c_p = mat_primal_sPODG_FRTO(Vd_p, Wd_p, Ud_p, psi,
+                                       samples=kwargs['shift_sample'],
+                                       modes=Nm)
 
     # Collector lists
     dL_du_norm_list = []
@@ -349,13 +350,13 @@ if __name__ == "__main__":
 
             t_start = perf_counter()
             # ───── Forward ROM: compute ROM state a_p → as_p ─────
-            as_p, as_dot, intIds, weights = TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f, delta_s,
-                                                                 modes=Nm,
+            as_p, as_dot, intIds, weights = TI_primal_sPODG_FRTO(lhs_p, c_p, a_p, f, delta_s, modes=Nm,
                                                                  Nt=kwargs['Nt'],
-                                                                 dt=kwargs['dt'])
+                                                                 dt=kwargs['dt'],
+                                                                 v=-wf.v_x[0])
             t_1 = perf_counter()
             # ───── Compute costs ─────
-            J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f, C, intIds, weights,
+            J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f, intIds, weights,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             t_2 = perf_counter()
 
@@ -376,18 +377,16 @@ if __name__ == "__main__":
 
             t_3 = perf_counter()
             # ───── Backward ROM (adjoint) ─────
-            as_adj = TI_adjoint_sPODG_FRTO(a_a, f, as_p, qs_target, as_dot, lhs_p, rhs_p, c_p, tar_a, C, Vd_p, Wd_p,
-                                           Nm, delta_s, Nt=kwargs['Nt'], dt=kwargs['dt'], dx=kwargs['dx'],
+            as_adj = TI_adjoint_sPODG_FRTO(a_a, f, as_p, qs_target, as_dot, lhs_p, c_p, Vd_p, Wd_p,
+                                           Nm, delta_s, Nt=kwargs['Nt'], dt=kwargs['dt'], dx=kwargs['dx'], v=-wf.v_x[0],
                                            scheme=kwargs['adjoint_scheme'])
             t_4 = perf_counter()
-
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
             dL_du_s = Calc_Grad_sPODG_FRTO_smooth(f, c_p, as_adj, as_p, intIds, weights, kwargs['lamda_l2'])
             dL_du_g = Calc_Grad_mapping(f, dL_du_s, omega, kwargs['lamda_l1'])
             dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
             t_5 = perf_counter()
-
 
             dL_du_norm_list.append(dL_du_norm)
 
@@ -427,10 +426,10 @@ if __name__ == "__main__":
                 omega_bb = get_BB_step(fOld, f, dL_du_Old, dL_du_s, opt_step, **kwargs)
                 if omega_bb < 0:
                     print("WARNING: BB gave negative step size thus resorting to using TWBT")
-                    fNew, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p,
+                    fNew, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, c_p, Vd_p,
                                                                             a_p, qs_target, delta_s, J_s,
-                                                                            omega_twbt, Nm, dL_du_s, C, adjust,
-                                                                            **kwargs)
+                                                                            omega_twbt, Nm, dL_du_s, adjust,
+                                                                            -wf.v_x[0], **kwargs)
                     omega = omega_twbt
                 else:
                     fNew = Update_Control_BB(f, dL_du_s, omega_bb, kwargs['lamda_l1'])
@@ -438,10 +437,10 @@ if __name__ == "__main__":
                     omega = omega_bb
             else:
                 print("TWBT acting…")
-                fNew, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p,
+                fNew, omega_twbt, stag = Update_Control_sPODG_FRTO_TWBT(f, lhs_p, c_p, Vd_p,
                                                                         a_p, qs_target, delta_s, J_s,
-                                                                        omega_twbt, Nm, dL_du_s, C, adjust,
-                                                                        **kwargs)
+                                                                        omega_twbt, Nm, dL_du_s, adjust,
+                                                                        -wf.v_x[0], **kwargs)
                 omega = omega_twbt
 
             t_end = perf_counter()
@@ -634,16 +633,6 @@ if __name__ == "__main__":
     pf.plot1D(f_opt, name="f_opt", immpath=plot_dir)
     pf.plot1D_ROM_converg(J_opt_list, J_opt_FOM_list, name="J", immpath=plot_dir)
 
-
-
-
-
-
-
-
-
-
-
     # # Primal: reverse‐transform (and normalize if shared‐basis)
     # if kwargs['common_basis']:
     #     qs_norm = qs_full / np.linalg.norm(qs_full)
@@ -653,8 +642,6 @@ if __name__ == "__main__":
     #     snap_cat_p_s = np.concatenate([qs_norm_s, qs_adj_norm_s], axis=1)
     # else:
     #     snap_cat_p_s = T.reverse(qs_full).copy()
-
-
 
     # qs_org_stat = np.zeros_like(qs_org)
     # for i in range(wf.Nt):

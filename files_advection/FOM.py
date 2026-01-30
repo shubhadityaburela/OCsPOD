@@ -38,8 +38,7 @@ def parse_arguments():
     p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
                    help="Enter the grid resolution and the cfl factor")
     p.add_argument("N_iter", type=int, help="Number of optimization iterations")
-    p.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
-                   help="Directory prefix for I/O")
+    p.add_argument("dir_prefix", type=str, help="Directory prefix for I/O")
     p.add_argument("reg", type=float, nargs=2, metavar=("L1", "L2"),
                    help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
     p.add_argument("num_controls", type=int, help="Number of controls (2 * n_c + 1). So input n_c here.")
@@ -51,12 +50,12 @@ def setup_advection(Nx, Nt, cfl_fac, type):
         wf = advection(Lx=100, Nx=Nx, timesteps=Nt,
                        cfl=(8 / 6) / cfl_fac, tilt_from=3 * Nt // 4,
                        v_x=0.55, v_x_t=0.9,
-                       variance=1, offset=20)
+                       variance=1, offset=12)
     elif type == "Shifting_3":
         wf = advection_3(Lx=100, Nx=Nx, timesteps=Nt,
                          cfl=(8 / 6) / cfl_fac, tilt_from=1 * Nt // 4,
                          v_x=0.55, v_x_t=0.95,
-                         variance=1, offset=20)
+                         variance=1, offset=12)
     else:
         print("Please choose the correct problem type!!")
         exit()
@@ -264,7 +263,6 @@ if __name__ == "__main__":
     f_last_valid = None
 
     start_total = time.time()
-    t0 = perf_counter()
 
     omega_twbt = 1.0
     omega_bb = 1.0
@@ -282,8 +280,11 @@ if __name__ == "__main__":
             print(f"\n==============================")
             print(f"Optimization step: {opt_step}")
 
+            t_start = perf_counter()
             # ───── Forward FOM:  ─────
             qs = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+
+            t_1 = perf_counter()
 
             # if opt_step % 10 == 0:
             #     Q_stat = np.zeros_like(qs)
@@ -302,6 +303,8 @@ if __name__ == "__main__":
                                   kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             J_ROM = J_s + J_ns
 
+            t_2 = perf_counter()
+
             qs_opt_full = TI_primal(q0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
             JJ_s, JJ_ns = Calc_Cost(qs_opt_full, qs_target, f, C, kwargs['dx'], kwargs['dt'],
                                     kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
@@ -314,14 +317,18 @@ if __name__ == "__main__":
                 best_details.update({'J': J_FOM, 'N_iter': opt_step})
                 best_control = f.copy()
 
+            t_3 = perf_counter()
             # ───── Backward FOM (adjoint) ─────
             qs_adj = TI_adjoint(q0_adj, qs, qs_target, M_f, A_f, LU_M_f, C, wf.Nx, wf.dx, wf.Nt, wf.dt,
                                 scheme=kwargs['adjoint_scheme'], opt_poly_jacobian=Df)
+            t_4 = perf_counter()
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
             dL_du_s = Calc_Grad_smooth(psi, f, qs_adj, kwargs['lamda_l2'])
             dL_du_g = Calc_Grad_mapping(f, dL_du_s, omega, kwargs['lamda_l1'])
             dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
+
+            t_5 = perf_counter()
 
             dL_du_norm_list.append(dL_du_norm)
 
@@ -338,6 +345,7 @@ if __name__ == "__main__":
                 print("Analytic gradient", L2inner_prod(dL_du_g, df, kwargs['dt']))
 
             # ───── Step‐size: BB vs. TWBT, including Armijo‐stagnation logic ─────
+            t_6 = perf_counter()
             ratio = dL_du_norm / dL_du_norm_list[0]
             if ratio < 5e-3:
                 print(f"BB acting.....")
@@ -357,8 +365,13 @@ if __name__ == "__main__":
                                                              C, adjust, **kwargs)
                 omega = omega_twbt
 
-            t1 = perf_counter()
-            running_time.append(t1 - t0)
+            t_end = perf_counter()
+            running_time.append([t_start - t_end,
+                                 t_1 - t_start,
+                                 t_2 - t_1,
+                                 t_4 - t_3,
+                                 t_5 - t_4,
+                                 t_end - t_6])
 
             # Saving previous controls for Barzilai Borwein step
             fOld = f.copy()
@@ -527,10 +540,17 @@ if __name__ == "__main__":
     print(f"\nLast valid FOM cost: {J_final__:.3e}")
     print(f"\nTotal elapsed time: {time.time() - start_total:.3f}s")
 
-    # # # Save convergence lists and final states:
+    # # Save convergence lists and final states:
     # np.save(os.path.join(data_dir, "qs_org.npy"), qs_org)
     # np.save(os.path.join(data_dir, "qs_target.npy"), qs_target)
     # np.save(os.path.join(data_dir, "svd.npy"), svd, allow_pickle=True)
+
+    # np.set_printoptions(precision=3, suppress=True)
+    # np.set_printoptions(
+    #     threshold=np.inf,  # print ALL elements, no truncation
+    #     linewidth=np.inf  # do not wrap lines
+    # )
+    # print(np.asarray(running_time))
 
     # Plot results
     pf = PlotFlow(wf.X, wf.t)

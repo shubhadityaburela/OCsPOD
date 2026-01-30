@@ -3,48 +3,34 @@ from numba import njit
 
 
 @njit
-def E11(N, A1, z_dot, r):
-    return A1 - N @ np.diag(np.repeat(z_dot, r))
+def E11(N, v, z_dot, r):
+    return - (- v + z_dot) * N
 
 
 @njit
-def E12(M2, N, A2, D, WTB, a_dot, z_dot, a_s, u, r):
-
-    mat1_comp = (a_dot[None, :] @ N.T).reshape(-1)
-    mat3_comp = N.T @ a_dot
-    mat4_comp = M2 @ (D @ z_dot)
-    mat6_comp = A2 @ a_s
-    mat8_comp = WTB @ u
-
-    mat5_comp = M2 @ np.diag(np.repeat(z_dot, r))
-
-    return (mat1_comp - mat3_comp - mat4_comp + mat6_comp + mat8_comp)[None, :] + D.T @ (- mat5_comp + A2)
+def E12(M2, N, v, D, WTB, a_dot, z_dot, a_s, u, r):
+    return -2 * N @ a_dot + 2 * (z_dot - v) * M2 @ a_s - WTB @ u
 
 
 @njit
-def E21(N, VTdashB, a_dot, u):
-    mat2 = N @ a_dot[:, None]
-    mat6 = VTdashB @ u[:, None]
-    return mat2 + mat6
+def E21(N, WTB, a_dot, u):
+    return a_dot[None, :] @ N - (WTB @ u)[None, :]
 
 
 @njit
-def E22(M2, D, WTdashB, a_dot, u):
-    mat1 = a_dot[None, :] @ (M2 @ D)
-    mat3_comp = M2 @ a_dot[:, None]
-    mat7_comp = WTdashB @ u[:, None]
+def E22(M2, a_s, WTdashB, a_dot, u):
 
-    return mat1 + D.T @ (mat3_comp + mat7_comp)
+    return - 2 * (a_s[None, :] @ M2) @ a_dot - a_s[None, :] @ (WTdashB @ u)
 
 
 @njit
-def C1(VTV, as_p, VTqs_tar, dx): # We make use of the fact that VTV in the presence of constant dx and identity CTC is just M1
-    return dx * (VTV @ as_p - VTqs_tar)
+def C1(as_p, VTqs_tar, dx): # We make use of the fact that VTV in the presence of constant dx and identity CTC is just M1
+    return dx * (as_p - VTqs_tar)
 
 
 @njit
-def C2(WTV, as_p, WTqs_tar, dx):   # We make use of the fact that WTV in the presence of constant dx and identity CTC is just NT
-    return dx * as_p[None, :] @ (WTV @ as_p - WTqs_tar)
+def C2(as_p, WTqs_tar, dx):   # We make use of the fact that WTV in the presence of constant dx and identity CTC is just NT
+    return - dx * as_p[None, :] @ WTqs_tar
 
 
 ################################################################################

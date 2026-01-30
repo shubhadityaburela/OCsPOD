@@ -31,7 +31,7 @@ def Calc_Cost_PODG(V, as_, qs_target, f, C, dx, dt, lamda1, lamda2, adjust):
 
 
 @njit(parallel=True)
-def Calc_Cost_sPODG(V, as_, qs_target, f, C, intIds, weights, dx, dt, lamda1, lamda2, adjust):
+def Calc_Cost_sPODG(V, as_, qs_target, f, intIds, weights, dx, dt, lamda1, lamda2, adjust):
     q = np.empty_like(qs_target)
 
     for i in prange(f.shape[1]):
@@ -39,7 +39,7 @@ def Calc_Cost_sPODG(V, as_, qs_target, f, C, intIds, weights, dx, dt, lamda1, la
         V_delta = weights[i] * V[V_idx] + (1 - weights[i]) * V[V_idx + 1]
         q[:, i] = V_delta @ as_[:, i]
 
-    q_res = (q - qs_target)[C]
+    q_res = (q - qs_target)
 
     return J_smooth(q_res, f, lamda2, dx, dt), J_nonsmooth(f, lamda1, dx, dt, adjust), q
 

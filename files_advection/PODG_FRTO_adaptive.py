@@ -41,7 +41,7 @@ def parse_arguments():
     p.add_argument("grid", type=int, nargs=3, metavar=("Nx", "Nt", "cfl_fac"),
                    help="Enter the grid resolution and the cfl factor")
     p.add_argument("N_iter", type=int, help="Number of optimization iterations")
-    p.add_argument("dir_prefix", type=str, choices=[".", "/work/burela"],
+    p.add_argument("dir_prefix", type=str,
                    help="Directory prefix for I/O")
     p.add_argument("reg", type=float, nargs=2, metavar=("L1", "L2"),
                    help="L1 and L2 regularization weights (e.g. 0.01 0.001)")
@@ -333,7 +333,7 @@ if __name__ == "__main__":
                 Ar_a, Tarr_a = mat_adjoint_PODG_FRTO(A_a, V, qs_target, C)
 
                 # Select LU factors for adjoint mass‐matrix if needed
-                if kwargs['adjoint_scheme'] == "RK4":
+                if kwargs['adjoint_scheme'] == "RK4" or kwargs['adjoint_scheme'] == "Explicit_Euler":
                     M_f = None
                     A_f = Ar_a.copy()
                     LU_M_f = None

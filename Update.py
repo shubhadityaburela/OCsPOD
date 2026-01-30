@@ -190,18 +190,18 @@ def Update_Control_sPODG_FOTR_RA_TWBT(f, lhs, rhs, c, a0_primal, qs_target, delt
             k = k + 1
 
 
-def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, qs_target, delta_s, J_s_prev,
-                                   omega_prev, modes, dL_du_s, C, adjust, **kwargs):
+def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, c_p, Vd_p, a_p, qs_target, delta_s, J_s_prev,
+                                   omega_prev, modes, dL_du_s, adjust, v, **kwargs):
     # Choosing the step size for two-way backtracking
     beta = kwargs['beta']
     omega = omega_prev
 
     # Checking the Armijo condition
     f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-    as_p, _, intIds, weights = TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes,
+    as_p, _, intIds, weights = TI_primal_sPODG_FRTO(lhs_p, c_p, a_p, f_new, delta_s, modes=modes,
                                                     Nt=kwargs['Nt'],
-                                                    dt=kwargs['dt'])
-    J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, C, intIds, weights,
+                                                    dt=kwargs['dt'], v=v)
+    J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, intIds, weights,
                                    kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
     dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
          (kwargs['delta'] / omega) * L2norm_ROM(f_new - f, kwargs['dt'])
@@ -212,11 +212,11 @@ def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, qs_target, d
             f_new_final = np.copy(f_new)
             omega = omega / beta
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            as_p, _, intIds_n, weights_n = TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes,
+            as_p, _, intIds_n, weights_n = TI_primal_sPODG_FRTO(lhs_p, c_p, a_p, f_new, delta_s, modes=modes,
                                                                 Nt=kwargs['Nt'],
-                                                                dt=kwargs['dt']
+                                                                dt=kwargs['dt'], v=v
                                                                 )
-            J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, C, intIds_n, weights_n,
+            J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, intIds_n, weights_n,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
                  (kwargs['delta'] / omega) * L2norm_ROM(f_new - f, kwargs['dt'])
@@ -232,11 +232,11 @@ def Update_Control_sPODG_FRTO_TWBT(f, lhs_p, rhs_p, c_p, Vd_p, a_p, qs_target, d
         while True:
             omega = beta * omega
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            as_p, _, intIds_k, weights_k = TI_primal_sPODG_FRTO(lhs_p, rhs_p, c_p, a_p, f_new, delta_s, modes=modes,
+            as_p, _, intIds_k, weights_k = TI_primal_sPODG_FRTO(lhs_p, c_p, a_p, f_new, delta_s, modes=modes,
                                                                 Nt=kwargs['Nt'],
-                                                                dt=kwargs['dt']
+                                                                dt=kwargs['dt'], v=v
                                                                 )
-            J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, C, intIds_k, weights_k,
+            J_s, J_ns, _ = Calc_Cost_sPODG(Vd_p, as_p[:-1], qs_target, f_new, intIds_k, weights_k,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
                  (kwargs['delta'] / omega) * L2norm_ROM(f_new - f, kwargs['dt'])

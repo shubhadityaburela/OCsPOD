@@ -585,10 +585,9 @@ def make_V_W_U_delta_CubSpl(U, delta_s, A1, D1, D2, R, num_sample, Nx, dx, modes
 
 def LHS_offline_primal_FRTO(V_delta, W_delta, modes):
     # D(a) matrices are dynamic in nature thus need to be included in the time integration part
-    LHS_mat = np.zeros((3, modes, modes))
-    LHS_mat[0, ...] = oe.contract('ij,jk->ik', V_delta[0].T, V_delta[0])
-    LHS_mat[1, ...] = oe.contract('ij,jk->ik', V_delta[0].T, W_delta[0])
-    LHS_mat[2, ...] = oe.contract('ij,jk->ik', W_delta[0].T, W_delta[0])
+    LHS_mat = np.zeros((2, modes, modes))
+    LHS_mat[0, ...] = oe.contract('ij,jk->ik', V_delta[0].T, W_delta[0])
+    LHS_mat[1, ...] = oe.contract('ij,jk->ik', W_delta[0].T, W_delta[0])
 
     return np.ascontiguousarray(LHS_mat)
 
@@ -680,7 +679,7 @@ def DEIM_primal_FRTO_kdv(T_delta, V_delta_primal, W_delta_primal, U_delta_primal
     return DEIM_primal_mat, DEIM_mat
 
 
-# @njit(parallel=True)
+@njit(parallel=True)
 def Control_offline_primal_FRTO(V_delta, W_delta, U_delta, psi, samples, modes):
     C_mat = np.zeros((3, samples, modes, psi.shape[1]), dtype=V_delta.dtype)
 
@@ -704,7 +703,7 @@ def Target_online_adjoint_FRTO(V_delta, W_delta, CTC, samples, modes):
 
 
 @njit
-def Matrices_online_primal_FRTO(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
+def Matrices_online_primal_FRTO(LHS_matrix, C, f, a, ds, modes, v):
     M = np.empty((modes + 1, modes + 1), dtype=LHS_matrix[0].dtype)
     A = np.empty(modes + 1)
     as_ = a[:-1]
@@ -715,14 +714,14 @@ def Matrices_online_primal_FRTO(LHS_matrix, RHS_matrix, C, f, a, ds, modes):
 
     Da = as_.reshape(-1, 1)
 
-    M[:modes, :modes] = LHS_matrix[0]
-    M[:modes, modes:] = LHS_matrix[1] @ Da
+    M[:modes, :modes] = np.eye(modes)
+    M[:modes, modes:] = LHS_matrix[0] @ Da
     M[modes:, :modes] = M[:modes, modes:].T
-    M[modes:, modes:] = Da.T @ (LHS_matrix[2] @ Da)
+    M[modes:, modes:] = Da.T @ (LHS_matrix[1] @ Da)
 
-    A[:modes] = RHS_matrix[0] @ as_ + np.add(weight * C[0, intervalIdx],
+    A[:modes] = v * LHS_matrix[0] @ as_ + np.add(weight * C[0, intervalIdx],
                                              (1 - weight) * C[0, intervalIdx + 1]) @ f
-    A[modes:] = Da.T @ (RHS_matrix[1] @ as_ + np.add(weight * C[1, intervalIdx],
+    A[modes:] = Da.T @ (v * LHS_matrix[1] @ as_ + np.add(weight * C[1, intervalIdx],
                                                      (1 - weight) * C[1, intervalIdx + 1]) @ f)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A), intervalIdx, weight
@@ -759,17 +758,17 @@ def Matrices_online_primal_FRTO_kdv_expl(LHS_matrix, RHS_matrix, RHS_NL_matrix, 
 
 
 @njit
-def Matrices_online_adjoint_FRTO_expl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp, f, as_adj, as_, qs_tar, a_dot, modes,
-                                      ds, dx):
-    M = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
+def Matrices_online_adjoint_FRTO_expl(M2, N, C, Vdp, Wdp, f, as_adj, as_, qs_tar, a_dot, modes,
+                                      ds, dx, v):
+    M = np.empty((modes + 1, modes + 1), dtype=M2.dtype)
     A = np.empty(modes + 1)
 
     as_a = as_adj[:-1]  # Take the modes from the adjoint solution
-    z_a = as_adj[-1:]  # Take the shifts from the adjoint solution
+    z_a = as_adj[-1]  # Take the shifts from the adjoint solution
     as_p = as_[:-1]  # Take the modes from the primal solution
     z_p = as_[-1]  # Take the shifts from the primal solution
     as_dot = a_dot[:-1]  # Take the modes derivative from the primal
-    z_dot = a_dot[-1:]  # Take the shift derivative from the primal
+    z_dot = a_dot[-1]  # Take the shift derivative from the primal
 
     Da = as_p.reshape(-1, 1)
 
@@ -779,7 +778,7 @@ def Matrices_online_adjoint_FRTO_expl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp,
     intId, weight = findIntervalAndGiveInterpolationWeight_1D(ds[2], -z_p)
 
     # Assemble the mass matrix M
-    M[:modes, :modes] = M1.T
+    M[:modes, :modes] = np.eye(modes)
     M[:modes, modes:] = N @ Da
     M[modes:, :modes] = M[:modes, modes:].T
     M[modes:, modes:] = Da.T @ (M2.T @ Da)
@@ -790,31 +789,31 @@ def Matrices_online_adjoint_FRTO_expl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp,
     VT = np.add(weight * Vdp[intId], (1 - weight) * Vdp[intId + 1]).T
     WT = np.add(weight * Wdp[intId], (1 - weight) * Wdp[intId + 1]).T
 
-    VTV = np.add(weight * tara[0, intId], (1 - weight) * tara[0, intId + 1])
-    WTV = np.add(weight * tara[1, intId], (1 - weight) * tara[1, intId + 1])
-    VTqs_tar = VT[:, CTC] @ qs_tar[CTC]
-    WTqs_tar = WT[:, CTC] @ qs_tar[CTC]
+    VTqs_tar = VT @ qs_tar
+    WTqs_tar = WT @ qs_tar
 
     # Assemble the RHS
-    A[:modes] = E11(N, A1, z_dot, modes).T @ as_a + E12(M2, N, A2, Da, WTB, as_dot, z_dot, as_p, f, modes).T @ z_a \
-                + C1(VTV, as_p, VTqs_tar, dx)
-    A[modes:] = E21(N, WTB, as_dot, f).T @ as_a + E22(M2, Da, WTdashB, as_dot, f).T @ z_a + C2(WTV, as_p, WTqs_tar, dx)
+    A[:modes] = E11(N, v, z_dot, modes) @ as_a + E12(M2, N, v, Da, WTB, as_dot, z_dot, as_p, f, modes) * z_a \
+                - C1(as_p, VTqs_tar, dx)
+    A[modes:] = E21(N, WTB, as_dot, f) @ as_a + E22(M2, as_p, WTdashB, as_dot, f) * z_a - C2(as_p, WTqs_tar, dx)
 
     return np.ascontiguousarray(M), np.ascontiguousarray(A)
 
 
 @njit
-def Matrices_online_adjoint_FRTO_impl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp, f, as_adj, as_, qs_tar, a_dot, modes,
+def Matrices_online_adjoint_FRTO_impl(M2, N, C, Vdp, Wdp, f, as_adj, as_, qs_tar, a_dot, modes,
                                       ds,
-                                      dx):
-    M = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
-    A = np.empty((modes + 1, modes + 1), dtype=M1.dtype)
-    T = np.empty(modes + 1)
+                                      dx, dt, v):
+    M = np.empty((modes + 1, modes + 1), dtype=M2.dtype)
+    E = np.empty((modes + 1, modes + 1), dtype=M2.dtype)
+    A = np.empty(modes + 1, dtype=M2.dtype)
 
+    as_a = as_adj[:-1]  # Take the modes from the adjoint solution
+    z_a = as_adj[-1:]  # Take the shifts from the adjoint solution
     as_p = as_[:-1]  # Take the modes from the primal solution
     z_p = as_[-1]  # Take the shifts from the primal solution
     as_dot = a_dot[:-1]  # Take the modes derivative from the primal
-    z_dot = a_dot[-1:]  # Take the shift derivative from the primal
+    z_dot = a_dot[-1]  # Take the shift derivative from the primal
 
     Da = as_p.reshape(-1, 1)
 
@@ -829,28 +828,26 @@ def Matrices_online_adjoint_FRTO_impl(M1, M2, N, A1, A2, C, tara, CTC, Vdp, Wdp,
     VT = np.add(weight * Vdp[intId], (1 - weight) * Vdp[intId + 1]).T
     WT = np.add(weight * Wdp[intId], (1 - weight) * Wdp[intId + 1]).T
 
-    VTV = np.add(weight * tara[0, intId], (1 - weight) * tara[0, intId + 1])
-    WTV = np.add(weight * tara[1, intId], (1 - weight) * tara[1, intId + 1])
-    VTqs_tar = VT[:, CTC] @ qs_tar[CTC]
-    WTqs_tar = WT[:, CTC] @ qs_tar[CTC]
+    VTqs_tar = VT @ qs_tar
+    WTqs_tar = WT @ qs_tar
+
+    E[:modes, :modes] = E11(N, v, z_dot, modes)
+    E[:modes, modes:] = E12(M2, N, v, Da, WTB, as_dot, z_dot, as_p, f, modes)[:, None]
+    E[modes:, :modes] = E21(N, WTB, as_dot, f)[None, :]
+    E[modes:, modes:] = E22(M2, as_p, WTdashB, as_dot, f)
 
     # Assemble the mass matrix M
-    M[:modes, :modes] = M1.T
-    M[:modes, modes:] = N @ Da
-    M[modes:, :modes] = M[:modes, modes:].T
-    M[modes:, modes:] = Da.T @ (M2.T @ Da)
+    M[:modes, :modes] = np.eye(modes) - dt / 4 * E[:modes, :modes]
+    M[:modes, modes:] = N @ Da - dt / 4 * E[:modes, modes:]
+    M[modes:, :modes] = Da.T @ N.T - dt / 4 * E[modes:, :modes]
+    M[modes:, modes:] = Da.T @ (M2 @ Da) - dt / 4 * E[modes:, modes:]
 
-    # Assemble the A matrix
-    A[:modes, :modes] = E11(N, A1, z_dot, modes).T
-    A[:modes, modes:] = E12(M2, N, A2, Da, WTB, as_dot, z_dot, as_p, f, modes).T
-    A[modes:, :modes] = E21(N, WTB, as_dot, f).T
-    A[modes:, modes:] = E22(M2, Da, WTdashB, as_dot, f).T
+    # Assemble the RHS
+    A[:modes] = E[:modes, :modes] @ as_a + E[:modes, modes:] @ z_a - C1(as_p, VTqs_tar, dx)
+    A[modes:] = E[modes:, :modes] @ as_a + E[modes:, modes:] @ z_a - C2(as_p, WTqs_tar, dx)
 
-    # Assemble the target vector
-    T[:modes] = C1(VTV, as_p, VTqs_tar, dx)
-    T[modes:] = C2(WTV, as_p, WTqs_tar, dx)
 
-    return np.ascontiguousarray(M), np.ascontiguousarray(A), np.ascontiguousarray(T)
+    return np.ascontiguousarray(M), np.ascontiguousarray(A)
 
 
 @njit
