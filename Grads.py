@@ -17,7 +17,7 @@ def Calc_Grad_PODG_smooth(psir_, f, as_adj, lamda2):
     return dL_du
 
 
-
+@njit
 def Calc_Grad_sPODG_smooth(mask, f, V, as_adj, intIds, weights, lamda2):
 
     qs_adj = compute_state(V, V[0].shape[0], f.shape[1], as_adj, intIds, weights)

@@ -526,6 +526,24 @@ def rk4_PODG_adj_(RHS: callable,
 
 
 @njit
+def explicit_euler_PODG_adj_(RHS: callable,
+                             q0: np.ndarray,
+                             a1: np.ndarray,
+                             a2: np.ndarray,
+                             b1: np.ndarray,
+                             b2: np.ndarray,
+                             dt,
+                             Ar_a,
+                             V_aTV_p,
+                             dx) -> np.ndarray:
+    k1 = RHS(q0, a1, b1, Ar_a, V_aTV_p, dx)
+
+    q1 = q0 + dt * k1
+
+    return q1
+
+
+@njit
 def rk4_PODG_adj__(RHS: callable,
                    q0: np.ndarray,
                    a1: np.ndarray,
@@ -848,18 +866,36 @@ def rk4_sPODG_adj_(RHS: callable,
                    b1: np.ndarray,
                    b2: np.ndarray,
                    dt,
-                   lhs, rhs, tar, CTC, Vda, Wda,
+                   lhs, tar, Vda, Wda,
                    modes_a, modes_p,
-                   delta_s, dx):
+                   delta_s, dx, v):
     a_mid = (a1 + a2) / 2
     b_mid = (b1 + b2) / 2
 
-    k1 = RHS(q0, a1, b1, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
-    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
-    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
-    k4 = RHS(q0 + dt * k3, a2, b2, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx)
+    k1 = RHS(q0, a1, b1, lhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx, v)
+    k2 = RHS(q0 + dt / 2 * k1, a_mid, b_mid, lhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx, v)
+    k3 = RHS(q0 + dt / 2 * k2, a_mid, b_mid, lhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx, v)
+    k4 = RHS(q0 + dt * k3, a2, b2, lhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx, v)
 
     q1 = q0 + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+    return q1
+
+
+@njit
+def explicit_euler_sPODG_adj_(RHS: callable,
+                              q0: np.ndarray,
+                              a1: np.ndarray,
+                              a2: np.ndarray,
+                              b1: np.ndarray,
+                              b2: np.ndarray,
+                              dt,
+                              lhs, tar, Vda, Wda,
+                              modes_a, modes_p,
+                              delta_s, dx, v):
+
+    k1 = RHS(q0, a1, b1, lhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx, v)
+    q1 = q0 + dt * k1
 
     return q1
 

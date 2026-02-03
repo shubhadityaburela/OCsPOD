@@ -17,7 +17,8 @@ from Helper_sPODG import make_V_W_delta, LHS_offline_primal_FOTR, RHS_offline_pr
 from Helper_sPODG_FRTO import E11, E12, E21, E22, E11_kdvb, E12_kdvb, E21_kdvb, E22_kdvb, C1, C2
 from TI_schemes import rk4_sPODG_prim, rk4_sPODG_adj, implicit_midpoint_sPODG_adj, DIRK_sPODG_adj, bdf2_sPODG_adj, \
     rk4_sPODG_adj_, rk4_sPODG_prim_kdvb, implicit_midpoint_sPODG_FRTO_primal_kdvb, \
-    implicit_midpoint_sPODG_FRTO_adjoint_kdvb, rk4_sPODG_adj_kdvb, explicit_euler_sPODG_prim, explicit_euler_sPODG_adj
+    implicit_midpoint_sPODG_FRTO_adjoint_kdvb, rk4_sPODG_adj_kdvb, explicit_euler_sPODG_prim, explicit_euler_sPODG_adj, \
+    explicit_euler_sPODG_adj_
 
 
 #############
@@ -38,19 +39,16 @@ def mat_primal_sPODG_FOTR(V_delta_primal, W_delta_primal, A_p, psi, samples, mod
     # Construct LHS matrix
     LHS_matrix = LHS_offline_primal_FOTR(V_delta_primal, W_delta_primal, modes)
 
-    # Construct RHS matrix
-    RHS_matrix = RHS_offline_primal_FOTR(V_delta_primal, W_delta_primal, A_p, modes)
-
     # Construct the control matrix
     C_matrix = Control_offline_primal_FOTR(V_delta_primal, W_delta_primal, psi, samples, modes)
 
-    return LHS_matrix, RHS_matrix, C_matrix
+    return LHS_matrix, C_matrix
 
 
 @njit
-def RHS_primal_sPODG_FOTR(a, f, lhs, rhs, c, ds, modes):
+def RHS_primal_sPODG_FOTR(a, f, lhs, c, ds, modes, v):
     # Prepare the online primal matrices
-    M, A, intervalIdx, weight = Matrices_online_primal_FOTR(lhs, rhs, c, f, a, ds, modes)
+    M, A, intervalIdx, weight = Matrices_online_primal_FOTR(lhs, c, f, a, ds, modes, v)
 
     # Solve the linear system of equations
     X = solve_lin_system(M, A)
@@ -58,7 +56,7 @@ def RHS_primal_sPODG_FOTR(a, f, lhs, rhs, c, ds, modes):
     return X, intervalIdx, weight
 
 
-def TI_primal_sPODG_FOTR(lhs, rhs, c, a, f0, delta_s, modes, Nt, dt):
+def TI_primal_sPODG_FOTR(lhs, c, a, f0, delta_s, modes, Nt, dt, v):
     # Time loop
     as_ = np.zeros((a.shape[0], Nt), order="F")
     f0 = np.asfortranarray(f0)
@@ -68,8 +66,13 @@ def TI_primal_sPODG_FOTR(lhs, rhs, c, a, f0, delta_s, modes, Nt, dt):
     as_[:, 0] = a
 
     for n in range(1, Nt):
-        as_[:, n], _, IntIds[n - 1], weights[n - 1] = rk4_sPODG_prim(RHS_primal_sPODG_FOTR, as_[:, n - 1], f0[:, n - 1],
-                                                                     f0[:, n], dt, lhs, rhs, c, delta_s, modes)
+        as_[:, n], _, IntIds[n - 1], weights[n - 1] = explicit_euler_sPODG_prim(RHS_primal_sPODG_FOTR, as_[:, n - 1],
+                                                                                f0[:, n - 1],
+                                                                                f0[:, n], dt, lhs,
+                                                                                c,
+                                                                                delta_s,
+                                                                                modes,
+                                                                                v)
 
     IntIds[-1], weights[-1] = findIntervalAndGiveInterpolationWeight_1D(delta_s[2], -as_[-1, -1])
 
@@ -82,25 +85,22 @@ def IC_adjoint_sPODG_FOTR(Nm_a, z):
     return a
 
 
-def mat_adjoint_sPODG_FOTR(V_delta_adjoint, W_delta_adjoint, A_a, V_delta_primal, samples, modes_a, modes_p, CTC):
+def mat_adjoint_sPODG_FOTR(V_delta_adjoint, W_delta_adjoint, V_delta_primal, samples, modes_a, modes_p):
     # Construct LHS matrix
     LHS_matrix = LHS_offline_primal_FOTR(V_delta_adjoint, W_delta_adjoint, modes_a)
 
-    # Construct RHS matrix
-    RHS_matrix = RHS_offline_primal_FOTR(V_delta_adjoint, W_delta_adjoint, A_a, modes_a)
-
     # Construct the control matrix
     Tar_matrix = Target_offline_adjoint_FOTR(V_delta_primal, V_delta_adjoint, W_delta_adjoint,
-                                             samples, modes_a, modes_p, CTC)
+                                             samples, modes_a, modes_p)
 
-    return LHS_matrix, RHS_matrix, Tar_matrix
+    return LHS_matrix, Tar_matrix
 
 
 @njit
-def RHS_adjoint_sPODG_FOTR_expl(as_adj, as_, qs_target, lhs, rhs, tar, CTC, Vda, Wda, modes_a, modes_p, delta_s, dx):
+def RHS_adjoint_sPODG_FOTR_expl(as_adj, as_, qs_target, lhs, tar, Vda, Wda, modes_a, modes_p, delta_s, dx, v):
     # Prepare the online adjoint matrices
-    M, A = Matrices_online_adjoint_FOTR_expl(lhs, rhs, tar, CTC, Vda, Wda, qs_target, as_adj, as_,
-                                             modes_a, modes_p, delta_s, dx)
+    M, A = Matrices_online_adjoint_FOTR_expl(lhs, tar, Vda, Wda, qs_target, as_adj, as_,
+                                             modes_a, modes_p, delta_s, dx, v)
 
     # Solve the linear system of equations
     if np.linalg.cond(M) == np.inf:
@@ -109,19 +109,25 @@ def RHS_adjoint_sPODG_FOTR_expl(as_adj, as_, qs_target, lhs, rhs, tar, CTC, Vda,
         return solve_lin_system(M, A)
 
 
-def TI_adjoint_sPODG_FOTR(lhs, rhs, tar, CTC, Vda, Wda, a_a, as_, qs_target, modes_a, modes_p, delta_s, dx, Nt, dt,
-                          scheme):
+def TI_adjoint_sPODG_FOTR(lhs, tar, Vda, Wda, a_a, as_, qs_target, modes_a, modes_p, delta_s, dx, Nt, dt,
+                          scheme, v):
     # Time loop
     as_adj = np.zeros((modes_a + 1, Nt), order="F")
     as_ = np.asfortranarray(as_)
     as_adj[:, -1] = a_a
 
-    if scheme == "RK4":
+    if scheme == "Explicit_Euler":
+        for n in range(1, Nt):
+            as_adj[:, -(n + 1)] = explicit_euler_sPODG_adj_(RHS_adjoint_sPODG_FOTR_expl, as_adj[:, -n],
+                                                            as_[:, -n], as_[:, -(n + 1)],
+                                                            qs_target[:, -n], qs_target[:, -(n + 1)], - dt, lhs, tar,
+                                                            Vda, Wda, modes_a, modes_p, delta_s, dx, v)
+    elif scheme == "RK4":
         for n in range(1, Nt):
             as_adj[:, -(n + 1)] = rk4_sPODG_adj_(RHS_adjoint_sPODG_FOTR_expl, as_adj[:, -n],
                                                  as_[:, -n], as_[:, -(n + 1)],
-                                                 qs_target[:, -n], qs_target[:, -(n + 1)], - dt, lhs, rhs, tar, CTC,
-                                                 Vda, Wda, modes_a, modes_p, delta_s, dx)
+                                                 qs_target[:, -n], qs_target[:, -(n + 1)], - dt, lhs, tar,
+                                                 Vda, Wda, modes_a, modes_p, delta_s, dx, v)
     else:
         print('This is a nonlinear system of equation. It could be very hard and unnecessary to implement implicit'
               'methods for solving such an equation. Thus please choose RK4 as the preferred method......')

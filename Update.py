@@ -130,17 +130,17 @@ def Update_Control_PODG_FOTR_RA_TWBT(f, a0_primal, qs_target, V_p, Ar_p, psir_p,
             k = k + 1
 
 
-def Update_Control_sPODG_FOTR_RA_TWBT(f, lhs, rhs, c, a0_primal, qs_target, delta_s, Vdp, J_s_prev,
-                                      omega_prev, modes, dL_du_s, C, adjust, **kwargs):
+def Update_Control_sPODG_FOTR_RA_TWBT(f, lhs, c, a0_primal, qs_target, delta_s, Vdp, J_s_prev,
+                                      omega_prev, modes, dL_du_s, adjust, v, **kwargs):
     # Choosing the step size for two-way backtracking
     beta = kwargs['beta']
     omega = omega_prev
 
     # Checking the Armijo condition
     f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-    as_p, intIds, weights = TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s, modes, kwargs['Nt'],
-                                                 kwargs['dt'])
-    J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, C, intIds, weights,
+    as_p, intIds, weights = TI_primal_sPODG_FOTR(lhs, c, a0_primal, f_new, delta_s, modes, kwargs['Nt'],
+                                                 kwargs['dt'], v)
+    J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, intIds, weights,
                                    kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
     dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
          (kwargs['delta'] / omega) * L2norm_ROM(f_new - f, kwargs['dt'])
@@ -151,9 +151,9 @@ def Update_Control_sPODG_FOTR_RA_TWBT(f, lhs, rhs, c, a0_primal, qs_target, delt
             f_new_final = np.copy(f_new)
             omega = omega / beta
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            as_p, intIds_n, weights_n = TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s, modes,
-                                                             kwargs['Nt'], kwargs['dt'])
-            J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, C, intIds_n, weights_n,
+            as_p, intIds_n, weights_n = TI_primal_sPODG_FOTR(lhs, c, a0_primal, f_new, delta_s, modes, kwargs['Nt'],
+                                                             kwargs['dt'], v)
+            J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, intIds_n, weights_n,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
                  (kwargs['delta'] / omega) * L2norm_ROM(f_new - f, kwargs['dt'])
@@ -169,9 +169,9 @@ def Update_Control_sPODG_FOTR_RA_TWBT(f, lhs, rhs, c, a0_primal, qs_target, delt
         while True:
             omega = beta * omega
             f_new = prox_l1(f - omega * dL_du_s, omega * kwargs['lamda_l1'])
-            as_p, intIds_k, weights_k = TI_primal_sPODG_FOTR(lhs, rhs, c, a0_primal, f_new, delta_s, modes,
-                                                             kwargs['Nt'], kwargs['dt'])
-            J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, C, intIds_k, weights_k,
+            as_p, intIds_k, weights_k = TI_primal_sPODG_FOTR(lhs, c, a0_primal, f_new, delta_s, modes, kwargs['Nt'],
+                                                             kwargs['dt'], v)
+            J_s, J_ns, _ = Calc_Cost_sPODG(Vdp, as_p[:-1], qs_target, f_new, intIds_k, weights_k,
                                            kwargs['dx'], kwargs['dt'], kwargs['lamda_l1'], kwargs['lamda_l2'], adjust)
             dJ = J_s_prev + L2inner_prod(dL_du_s, f_new - f, kwargs['dt']) + \
                  (kwargs['delta'] / omega) * L2norm_ROM(f_new - f, kwargs['dt'])
