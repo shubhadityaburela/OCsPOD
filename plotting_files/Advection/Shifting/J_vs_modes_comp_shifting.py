@@ -8,12 +8,9 @@ import argparse
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
 parser.add_argument("Problem", type=str, choices=["Shifting", "Shifting_3"], help="Choose the problem")
-parser.add_argument("Adaptivity", type=str, choices=["", "adaptive"],
-                    help="Choose if the basis refinement should be adaptive or not")
 args = parser.parse_args()
 
 problem = args.Problem
-adaptivity = args.Adaptivity
 
 
 plt.rcParams.update({
@@ -99,74 +96,40 @@ else:
 
 modes_array_PODG = np.asarray([5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 200, 300, 400, 500])
 modes_array_sPODG = np.asarray([2, 5, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50])
-basis_name1 = "primal_basis"
-basis_name2 = "primal+adjoint_common_basis"
-if adaptivity == "adaptive":
-    case1 = "PODG_FOTR_adaptive"
-    case2 = "sPODG_FOTR_adaptive"
-    basis_refine = "adaptive"
-else:
-    case1 = "PODG_FOTR"
-    case2 = "sPODG_FOTR"
-    basis_refine = "fixed"
-
 
 ################################### PODG #########################################
 # Separate basis
 POD_modes_data_1s, POD_modes_data_2s = extract(problem=problem,
-                                               ROM_framework=case1,
-                                               type_of_basis="primal_basis",
-                                               file1=["J_opt_FOM_list_final.npy", "J_opt_FOM_list.npy"],
-                                               file2=["best_details_final.npy", "best_details.npy"]
-                                               )
-
-# Common basis
-POD_modes_data_1c, POD_modes_data_2c = extract(problem=problem,
-                                               ROM_framework=case1,
-                                               type_of_basis="primal+adjoint_common_basis",
+                                               ROM_framework="PODG_FOTR_adaptive",
+                                               type_of_basis="separate_basis",
                                                file1=["J_opt_FOM_list_final.npy", "J_opt_FOM_list.npy"],
                                                file2=["best_details_final.npy", "best_details.npy"]
                                                )
 
 POD_best_J_s = []
-POD_best_J_c = []
 for idx, val in enumerate(modes_array_PODG):
     POD_best_J_s.append(POD_modes_data_2s[idx].item()["J"])
-    POD_best_J_c.append(POD_modes_data_2c[idx].item()["J"])
 
 ################################### sPODG ########################################
 # Separate basis / primal basis
 sPOD_modes_data_1s, sPOD_modes_data_2s = extract(problem=problem,
-                                                 ROM_framework=case2,
-                                                 type_of_basis="primal_basis",
+                                                 ROM_framework="sPODG_FOTR_adaptive",
+                                                 type_of_basis="separate_basis",
                                                  file1=["J_opt_FOM_list_final.npy", "J_opt_FOM_list.npy"],
                                                  file2=["best_details_final.npy", "best_details.npy"]
                                                  )
-
-# Common basis
-sPOD_modes_data_1c, sPOD_modes_data_2c = extract(problem=problem,
-                                                 ROM_framework=case2,
-                                                 type_of_basis="primal+adjoint_common_basis",
-                                                 file1=["J_opt_FOM_list_final.npy", "J_opt_FOM_list.npy"],
-                                                 file2=["best_details_final.npy", "best_details.npy"]
-                                                 )
-
 
 sPOD_best_J_s = []
-sPOD_best_J_c = []
 for idx, val in enumerate(modes_array_sPODG):
     sPOD_best_J_s.append(sPOD_modes_data_2s[idx].item()["J"])
-    sPOD_best_J_c.append(sPOD_modes_data_2c[idx].item()["J"])
 
 
 
 fig1 = plt.figure(figsize=(9, 8))
 ax1 = fig1.add_subplot(111)
 ax1.axhline(y=FOM_J, color='sienna', linestyle='-', label="FOM")
-ax1.plot(modes_array_PODG, POD_modes_data_1s, marker="*", label="PODG" + "_" + basis_name1)
-ax1.plot(modes_array_PODG, POD_modes_data_1c, marker="*", label="PODG" + "_" + basis_name2)
-ax1.plot(modes_array_sPODG, sPOD_modes_data_1s, marker="*", label="sPODG" + "_" + basis_name1)
-ax1.plot(modes_array_sPODG, sPOD_modes_data_1c, marker="*", label="sPODG" + "_" + basis_name2)
+ax1.plot(modes_array_PODG, POD_modes_data_1s, marker="*", label="PODG")
+ax1.plot(modes_array_sPODG, sPOD_modes_data_1s, marker="*", label="sPODG")
 ax1.set_xlabel(r"modes")
 ax1.set_ylabel(r"$\mathcal{J}$")
 ax1.set_yscale('log')
@@ -175,7 +138,7 @@ ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.18))
 
 
 fig1.tight_layout()
-fig1.savefig(impath + "Modes_vs_J_" + basis_refine, dpi=300, transparent=True)
+fig1.savefig(impath + "Modes_vs_J", dpi=300, transparent=True)
 
 print(POD_modes_data_1s)
 print(sPOD_modes_data_1s)

@@ -118,10 +118,10 @@ def TI_adjoint_PODG_FOTR(at_adj, a_, M_f, A_f, LU_M_f, V_aTV_p, Tarr_a, Nt, dt, 
     return as_adj
 
 
-def mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi, CTC):
+def mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi):
     V_aT = V_a.T
 
-    return (V_aT @ A_a) @ V_a, V_aT[:, CTC] @ V_p[CTC, :], V_aT[:, CTC] @ qs_target[CTC, :], V_aT @ psi
+    return (V_aT @ A_a) @ V_a, V_aT @ V_p, V_aT @ qs_target, V_aT @ psi
 
 
 @njit

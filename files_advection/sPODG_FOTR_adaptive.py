@@ -162,7 +162,7 @@ if __name__ == "__main__":
     args = parse_arguments()
 
     print(f"Type of problem = {args.type_of_problem}")
-    print("Type of basis computation: Fixed")
+    print("Type of basis computation: Adaptive")
     print(f"Using adjoint in basis: {args.primal_adjoint_common_basis}")
     print(f"L1, L2 regularization = {tuple(args.reg)}")
     print(f"Grid = {tuple(args.grid)}")
@@ -351,6 +351,8 @@ if __name__ == "__main__":
 
                 # Initial conditions for ROM
                 a_p = IC_primal_sPODG_FOTR(q0, V_p)
+                trunc_modes_list_p.append(Nm_p)
+                trunc_modes_list_a.append(Nm_a)
 
                 Vd_p, Wd_p = make_V_W_delta(V_p, T_delta, D, kwargs['shift_sample'], kwargs['Nx'], Nm_p)
                 Vd_a, Wd_a = make_V_W_delta(V_a, T_delta, D, kwargs['shift_sample'], kwargs['Nx'], Nm_a)

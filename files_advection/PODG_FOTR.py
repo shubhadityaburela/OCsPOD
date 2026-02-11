@@ -296,7 +296,7 @@ if __name__ == "__main__":
 
     # Build ROM system matrices
     Ar_p, psir_p = mat_primal_PODG_FOTR(A_p, V_p, psi)
-    Ar_a, V_aTV_p, Tarr, psir_a = mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi, C)
+    Ar_a, V_aTV_p, Tarr, psir_a = mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi)
 
     # Select LU factors for adjoint mass‐matrix if needed
     if kwargs['adjoint_scheme'] == "RK4" or kwargs['adjoint_scheme'] == "Explicit_Euler":

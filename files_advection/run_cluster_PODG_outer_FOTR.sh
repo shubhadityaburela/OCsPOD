@@ -42,8 +42,8 @@ tolerances=(
 )
 
 
-for script_type in fixed adaptive; do
-  for common_basis in True False; do
+for script_type in adaptive; do
+  for common_basis in False; do
     for ms in "${mode_sets[@]}"; do
       read -r mode1 mode2 <<< "$ms"
       echo "Submitting modes: script_type=$script_type, type_of_problem=$type_of_problem, common_basis=$common_basis, modes=($mode1,$mode2), grid=\"$grid_str\""

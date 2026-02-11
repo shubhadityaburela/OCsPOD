@@ -334,7 +334,7 @@ if __name__ == "__main__":
 
                 # Build ROM system matrices
                 Ar_p, psir_p = mat_primal_PODG_FOTR(A_p, V_p, psi)
-                Ar_a, V_aTV_p, Tarr, psir_a = mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi, C)
+                Ar_a, V_aTV_p, Tarr, psir_a = mat_adjoint_PODG_FOTR(A_a, V_a, V_p, qs_target, psi)
 
                 # Select LU factors for adjoint mass‐matrix if needed
                 if kwargs['adjoint_scheme'] == "RK4" or kwargs['adjoint_scheme'] == "Explicit_Euler":
@@ -390,7 +390,7 @@ if __name__ == "__main__":
             t_5 = perf_counter()
 
             # ───── Compute the smooth gradient + the generalized gradient mapping ─────
-            dL_du_s = Calc_Grad_PODG_smooth(psir_p, f, as_adj, kwargs['lamda_l2'])
+            dL_du_s = Calc_Grad_PODG_smooth(psir_a, f, as_adj, kwargs['lamda_l2'])
             dL_du_g = Calc_Grad_mapping(f, dL_du_s, omega, kwargs['lamda_l1'])
             dL_du_norm = np.sqrt(L2norm_ROM(dL_du_g, kwargs['dt']))
 
