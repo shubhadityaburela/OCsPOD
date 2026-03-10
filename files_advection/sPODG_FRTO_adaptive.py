@@ -311,8 +311,8 @@ if __name__ == "__main__":
         'trafo_interp_order': 5,  # Order of the polynomial interpolation for the transformation operators
         'adjoint_scheme': "Explicit_Euler",  # Time integration scheme for adjoint equation
         'common_basis': args.primal_adjoint_common_basis,  # True if primal + adjoint in basis else False
-        'perform_grad_check': False,
-        'offline_online_err_check': False
+        'perform_grad_check': True,
+        'offline_online_err_check': True
     }
 
     D = central_FDMatrix(order="Upwind", Nx=wf.Nx, dx=wf.dx)
