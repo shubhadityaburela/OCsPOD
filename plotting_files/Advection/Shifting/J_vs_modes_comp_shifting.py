@@ -101,7 +101,7 @@ modes_array_sPODG = np.asarray([2, 5, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50]
 # Separate basis
 POD_modes_data_1s, POD_modes_data_2s = extract(problem=problem,
                                                ROM_framework="PODG_FOTR_adaptive",
-                                               type_of_basis="separate_basis",
+                                               type_of_basis="primal+adjoint_common_basis",
                                                file1=["J_opt_FOM_list_final.npy", "J_opt_FOM_list.npy"],
                                                file2=["best_details_final.npy", "best_details.npy"]
                                                )
@@ -114,7 +114,7 @@ for idx, val in enumerate(modes_array_PODG):
 # Separate basis / primal basis
 sPOD_modes_data_1s, sPOD_modes_data_2s = extract(problem=problem,
                                                  ROM_framework="sPODG_FOTR_adaptive",
-                                                 type_of_basis="separate_basis",
+                                                 type_of_basis="primal+adjoint_common_basis",
                                                  file1=["J_opt_FOM_list_final.npy", "J_opt_FOM_list.npy"],
                                                  file2=["best_details_final.npy", "best_details.npy"]
                                                  )

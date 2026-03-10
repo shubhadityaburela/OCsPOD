@@ -194,7 +194,7 @@ modes_name4 = "trunc_modes_a.npy"
 # Separate basis / primal basis
 POD_tol_data_1s, POD_tol_data_2s, POD_tol_data_3s = extract(problem=problem,
                                                             ROM_framework="PODG_FOTR_adaptive",
-                                                            type_of_basis="separate_basis",
+                                                            type_of_basis="primal+adjoint_common_basis",
                                                             file1=["J_opt_FOM_list_final.npy", "J_opt_FOM_list.npy"],
                                                             file2=["best_details_final.npy", "best_details.npy"],
                                                             file3=[[modes_name1, modes_name2],
@@ -205,7 +205,7 @@ POD_tol_data_1s, POD_tol_data_2s, POD_tol_data_3s = extract(problem=problem,
 # Separate basis / primal basis
 sPOD_tol_data_1s, sPOD_tol_data_2s, sPOD_tol_data_3s = extract(problem=problem,
                                                                ROM_framework="sPODG_FOTR_adaptive",
-                                                               type_of_basis="separate_basis",
+                                                               type_of_basis="primal+adjoint_common_basis",
                                                                file1=["J_opt_FOM_list_final.npy", "J_opt_FOM_list.npy"],
                                                                file2=["best_details_final.npy", "best_details.npy"],
                                                                file3=[[modes_name1, modes_name2],
