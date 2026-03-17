@@ -173,6 +173,10 @@ def TI_primal_sPODG_FRTO(lhs, c, a, f0, delta_s, modes, Nt, dt, v):
     IntIds = np.zeros(Nt, dtype=np.int32)
     weights = np.zeros(Nt)
 
+
+    # MM = np.zeros((modes + 1, modes + 1))
+    # AA = np.zeros((modes + 1, modes + 1))
+
     as_[:, 0] = a
     for n in range(1, Nt):
         as_[:, n], as_dot[..., n], IntIds[n - 1], weights[n - 1] = explicit_euler_sPODG_prim(RHS_primal_sPODG_FRTO,
@@ -182,6 +186,29 @@ def TI_primal_sPODG_FRTO(lhs, c, a, f0, delta_s, modes, Nt, dt, v):
                                                                                              delta_s,
                                                                                              modes,
                                                                                              v)
+
+        # Da = as_[:-1, n].reshape(-1, 1)
+        # MM[:modes, :modes] = np.eye(modes)
+        # MM[:modes, modes:] = lhs[0] @ Da
+        # MM[modes:, :modes] = MM[:modes, modes:].T
+        # MM[modes:, modes:] = Da.T @ (lhs[1] @ Da)
+        #
+        # AA[:modes, :modes] = (v - as_dot[0, -1, n]) * lhs[0]
+        # AA[:modes, modes:] = 0
+        # AA[modes:, :modes] = 2 * (v - as_dot[0, -1, n]) * Da.T @ lhs[1] - as_dot[0, :-1, n][None, :] @ lhs[0]
+        # AA[modes:, modes:] = 0
+        #
+        # Schur = MM[modes:, modes:] - MM[modes:, :modes] @ MM[:modes, modes:]
+        # tmp, _ = np.linalg.eig(lhs[1] - lhs[0].T @ lhs[0])
+        # lamda_min = np.min(tmp)
+        #
+        # eigvals, eigvecs = scipy.linalg.eig(AA, MM)
+        # tmp2 = np.max(np.real(eigvals))
+        #
+        # # print("Largest positive real part of eigenvalue:", np.max(np.real(eigvals)))
+        # print("lamda: ", lamda_min)
+        # # print("Schur: ", Schur)
+
 
     IntIds[-1], weights[-1] = findIntervalAndGiveInterpolationWeight_1D(delta_s[2], -as_[-1, -1])
     as_dot[..., 0] = as_dot[..., 1].copy()

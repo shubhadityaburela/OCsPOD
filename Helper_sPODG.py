@@ -797,6 +797,40 @@ def Matrices_online_adjoint_FRTO_expl(M2, N, C, Vdp, Wdp, f, as_adj, as_, qs_tar
                 - C1(as_p, VTqs_tar, dx)
     A[modes:] = E21(N, WTB, as_dot, f) @ as_a + E22(M2, as_p, WTdashB, as_dot, f) * z_a - C2(as_p, WTqs_tar, dx)
 
+
+
+    # AA = np.empty((modes + 1, modes + 1), dtype=M2.dtype)
+    # AA[:modes, :modes] = E11(N, v, z_dot, modes)
+    # AA[:modes, modes:] = E12(M2, N, v, Da, WTB, as_dot, z_dot, as_p, f, modes)[:, None]
+    # AA[modes:, :modes] = E21(N, WTB, as_dot, f)[None, :]
+    # AA[modes:, modes:] = E22(M2, as_p, WTdashB, as_dot, f)
+    # eigvals, eigvecs = scipy.linalg.eig(AA, M)
+    # Schur = M[modes:, modes:] - M[modes:, :modes] @ M[:modes, modes:]
+    # cond = np.linalg.cond(M)
+    # lamda_la_dot = A[:modes] + M[:modes, modes:] @ (M[modes:, :modes] @ A[:modes] - A[modes:]) / Schur
+    # z_la_dot = (A[modes:] - M[modes:, :modes] @ A[:modes]) / Schur
+
+    # print("Eigenvalues:", eigvals)
+
+    # print("Largest positive real part of eigenvalue:", np.max(np.real(eigvals)))
+
+    # print("Schur: ", Schur)
+
+    # print("Condition number: ", cond)
+
+    # print("Lamba_dot: ", np.linalg.norm(lamda_la_dot))
+    # print("z_dot: ", np.linalg.norm(z_la_dot))
+
+    # Check stability based on the real parts of eigenvalues
+    # tol = 1e-12
+    # if np.all(np.real(eigvals) < 0):
+    #     print(
+    #         "The system is asymptotically stable (all eigenvalues have negative real parts within tolerance).")
+    # elif np.any(np.real(eigvals) > tol):
+    #     print("The system is unstable (at least one eigenvalue has a positive real part beyond tolerance).")
+    # else:
+    #     print("The system is marginally stable (eigenvalues are near the imaginary axis within tolerance).")
+
     return np.ascontiguousarray(M), np.ascontiguousarray(A)
 
 
