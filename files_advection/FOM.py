@@ -270,7 +270,31 @@ if __name__ == "__main__":
     stag = False
     stag_cntr = 0
 
-    # svd = []
+    # Mat = CoefficientMatrix(orderDerivative="8thOrder", Nxi=wf.Nx, Neta=1, periodicity='Periodic', dx=wf.dx, dy=0)
+    # A_p = - wf.v_x[0] * Mat.Grad_Xi_kron
+    # qs_org = TI_primal(qs0, f, A_p, psi, wf.Nx, wf.Nt, wf.dt)
+    # snap_cat_p_s = np.column_stack([np.roll(qs_org[:, j], -j, axis=0) for j in range(qs_org.shape[1])])
+    # V_p, S, VT = randomized_svd(snap_cat_p_s, n_components=50, random_state=42)
+    # s_norm = S / S[0]  # normalize by largest singular value
+    #
+    # idx = np.arange(1, len(s_norm) + 1)
+    # fig, ax = plt.subplots(figsize=(6, 4))
+    # ax.semilogy(idx, s_norm,
+    #             color="brown",
+    #             marker="+",
+    #             linestyle='None',
+    #             markersize=5)
+    # ax.set_ylabel(r"$\sigma_{k} / \sigma_{0}$")
+    # ax.set_xlabel(r"Num. of singular vals.")
+    # ax.grid(True, linestyle='--', alpha=0.6)
+    # fig.tight_layout()
+    # plt.show()
+    #
+    # qs_sPOD_p = V_p @ np.diag(S) @ VT
+    # Nm_p = V_p.shape[1]
+    # err_p = np.linalg.norm(snap_cat_p_s - qs_sPOD_p) / np.linalg.norm(snap_cat_p_s)
+    # print(f"Primal basis: Nm_p={Nm_p}, err={err_p:.3e}")
+
 
     # ─────────────────────────────────────────────────────────────────────
     # Main “optimize‐step” loop wrapped in try/except/finally
@@ -541,16 +565,6 @@ if __name__ == "__main__":
     pf.plot1D(f_opt, name="f_opt", immpath=plot_dir)
     pf.plot1D_FOM_converg(J_opt_list, name="J", immpath=plot_dir)
 
-
-
-
-
-
-
-
-
-
-
     # # Addition !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     # eigV, eigvecs = np.linalg.eig(A_p.todense())
     # order = np.argsort(np.abs(eigV))
@@ -583,7 +597,6 @@ if __name__ == "__main__":
     # plt.show()
     # exit()
     #
-
 
     # kwargs['Nm_p'] = snap_cat_p_s.shape[1]
     # kwargs['threshold'] = None
