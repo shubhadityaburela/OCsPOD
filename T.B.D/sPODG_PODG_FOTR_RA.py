@@ -16,7 +16,7 @@ from TI_schemes import DF_start_FOM
 from Update import Update_Control_sPODG_FOTR_FA_TWBT, Update_Control_sPODG_FOTR_RA_TWBT, Update_Control_sPODG_FOTR_RA_BB
 from grid_params import advection
 from Plots import PlotFlow
-from Helper import ControlSelectionMatrix_advection, compute_red_basis, calc_shift, L2norm_ROM
+from Helper import ControlSelectionMatrix, compute_red_basis, calc_shift, L2norm_ROM
 from Helper_sPODG import subsample, get_T, central_FDMatrix, make_V_W_delta, make_V_W_delta_CubSpl
 from Costs import Calc_Cost_sPODG, Calc_Cost
 import os
@@ -33,7 +33,7 @@ import sys
 from sPODG_solver import IC_primal_sPODG_FOTR, mat_primal_sPODG_FOTR, TI_primal_sPODG_FOTR, IC_adjoint_sPODG_FOTR, \
     mat_adjoint_sPODG_FOTR, TI_adjoint_sPODG_FOTR
 
-sys.path.append('./sPOD/lib/')
+sys.path.append('../sPOD/lib/')
 from sPOD_algo import give_interpolation_error
 
 parser = argparse.ArgumentParser(description="Input the variables for running the script.")
@@ -59,7 +59,7 @@ print(f"Solving problem: {args.problem}")
 print(f"Choosing BB accelerated convergence: {args.conv_accel}")
 print(f"Using target state for basis computation: {args.target_for_basis}")
 print(f"Interpolation scheme to be used for shift matrix construction: {args.interp_scheme}")
-print(f"Type of basis computation: fixed (Primal with sPODG and adjoint with PODG)")
+print(f"Type of basis computation: fixed (Primal with sPODG and adjoint with PODG_FOTR_FA)")
 
 if args.conv_accel is False:
     conv_crit = "TWBT"
@@ -133,7 +133,7 @@ wf.Grid()
 n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
+psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
 # trim_first_n should basically make the psi matrix and the number of controls to be user defined.
 n_c = psi.shape[1]
 f = np.zeros((n_c, wf.Nt), order="F")  # Initial guess for the control
@@ -253,7 +253,7 @@ err = np.linalg.norm(qs_con - qs_s_POD) / np.linalg.norm(qs_con)
 print(f"Relative error for shifted primal: {err}, with Nm: {Nm_p}")
 
 '''
-Backward calculation with FOM but the basis computation by PODG
+Backward calculation with FOM but the basis computation by PODG_FOTR_FA
 '''
 qs_adj = TI_adjoint(q0_adj, qs, qs_target, None, A_a, None, wf.Nxi, wf.dx, wf.Nt, wf.dt, scheme="RK4")
 if kwargs['include_target_for_basis']:

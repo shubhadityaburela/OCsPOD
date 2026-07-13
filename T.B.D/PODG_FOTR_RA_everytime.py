@@ -11,7 +11,7 @@ from Coefficient_Matrix import CoefficientMatrix
 from Costs import Calc_Cost_PODG, Calc_Cost
 from FOM_solver import IC_primal, TI_primal, TI_primal_target, IC_adjoint, TI_adjoint
 from Grads import Calc_Grad_PODG
-from Helper import ControlSelectionMatrix_advection, compute_red_basis, L2norm_ROM
+from Helper import ControlSelectionMatrix, compute_red_basis, L2norm_ROM
 from PODG_solver import IC_primal_PODG_FOTR, mat_primal_PODG_FOTR, TI_primal_PODG_FOTR, IC_adjoint_PODG_FOTR, \
     mat_adjoint_PODG_FOTR, TI_adjoint_PODG_FOTR
 from Update import Update_Control_PODG_FOTR_RA_TWBT, Update_Control_PODG_FOTR_RA_BB, get_BB_step
@@ -106,7 +106,7 @@ wf.Grid()
 n_c_init = 40  # Number of initial controls
 
 # Selection matrix for the control input
-psi = ControlSelectionMatrix_advection(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
+psi = ControlSelectionMatrix(wf, n_c_init, Gaussian=True, gaussian_mask_sigma=0.5)  # Changing the value of
 # trim_first_n should basically make the psi matrix and the number of controls to be user defined.
 n_c = psi.shape[1]
 f = np.zeros((n_c, wf.Nt))  # Initial guess for the control
